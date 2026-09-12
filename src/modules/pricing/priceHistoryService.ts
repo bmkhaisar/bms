@@ -6,7 +6,7 @@
  */
 
 import { db, type Product } from "@/lib/db";
-import { convertUnit } from "@/modules/inventory/uomMaster";
+import { convertUnit, convertRate } from "@/modules/inventory/uomMaster";
 
 export interface PriceHistoryEntry {
   id: string;
@@ -171,9 +171,9 @@ export async function getPricingIntelligence(params: {
     } else {
       // Convert if compatible conversion exists
       const latest = all[0];
-      const factor = convertUnit(1, latest.unit, activeUnit);
-      if (factor !== null && factor > 0) {
-        lastSoldRate = Math.round((latest.rate / factor) * 100) / 100;
+      const converted = convertRate(latest.rate, latest.unit, activeUnit);
+      if (converted !== null) {
+        lastSoldRate = converted;
       } else {
         lastSoldRate = latest.rate;
       }
@@ -193,9 +193,9 @@ export async function getPricingIntelligence(params: {
         customerLastRate = sameUom.rate;
       } else {
         const latest = custMatches[0];
-        const factor = convertUnit(1, latest.unit, activeUnit);
-        if (factor !== null && factor > 0) {
-          customerLastRate = Math.round((latest.rate / factor) * 100) / 100;
+        const converted = convertRate(latest.rate, latest.unit, activeUnit);
+        if (converted !== null) {
+          customerLastRate = converted;
           isUomConverted = true;
         } else {
           customerLastRate = latest.rate;

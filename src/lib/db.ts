@@ -88,12 +88,13 @@ export interface MeasurementEntry {
 }
 
 export interface LineItem {
-  productId: ID; name: string; hsn?: string; quantity: number; unit: string;
-  rate: number; discountPct: number; discountPercent?: number; gstRate: number; taxRate?: number; cessRate?: number;
-  taxable: number; gstAmount: number; total: number;
+  productId: ID; name: string; productName?: string; description?: string; sku?: string; hsn?: string;
+  quantity: number; unit: string; uomId?: string; uomLabel?: string;
+  rate: number; ratePaise?: number; discountPct: number; discountPercent?: number;
+  gstRate: number; taxRate?: number; cessRate?: number; taxTreatment?: string;
+  taxable: number; gstAmount: number; total: number; lineAmount?: number;
   isTaxInclusive?: boolean;
   size?: string;
-  description?: string;
   pricingBasis?: PricingBasis;
   measurements?: MeasurementEntry[];
   measurementSummary?: string;
@@ -118,6 +119,7 @@ export interface Quotation {
   contactEmail?: string;
   customerId: ID; customerSnapshot?: Partial<Customer>;
   items: LineItem[];
+  lineSnapshots?: LineItem[];
   subtotal: number; discountTotal: number; gstTotal: number;
   cgstTotal?: number; sgstTotal?: number; igstTotal?: number; isIgst?: boolean;
   extraCharges?: ExtraCharge[];
@@ -154,6 +156,7 @@ export interface Invoice {
   placeOfSupply?: string;
   billingAddress?: string; shippingAddress?: string;
   items: LineItem[];
+  lineSnapshots?: LineItem[];
   subtotal: number; discountTotal: number;
   taxableAmount?: number;
   cgstTotal: number; sgstTotal: number; igstTotal: number;
@@ -163,7 +166,7 @@ export interface Invoice {
   extraChargesTotal?: number;
   amountPaid: number; balance: number; isIgst: boolean;
   notes?: string; terms?: string;
-  status: "draft" | "unpaid" | "partial" | "paid" | "posted";
+  status: "draft" | "unpaid" | "partial" | "paid" | "posted" | "cancelled";
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
   voucherId?: string;
   convertedFromQuotationId?: ID;
@@ -210,6 +213,7 @@ export interface Purchase {
   signatoryOverride?: any;
   signatorySnapshot?: any;
   items: LineItem[];
+  lineSnapshots?: LineItem[];
   subtotal: number; discountTotal: number;
   cgstTotal?: number; sgstTotal?: number; igstTotal?: number;
   gstTotal: number;

@@ -16,7 +16,7 @@ import { toDateInput, fromDateInput, formatDate, formatMoney } from "@/lib/forma
 import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { Copy, Download, FileText, Pencil, Plus, Printer, Trash2, UserPlus, Truck, HandCoins } from "lucide-react";
+import { Copy, Download, FileText, Pencil, Plus, Printer, Trash2, UserPlus, Truck, HandCoins, Loader2 } from "lucide-react";
 import { ListToolbar, EmptyState, usePagination, Pager } from "./ListHelpers";
 import { DocumentPrint, type DocumentKind } from "./DocumentPrint";
 import { printElement } from "@/lib/pdf";
@@ -80,13 +80,15 @@ export function DocumentListPage<T extends AnyDoc>({
   // Additional charge temp fields
   const [chargeName, setChargeName] = useState("");
   const [chargeAmount, setChargeAmount] = useState<number>(0);
+  const [savingDoc, setSavingDoc] = useState<boolean>(false);
+  const [recordingReceipt, setRecordingReceipt] = useState<boolean>(false);
 
   useEffect(() => { getCompany().then(setCompany); }, []);
   const initialLoading = useInitialLoading();
 
   function getNormalizedDoc(doc: T): NormalizedDocument {
     const isInv = kind === "invoice";
-    const party = (partyById((doc as any).customerId ?? (doc as Purchase).supplierId) || { name: "Client" }) as any;
+    const party = (doc as any).customerSnapshot || (doc as any).supplierSnapshot || (partyById((doc as any).customerId ?? (doc as Purchase).supplierId) || { name: "Client" }) as any;
     const docCompany = (doc as any).companySnapshot || activeCompany || company || {};
     const isTaxDoc = enableGst && (doc.gstTotal > 0 || (doc as Invoice).isIgst);
 
@@ -142,7 +144,7 @@ export function DocumentListPage<T extends AnyDoc>({
         email: party.email,
         placeOfSupply: party.state,
       },
-      items: doc.items,
+      items: (doc as any).lineSnapshots && (doc as any).lineSnapshots.length > 0 ? (doc as any).lineSnapshots : doc.items,
       subtotal: doc.subtotal,
       discountTotal: doc.discountTotal,
       cgstTotal: (doc as Invoice).cgstTotal,
@@ -301,6 +303,9 @@ export function DocumentListPage<T extends AnyDoc>({
     if (!partyId) { toast.error(`Please select a ${tableFor}`); return; }
     if (!editing.items.length) { toast.error("Please add at least one line item"); return; }
 
+    setSavingDoc(true);
+    try {
+
     const isIgst = kind === "invoice" && (editing as unknown as Invoice).isIgst;
     const extraCharges = (editing as any).extraCharges || [];
     const extraChargesTotal = extraCharges.reduce((s: number, c: ExtraCharge) => s + (Number(c.amount) || 0), 0);
@@ -421,9 +426,14 @@ export function DocumentListPage<T extends AnyDoc>({
       await db().quotations.put(toSave);
     }
 
-    toast.success("Document saved successfully");
-    setOpen(false);
-    setEditing(null);
+      toast.success("Document saved successfully");
+      setOpen(false);
+      setEditing(null);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to save document");
+    } finally {
+      setSavingDoc(false);
+    }
   }
 
   async function remove(id: string) {
@@ -506,6 +516,7 @@ export function DocumentListPage<T extends AnyDoc>({
 
   async function recordQuickReceipt() {
     if (!selectedInvoiceForReceipt || receiptAmount <= 0) return;
+    setRecordingReceipt(true);
     try {
       let idToken: string | undefined;
       try { idToken = await user?.getIdToken(); } catch {}
@@ -565,6 +576,8 @@ export function DocumentListPage<T extends AnyDoc>({
     } catch (err) {
       console.error("Failed to record receipt:", err);
       toast.error("Failed to record receipt");
+    } finally {
+      setRecordingReceipt(false);
     }
   }
 
@@ -964,8 +977,17 @@ export function DocumentListPage<T extends AnyDoc>({
             </div>
           )}
           <DialogFooter className="shrink-0 gap-2 border-t bg-background px-3 py-3 sm:px-6">
-            <Button variant="ghost" onClick={() => setOpen(false)} className="w-full sm:w-auto">Cancel</Button>
-            <Button onClick={save} className="w-full sm:w-auto">Save Document</Button>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={savingDoc} className="w-full sm:w-auto">Cancel</Button>
+            <Button onClick={save} disabled={savingDoc} className="w-full sm:w-auto gap-1.5">
+              {savingDoc ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {kind === "invoice" ? "Posting Invoice…" : kind === "purchase" ? "Posting Purchase…" : "Saving Draft…"}
+                </>
+              ) : (
+                kind === "invoice" ? "Post Invoice" : kind === "purchase" ? "Post Purchase" : "Save Document"
+              )}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1118,8 +1140,16 @@ export function DocumentListPage<T extends AnyDoc>({
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpenReceiptModal(false)}>Cancel</Button>
-            <Button onClick={recordQuickReceipt}>Post Receipt</Button>
+            <Button variant="outline" onClick={() => setOpenReceiptModal(false)} disabled={recordingReceipt}>Cancel</Button>
+            <Button onClick={recordQuickReceipt} disabled={recordingReceipt} className="gap-1.5">
+              {recordingReceipt ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Recording Receipt…
+                </>
+              ) : (
+                "Post Receipt"
+              )}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

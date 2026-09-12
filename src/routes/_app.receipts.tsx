@@ -26,7 +26,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { toast } from "sonner";
 import { formatMoney, formatDate, toDateInput, fromDateInput } from "@/lib/format";
-import { HandCoins, ArrowDownLeft, ArrowUpRight, Plus, Trash2, BookOpen } from "lucide-react";
+import { HandCoins, ArrowDownLeft, ArrowUpRight, Plus, Trash2, BookOpen, Loader2 } from "lucide-react";
 import { ListToolbar, usePagination, Pager, EmptyState } from "@/components/app/ListHelpers";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
@@ -545,8 +545,14 @@ export function ReceiptsAndPaymentsPage() {
             <Button variant="outline" onClick={() => setOpenReceipt(false)}>
               Cancel
             </Button>
-            <Button onClick={saveReceipt} disabled={saving}>
-              {saving ? "Posting..." : "Post Receipt Voucher"}
+            <Button onClick={saveReceipt} disabled={saving} className="gap-1.5">
+              {saving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Recording Receipt…
+                </>
+              ) : (
+                "Post Receipt Voucher"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -708,8 +714,14 @@ export function ReceiptsAndPaymentsPage() {
             <Button variant="outline" onClick={() => setOpenPayment(false)}>
               Cancel
             </Button>
-            <Button onClick={savePayment} disabled={saving}>
-              {saving ? "Posting..." : "Post Payment Voucher"}
+            <Button onClick={savePayment} disabled={saving} className="gap-1.5">
+              {saving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Recording Payment…
+                </>
+              ) : (
+                "Post Payment Voucher"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

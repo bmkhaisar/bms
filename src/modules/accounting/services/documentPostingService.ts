@@ -14,6 +14,7 @@ import {
   validateGstInvoiceNumber,
 } from "@/modules/tax/taxEngine";
 import { recordInvoicePriceHistory, recordPurchasePriceHistory } from "@/modules/pricing/priceHistoryService";
+import { recordStockMovement } from "@/modules/inventory/stockMovementService";
 
 export interface PostingResult {
   success: boolean;
@@ -172,11 +173,56 @@ export async function postInvoiceTransaction(params: {
       placeOfSupply,
     });
 
+    // 6. Freeze Line Snapshots (Historical line persistence)
+    const frozenLines: LineItem[] = await Promise.all(
+      (invoice.items || []).map(async (it) => {
+        let prod = it.productId ? await db().products.get(it.productId) : undefined;
+        const productName = it.productName || it.name || prod?.name || "Item";
+        const sku = it.sku || prod?.sku || "";
+        const hsn = it.hsn || prod?.hsn || "";
+        const uomId = it.uomId || prod?.defaultUomId || it.unit || "NOS";
+        const uomLabel = it.uomLabel || it.unit || prod?.unit || "NOS";
+        const ratePaise = it.ratePaise !== undefined ? it.ratePaise : Math.round(it.rate * 100);
+        const discount = it.discountPercent ?? it.discountPct ?? 0;
+        const taxRate = it.taxRate ?? it.gstRate ?? 0;
+        const taxTreatment = it.taxTreatment || (taxRate > 0 ? "taxable" : "exempt");
+        const lineAmount = it.total !== undefined ? it.total : Math.round((it.quantity * it.rate * (1 - discount / 100)) * 100) / 100;
+
+        return {
+          ...it,
+          productId: it.productId,
+          productName,
+          name: productName,
+          description: it.description || productName,
+          sku,
+          hsn,
+          uomId,
+          uomLabel,
+          unit: uomLabel,
+          quantity: it.quantity,
+          size: it.size,
+          measurementSummary: it.measurementSummary,
+          pricingBasis: it.pricingBasis,
+          rate: it.rate,
+          ratePaise,
+          discountPercent: discount,
+          discountPct: discount,
+          taxTreatment,
+          taxRate,
+          gstRate: taxRate,
+          lineAmount,
+          total: lineAmount,
+        };
+      })
+    );
+
     const updatedInvoice: Invoice = {
       ...invoice,
       voucherId,
       postingStatus: "posted",
       status: "posted",
+      items: frozenLines,
+      lineSnapshots: frozenLines,
       subtotal: recomputed.subtotal,
       taxableAmount: recomputed.taxableValue,
       gstTotal: recomputed.gstTotal,
@@ -213,7 +259,28 @@ export async function postInvoiceTransaction(params: {
       data: updatedInvoice,
     });
 
-    // 10. Record Price History and Product lastSalesRatePaise
+    // 10. Record Authoritative Stock OUT Movements, Price History and Product lastSalesRatePaise
+    for (const it of frozenLines) {
+      if (it.productId) {
+        try {
+          await recordStockMovement({
+            companyId,
+            productId: it.productId,
+            movementType: "out",
+            documentKind: "invoice",
+            documentId: invoice.id,
+            documentNumber: invoice.number,
+            date: invoice.date,
+            enteredQuantity: it.quantity,
+            enteredUom: it.unit || it.uomLabel || "NOS",
+            ratePaise: it.ratePaise,
+          });
+        } catch (smErr) {
+          console.warn("Stock movement recording failed non-fatally:", smErr);
+        }
+      }
+    }
+
     try {
       recordInvoicePriceHistory({
         companyId,
@@ -221,18 +288,18 @@ export async function postInvoiceTransaction(params: {
         invoiceId: invoice.id,
         invoiceNumber: invoice.number,
         date: invoice.date,
-        items: invoice.items.map((it) => ({
+        items: frozenLines.map((it) => ({
           productId: it.productId,
           rate: it.rate,
           quantity: it.quantity,
           unit: it.unit,
         })),
       });
-      for (const it of invoice.items) {
+      for (const it of frozenLines) {
         if (it.productId) {
           const p = await db().products.get(it.productId);
           if (p) {
-            p.lastSalesRatePaise = Math.round(it.rate * 100);
+            p.lastSalesRatePaise = it.ratePaise || Math.round(it.rate * 100);
             await db().products.put(p);
           }
         }
@@ -317,7 +384,50 @@ export async function postPurchaseTransaction(params: {
       }
     }
 
-    // 2. Attach frozen company snapshot & signatory snapshot
+    // 2. Freeze Line Snapshots (Historical line persistence)
+    const frozenLines: LineItem[] = await Promise.all(
+      (purchase.items || []).map(async (it) => {
+        let prod = it.productId ? await db().products.get(it.productId) : undefined;
+        const productName = it.productName || it.name || prod?.name || "Item";
+        const sku = it.sku || prod?.sku || "";
+        const hsn = it.hsn || prod?.hsn || "";
+        const uomId = it.uomId || prod?.defaultUomId || it.unit || "NOS";
+        const uomLabel = it.uomLabel || it.unit || prod?.unit || "NOS";
+        const ratePaise = it.ratePaise !== undefined ? it.ratePaise : Math.round(it.rate * 100);
+        const discount = it.discountPercent ?? it.discountPct ?? 0;
+        const taxRate = it.taxRate ?? it.gstRate ?? 0;
+        const taxTreatment = it.taxTreatment || (taxRate > 0 ? "taxable" : "exempt");
+        const lineAmount = it.total !== undefined ? it.total : Math.round((it.quantity * it.rate * (1 - discount / 100)) * 100) / 100;
+
+        return {
+          ...it,
+          productId: it.productId,
+          productName,
+          name: productName,
+          description: it.description || productName,
+          sku,
+          hsn,
+          uomId,
+          uomLabel,
+          unit: uomLabel,
+          quantity: it.quantity,
+          size: it.size,
+          measurementSummary: it.measurementSummary,
+          pricingBasis: it.pricingBasis,
+          rate: it.rate,
+          ratePaise,
+          discountPercent: discount,
+          discountPct: discount,
+          taxTreatment,
+          taxRate,
+          gstRate: taxRate,
+          lineAmount,
+          total: lineAmount,
+        };
+      })
+    );
+
+    // 3. Attach frozen company snapshot & signatory snapshot
     const snapshot = purchase.companySnapshot || createCompanySnapshot(company);
     const signatorySnapshot =
       purchase.signatorySnapshot ||
@@ -330,22 +440,24 @@ export async function postPurchaseTransaction(params: {
       ...purchase,
       voucherId,
       postingStatus: "posted",
+      items: frozenLines,
+      lineSnapshots: frozenLines,
       companySnapshot: snapshot,
       signatorySnapshot,
       version: purchase.version || 1,
       updatedAt: Date.now(),
     };
 
-    // 3. Save to local Dexie database
+    // 4. Save to local Dexie database
     await db().purchases.put(updatedPurchase);
 
-    // 4. Save to Firebase RTDB
+    // 5. Save to Firebase RTDB
     if (firebaseDb) {
       const puRef = ref(firebaseDb, `companyData/${companyId}/purchases/${purchase.id}`);
       await set(puRef, sanitizeForFirebase(updatedPurchase));
     }
 
-    // 5. Cache in bms_cache_v1
+    // 6. Cache in bms_cache_v1
     await cacheEntity({
       uid,
       companyId,
@@ -355,7 +467,29 @@ export async function postPurchaseTransaction(params: {
       data: updatedPurchase,
     });
 
-    // 6. Record Price History and Product lastPurchaseRatePaise
+    // 7. Record Authoritative Stock IN Movements
+    for (const it of frozenLines) {
+      if (it.productId) {
+        try {
+          await recordStockMovement({
+            companyId,
+            productId: it.productId,
+            movementType: "in",
+            documentKind: "purchase",
+            documentId: purchase.id,
+            documentNumber: purchase.number,
+            date: purchase.date,
+            enteredQuantity: it.quantity,
+            enteredUom: it.unit || it.uomLabel || "NOS",
+            ratePaise: it.ratePaise,
+          });
+        } catch (smErr) {
+          console.warn("Stock movement recording failed non-fatally:", smErr);
+        }
+      }
+    }
+
+    // 8. Record Price History and Product lastPurchaseRatePaise
     try {
       recordPurchasePriceHistory({
         companyId,
@@ -363,18 +497,18 @@ export async function postPurchaseTransaction(params: {
         purchaseId: purchase.id,
         purchaseNumber: purchase.number,
         date: purchase.date,
-        items: purchase.items.map((it) => ({
+        items: frozenLines.map((it) => ({
           productId: it.productId,
           rate: it.rate,
           quantity: it.quantity,
           unit: it.unit,
         })),
       });
-      for (const it of purchase.items) {
+      for (const it of frozenLines) {
         if (it.productId) {
           const p = await db().products.get(it.productId);
           if (p) {
-            p.lastPurchaseRatePaise = Math.round(it.rate * 100);
+            p.lastPurchaseRatePaise = it.ratePaise || Math.round(it.rate * 100);
             await db().products.put(p);
           }
         }

@@ -369,7 +369,7 @@ export function QuickCreateProductModal({
           <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
             {saving ? (
               <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Creating Product…
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving Product…
               </>
             ) : (
               "Save Product to Catalog"

@@ -318,19 +318,24 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   if (isTaxDoc) {
     tableHeaders = ["#", "Item Description", "HSN/SAC", "Qty", "Unit", "Rate", "Discount", "GST", "Amount"];
     tableRows = docData.items.map((item, idx) => {
-      let desc = item.name;
+      let desc = item.productName || item.name;
+      if (item.description && item.description !== desc) desc += `\n${item.description}`;
       if (item.size) desc += `\nSize: ${item.size}`;
       if (item.measurementSummary) desc += `\n${item.measurementSummary}`;
+      const disc = item.discountPercent ?? item.discountPct ?? 0;
+      const rate = item.rate !== undefined ? item.rate : ((item.ratePaise || 0) / 100);
+      const amt = item.total !== undefined ? item.total : (item.lineAmount || 0);
+      const gst = item.gstRate ?? item.taxRate ?? 0;
       return [
         idx + 1,
         desc,
         item.hsn || "—",
         item.quantity,
-        item.unit || "NOS",
-        money(item.rate),
-        item.discountPct > 0 ? `${item.discountPct}%` : "0%",
-        `${item.gstRate}%`,
-        money(item.total),
+        item.unit || item.uomLabel || "NOS",
+        money(rate),
+        disc > 0 ? `${disc}%` : "0%",
+        `${gst}%`,
+        money(amt),
       ];
     });
     colStyles = {
@@ -348,17 +353,21 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
     // Clean Commercial / Non-GST Table without empty GST columns
     tableHeaders = ["#", "Item Description", "Qty", "Unit", "Rate", "Discount", "Amount"];
     tableRows = docData.items.map((item, idx) => {
-      let desc = item.name;
+      let desc = item.productName || item.name;
+      if (item.description && item.description !== desc) desc += `\n${item.description}`;
       if (item.size) desc += `\nSize: ${item.size}`;
       if (item.measurementSummary) desc += `\n${item.measurementSummary}`;
+      const disc = item.discountPercent ?? item.discountPct ?? 0;
+      const rate = item.rate !== undefined ? item.rate : ((item.ratePaise || 0) / 100);
+      const amt = item.total !== undefined ? item.total : (item.lineAmount || 0);
       return [
         idx + 1,
         desc,
         item.quantity,
-        item.unit || "NOS",
-        money(item.rate),
-        item.discountPct > 0 ? `${item.discountPct}%` : "0%",
-        money(item.total),
+        item.unit || item.uomLabel || "NOS",
+        money(rate),
+        disc > 0 ? `${disc}%` : "0%",
+        money(amt),
       ];
     });
     colStyles = {

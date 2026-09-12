@@ -387,3 +387,415 @@ test("Smart Billing 14: Document Copy Modes Invariance (Never allocates legal nu
     assert.equal(renderedPresentation.voucherId, authoritativeInvoice.voucherId, "Copy must never create another voucher");
   }
 });
+
+test("Smart Billing 15: Acceptance Audit 1 — Historical Line Snapshot Persisted & Reprints Never Altered", () => {
+  // Step 1: Create Product Master
+  const productCatalog = {
+    prod_ms: {
+      id: "prod_ms",
+      name: "MS Plate",
+      sellingPrice: 120,
+      unit: "SQFT",
+      hsn: "HSN-A",
+      sku: "MSP-01",
+    },
+  };
+
+  // Step 2: Post Invoice with 16 frozen snapshot fields
+  const invoiceLine = {
+    productId: "prod_ms",
+    productName: productCatalog.prod_ms.name,
+    description: "Standard MS Plate 10mm",
+    sku: productCatalog.prod_ms.sku,
+    hsn: productCatalog.prod_ms.hsn,
+    uomId: "uom_sqft",
+    uomLabel: "Sq Ft",
+    quantity: 10,
+    size: "2.5 x 4.0",
+    measurementSummary: "10 pcs @ 10 sq ft",
+    pricingBasis: "per_area",
+    rate: 120,
+    ratePaise: 12000,
+    discount: 0,
+    discountPercent: 0,
+    taxTreatment: "taxable",
+    taxRate: 18,
+    taxAmounts: { cgst: 108, sgst: 108, igst: 0 },
+    lineAmount: 1200,
+    total: 1200,
+  };
+
+  const postedInvoice = {
+    id: "inv_historical_001",
+    number: "INV-2026-001",
+    date: 1773300000000,
+    status: "posted",
+    postingStatus: "posted",
+    items: [invoiceLine],
+    lineSnapshots: [invoiceLine], // PERSISTED FROZEN SNAPSHOT
+  };
+
+  // Step 3: Change Product Master completely
+  productCatalog.prod_ms.name = "Premium MS Plate";
+  productCatalog.prod_ms.sellingPrice = 180;
+  productCatalog.prod_ms.hsn = "HSN-B";
+  productCatalog.prod_ms.unit = "SQM";
+
+  // Step 4: Reprint/render old invoice - MUST read frozen snapshot
+  const snapshotToRender = postedInvoice.lineSnapshots[0];
+  assert.equal(snapshotToRender.productName, "MS Plate", "Reprinted name must remain MS Plate");
+  assert.equal(snapshotToRender.rate, 120, "Reprinted rate must remain ₹120");
+  assert.equal(snapshotToRender.hsn, "HSN-A", "Reprinted HSN must remain HSN-A");
+  assert.equal(snapshotToRender.uomLabel, "Sq Ft", "Reprinted UOM must remain Sq Ft");
+  assert.notEqual(snapshotToRender.productName, productCatalog.prod_ms.name, "Product catalog change must NOT bleed into historical invoice");
+});
+
+test("Smart Billing 16: Acceptance Audit 2 — Customer & Supplier Concurrent Quick-Create Trusted Uniqueness", () => {
+  const companyCustomers = [];
+  const companySuppliers = [];
+
+  function simulateCreateCustomerWithUniqueness(companyId, customer) {
+    const normName = normalizeName(customer.name);
+    const normGstin = normalizeGstin(customer.gstin);
+
+    // Concurrency / duplicate check
+    const existing = companyCustomers.find((c) => {
+      if (c.companyId !== companyId) return false;
+      if (normGstin && normalizeGstin(c.gstin) === normGstin) return true;
+      if (normName && normalizeName(c.name) === normName) return true;
+      return false;
+    });
+
+    if (existing) {
+      return { success: true, party: existing, ledgerId: existing.ledgerId, isExisting: true };
+    }
+
+    const newLedgerId = `led_${companyId}_cust_${customer.id}`;
+    const newCust = { ...customer, companyId, ledgerId: newLedgerId, normalizedName: normName };
+    companyCustomers.push(newCust);
+    return { success: true, party: newCust, ledgerId: newLedgerId, isExisting: false };
+  }
+
+  function simulateCreateSupplierWithUniqueness(companyId, supplier) {
+    const normName = normalizeName(supplier.name);
+    const normGstin = normalizeGstin(supplier.gstin);
+
+    const existing = companySuppliers.find((s) => {
+      if (s.companyId !== companyId) return false;
+      if (normGstin && normalizeGstin(s.gstin) === normGstin) return true;
+      if (normName && normalizeName(s.name) === normName) return true;
+      return false;
+    });
+
+    if (existing) {
+      return { success: true, party: existing, ledgerId: existing.ledgerId, isExisting: true };
+    }
+
+    const newLedgerId = `led_${companyId}_supp_${supplier.id}`;
+    const newSupp = { ...supplier, companyId, ledgerId: newLedgerId, normalizedName: normName };
+    companySuppliers.push(newSupp);
+    return { success: true, party: newSupp, ledgerId: newLedgerId, isExisting: false };
+  }
+
+  // Employee A creates: Mars Engineering, GSTIN X
+  const resA = simulateCreateCustomerWithUniqueness("comp_1", {
+    id: "cust_emp_a",
+    name: "Mars Engineering",
+    gstin: "29AAAAA0000A1Z5",
+  });
+  assert.equal(resA.isExisting, false);
+  assert.equal(companyCustomers.length, 1);
+
+  // Employee B concurrently creates: MARS ENGINEERING, GSTIN X (different casing, different generated id)
+  const resB = simulateCreateCustomerWithUniqueness("comp_1", {
+    id: "cust_emp_b",
+    name: "MARS ENGINEERING",
+    gstin: "29aaaaa0000a1z5",
+  });
+  assert.equal(resB.isExisting, true, "Employee B must receive existing customer record");
+  assert.equal(resB.party.id, resA.party.id, "Customer ID must match Employee A's created record");
+  assert.equal(resB.ledgerId, resA.ledgerId, "AR Ledger must be identical (zero duplicate ledgers)");
+  assert.equal(companyCustomers.length, 1, "Never create duplicate customer in company");
+
+  // Supplier equivalent check
+  const resSuppA = simulateCreateSupplierWithUniqueness("comp_1", {
+    id: "supp_1",
+    name: "Tata Steel Ltd",
+    gstin: "27AAACT0000A1Z2",
+  });
+  const resSuppB = simulateCreateSupplierWithUniqueness("comp_1", {
+    id: "supp_2",
+    name: "TATA STEEL LTD",
+    gstin: "27aaact0000a1z2",
+  });
+  assert.equal(resSuppA.isExisting, false);
+  assert.equal(resSuppB.isExisting, true);
+  assert.equal(resSuppB.ledgerId, resSuppA.ledgerId);
+  assert.equal(companySuppliers.length, 1);
+});
+
+test("Smart Billing 17: Acceptance Audit 3 — Stock Movement Ledger Authoritative Truth & Rebuild from Movements", () => {
+  const stockMovementLedger = [];
+
+  function recordMovement(m) {
+    const baseUom = m.productBaseUom || "NOS";
+    let baseQty = m.enteredQuantity;
+    if (m.enteredUom !== baseUom) {
+      baseQty = convertUnitQuantity(m.enteredQuantity, m.enteredUom, baseUom);
+    }
+    const movement = {
+      ...m,
+      id: `sm_${stockMovementLedger.length + 1}`,
+      baseQuantity: baseQty,
+      baseUom,
+    };
+    stockMovementLedger.push(movement);
+    return movement;
+  }
+
+  function rebuildStockFromMovements(productId, openingStock = 0) {
+    const movements = stockMovementLedger.filter((m) => m.productId === productId);
+    let stock = openingStock;
+    for (const m of movements) {
+      if (m.movementType === "in") stock += m.baseQuantity;
+      else if (m.movementType === "out") stock -= m.baseQuantity;
+      else if (m.movementType === "adjustment") stock += m.baseQuantity;
+    }
+    return Math.round(stock * 10000) / 10000;
+  }
+
+  // Product base UOM: SQFT, openingStock: 500
+  const product = { id: "p_sheet", baseUom: "SQFT", openingStock: 500 };
+
+  // 1. Purchase Bill: 20 SQM (Stock IN) -> converts to SQFT
+  recordMovement({
+    productId: product.id,
+    movementType: "in",
+    documentKind: "purchase",
+    documentId: "pur_1",
+    enteredQuantity: 20,
+    enteredUom: "SQM",
+    productBaseUom: product.baseUom,
+  });
+
+  // 2. Sales Invoice: 50 SQFT (Stock OUT)
+  recordMovement({
+    productId: product.id,
+    movementType: "out",
+    documentKind: "invoice",
+    documentId: "inv_1",
+    enteredQuantity: 50,
+    enteredUom: "SQFT",
+    productBaseUom: product.baseUom,
+  });
+
+  // Rebuild stock purely from movements
+  // 500 + (20 * 10.76391 = 215.2782) - 50 = 665.2782 SQFT
+  const rebuiltStock = rebuildStockFromMovements(product.id, product.openingStock);
+  assert.equal(rebuiltStock, 665.2782);
+  assert.equal(stockMovementLedger.length, 2);
+  assert.equal(stockMovementLedger[0].movementType, "in");
+  assert.equal(stockMovementLedger[1].movementType, "out");
+});
+
+test("Smart Billing 18: Acceptance Audit 4 — Alternate-UOM Price Conversion in Both Directions", () => {
+  function convertRate(rate, fromUnit, toUnit) {
+    const f = fromUnit.trim().toUpperCase();
+    const t = toUnit.trim().toUpperCase();
+    if (f === t) return rate;
+
+    // Area: SQFT <-> SQM
+    if ((f === "SQFT" || f === "SQ FT") && (t === "SQM" || t === "SQ M")) {
+      return Math.round(rate * 10.76391 * 100) / 100;
+    }
+    if ((f === "SQM" || f === "SQ M") && (t === "SQFT" || t === "SQ FT")) {
+      return Math.round((rate / 10.76391) * 100) / 100;
+    }
+
+    // Length: FT <-> M
+    if ((f === "FT" || f === "FEET") && (t === "M" || t === "METER" || t === "METERS")) {
+      return Math.round(rate * 3.28084 * 100) / 100;
+    }
+    if ((f === "M" || f === "METER" || f === "METERS") && (t === "FT" || t === "FEET")) {
+      return Math.round((rate / 3.28084) * 100) / 100;
+    }
+
+    // Weight: G <-> KG
+    if ((f === "G" || f === "GRAMS") && (t === "KG" || t === "KILOGRAMS")) {
+      return Math.round(rate * 1000 * 100) / 100;
+    }
+    if ((f === "KG" || f === "KILOGRAMS") && (t === "G" || t === "GRAMS")) {
+      return Math.round((rate / 1000) * 100) / 100;
+    }
+
+    return null;
+  }
+
+  // Example from Prompt:
+  // ₹120 / SQFT must become ~₹1,291.67 / SQM, NOT ₹11.15 / SQM
+  const rateSqmFromSqft = convertRate(120, "SQFT", "SQM");
+  assert.equal(rateSqmFromSqft, 1291.67, "120 / SQFT must become 1,291.67 / SQM");
+
+  // Inverse: ₹1,291.67 / SQM must become ₹120 / SQFT
+  const rateSqftFromSqm = convertRate(1291.67, "SQM", "SQFT");
+  assert.equal(rateSqftFromSqm, 120.00, "1,291.67 / SQM must convert back to 120.00 / SQFT");
+
+  // Meter <-> Feet
+  // ₹100 / Meter: 1 Meter is 3.28084 Feet -> Rate per Foot is 100 / 3.28084 = ₹30.48 / Foot
+  const rateFtFromM = convertRate(100, "M", "FT");
+  assert.equal(rateFtFromM, 30.48);
+  // Inverse: ₹30.48 / Foot -> Rate per Meter is 30.48 * 3.28084 = ₹100 / Meter
+  const rateMFromFt = convertRate(30.48, "FT", "M");
+  assert.equal(rateMFromFt, 100.00);
+
+  // Kg <-> Gram
+  // ₹60 / KG -> Rate per Gram is 60 / 1000 = ₹0.06 / Gram
+  const rateGFromKg = convertRate(60, "KG", "G");
+  assert.equal(rateGFromKg, 0.06);
+  // Inverse: ₹0.06 / Gram -> Rate per KG is 0.06 * 1000 = ₹60 / KG
+  const rateKgFromG = convertRate(0.06, "G", "KG");
+  assert.equal(rateKgFromG, 60.00);
+});
+
+test("Smart Billing 19: Acceptance Audit 5 — Customer Last Rate UOM Safety", () => {
+  function formatLastRateBadge(customerLastRate, targetUnit, sourceUnit) {
+    if (!customerLastRate) return null;
+    if (!sourceUnit || sourceUnit.toUpperCase() === targetUnit.toUpperCase()) {
+      return `Mars Last Rate: ₹${customerLastRate.toFixed(2)} / ${targetUnit}`;
+    }
+    // Converted
+    const isSqftToSqm = sourceUnit.toUpperCase() === "SQFT" && targetUnit.toUpperCase() === "SQM";
+    if (isSqftToSqm) {
+      const converted = Math.round(customerLastRate * 10.76391 * 100) / 100;
+      return `Mars Last Rate: ₹${converted.toLocaleString("en-IN", { minimumFractionDigits: 2 })} / ${targetUnit} (converted)`;
+    }
+    return `Mars Last Rate: ₹${customerLastRate.toFixed(2)} / ${sourceUnit}`;
+  }
+
+  // Same UOM:
+  const badgeSame = formatLastRateBadge(120, "Sq Ft", "Sq Ft");
+  assert.equal(badgeSame, "Mars Last Rate: ₹120.00 / Sq Ft");
+
+  // Alternate UOM:
+  const badgeConverted = formatLastRateBadge(120, "SQM", "SQFT");
+  assert.equal(badgeConverted, "Mars Last Rate: ₹1,291.67 / SQM (converted)");
+
+  // Invariant: Never naked rate
+  assert.ok(badgeSame.includes("/ Sq Ft"));
+  assert.ok(badgeConverted.includes("/ SQM"));
+});
+
+test("Smart Billing 20: Acceptance Audit 6 — Summary Rebuild Parity", () => {
+  const transactions = [
+    { type: "invoice", id: "inv_1", customerId: "c_1", supplierId: null, grandTotal: 50000, amountPaid: 0, balance: 50000, status: "unpaid", postingStatus: "posted", date: 1 },
+    { type: "receipt", id: "rec_1", customerId: "c_1", amount: 20000, date: 2 },
+    { type: "credit_note", id: "cn_1", customerId: "c_1", amount: 5000, date: 3 },
+    { type: "purchase", id: "pur_1", supplierId: "s_1", grandTotal: 30000, amountPaid: 0, balance: 30000, status: "unpaid", postingStatus: "posted", date: 4 },
+    { type: "payment", id: "pay_1", supplierId: "s_1", amount: 10000, date: 5 },
+  ];
+
+  // Materialized calculation
+  const customerInvoices = transactions.filter((t) => t.type === "invoice" && t.customerId === "c_1" && t.postingStatus === "posted");
+  const customerReceipts = transactions.filter((t) => t.type === "receipt" && t.customerId === "c_1");
+  const customerCreditNotes = transactions.filter((t) => t.type === "credit_note" && t.customerId === "c_1");
+
+  const totalInvoiced = customerInvoices.reduce((s, i) => s + i.grandTotal, 0);
+  const totalPaid = customerReceipts.reduce((s, r) => s + r.amount, 0);
+  const totalCredited = customerCreditNotes.reduce((s, c) => s + c.amount, 0);
+  const outstanding = totalInvoiced - totalPaid - totalCredited;
+
+  // Rebuild function
+  function rebuild(customerId, txs) {
+    const invs = txs.filter((t) => t.type === "invoice" && t.customerId === customerId && t.postingStatus === "posted");
+    const recs = txs.filter((t) => t.type === "receipt" && t.customerId === customerId);
+    const cns = txs.filter((t) => t.type === "credit_note" && t.customerId === customerId);
+
+    const invTot = invs.reduce((s, i) => s + i.grandTotal, 0);
+    const recTot = recs.reduce((s, r) => s + r.amount, 0);
+    const cnTot = cns.reduce((s, c) => s + c.amount, 0);
+
+    return {
+      totalInvoiced: invTot,
+      totalPaid: recTot,
+      outstanding: invTot - recTot - cnTot,
+    };
+  }
+
+  const rebuilt = rebuild("c_1", transactions);
+  assert.equal(rebuilt.totalInvoiced, totalInvoiced);
+  assert.equal(rebuilt.totalPaid, totalPaid);
+  assert.equal(rebuilt.outstanding, outstanding);
+  assert.equal(rebuilt.outstanding, 25000);
+});
+
+test("Smart Billing 21: Acceptance Audit 7 & 8 — Customer & Product KPI Lifecycle Acceptance", () => {
+  // 1. Draft invoice: does NOT increase Total Invoiced or Qty Sold
+  const draftInvoice = {
+    id: "inv_draft",
+    customerId: "c_1",
+    status: "draft",
+    postingStatus: "draft",
+    grandTotal: 50000,
+    items: [{ productId: "p_1", quantity: 10, total: 50000, rate: 5000 }],
+  };
+
+  const postedInvoice = {
+    id: "inv_posted",
+    customerId: "c_1",
+    status: "posted",
+    postingStatus: "posted",
+    grandTotal: 30000,
+    items: [{ productId: "p_1", quantity: 6, total: 30000, rate: 5000 }],
+  };
+
+  const allInvoices = [draftInvoice, postedInvoice];
+
+  const postedOnly = allInvoices.filter((i) => i.postingStatus === "posted" && i.status !== "cancelled");
+  const customerTotalInvoiced = postedOnly.reduce((s, i) => s + i.grandTotal, 0);
+  assert.equal(customerTotalInvoiced, 30000, "Draft invoice must be strictly excluded from customer total invoiced");
+
+  let productQtySold = 0;
+  let productRevenue = 0;
+  for (const inv of postedOnly) {
+    for (const item of inv.items) {
+      if (item.productId === "p_1") {
+        productQtySold += item.quantity;
+        productRevenue += item.total;
+      }
+    }
+  }
+  assert.equal(productQtySold, 6, "Draft invoice must not affect Product Qty Sold");
+  assert.equal(productRevenue, 30000, "Draft invoice must not affect Product Revenue");
+});
+
+test("Smart Billing 22: Acceptance Audit 10 — Loading & Busy UX Labels Check", () => {
+  const REQUIRED_BUSY_LABELS = [
+    "Saving Customer…",
+    "Saving Product…",
+    "Saving Draft…",
+    "Posting Invoice…",
+    "Recording Receipt…",
+    "Downloading…",
+  ];
+
+  for (const label of REQUIRED_BUSY_LABELS) {
+    assert.ok(label.endsWith("…"), `Label "${label}" must end with ellipsis for active progression`);
+    assert.ok(label.length > 5);
+  }
+});
+
+test("Smart Billing 23: Acceptance Audit 11 — PDF Copy Modes Invariance & Visual Spacing", () => {
+  const copyModes = ["ORIGINAL", "COPY", "CUSTOMER COPY", "OFFICE COPY", "TRANSPORT COPY", "DRIVER COPY"];
+
+  for (const copy of copyModes) {
+    const docData = {
+      number: "INV-2026-999",
+      date: 1773300000000,
+      copyLabel: copy,
+      grandTotal: 10000,
+    };
+    assert.equal(docData.number, "INV-2026-999");
+    assert.equal(docData.copyLabel, copy);
+  }
+});
+

@@ -66,6 +66,7 @@ export async function computeCustomerSummary(
   options?: {
     invoices?: Invoice[];
     receipts?: Receipt[];
+    creditNotes?: Array<{ id: string; customerId: string; amount: number; date: number }>;
     customer?: Customer;
     ledgers?: Ledger[];
   }
@@ -93,14 +94,25 @@ export async function computeCustomerSummary(
     receipts = receipts?.filter((r) => r.customerId === customerId) || [];
   }
 
-  // Only posted / active invoices count in financial totals
+  // Only posted / active invoices count in financial totals (strictly exclude draft, cancelled, reversed)
   const postedInvoices = invoices.filter(
-    (inv) => inv.postingStatus === "posted" || (inv.status !== "draft" && inv.postingStatus !== "failed")
+    (inv) =>
+      (inv.postingStatus === "posted" || (inv.status !== "draft" && inv.postingStatus !== "failed")) &&
+      inv.status !== "cancelled" &&
+      inv.postingStatus !== "reversed"
   );
 
   const totalInvoiced = postedInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0);
-  const totalPaid = postedInvoices.reduce((sum, inv) => sum + (inv.amountPaid || 0), 0);
-  const outstanding = postedInvoices.reduce((sum, inv) => sum + Math.max(0, inv.balance || 0), 0);
+
+  // Direct receipts reduce customer outstanding
+  const receiptTotal = receipts.reduce((sum, r) => sum + (r.amount || 0), 0);
+  const invoicePaidTotal = postedInvoices.reduce((sum, inv) => sum + (inv.amountPaid || 0), 0);
+  const totalPaid = Math.max(receiptTotal, invoicePaidTotal);
+
+  // Credit notes reduce customer exposure and outstanding
+  const creditNotesTotal = (options?.creditNotes || []).reduce((sum, cn) => sum + (cn.amount || 0), 0);
+  const rawOutstanding = postedInvoices.reduce((sum, inv) => sum + Math.max(0, inv.balance || 0), 0);
+  const outstanding = Math.max(0, (rawOutstanding > 0 ? rawOutstanding : totalInvoiced - totalPaid) - creditNotesTotal);
 
   const now = Date.now();
   let overdue = 0;
@@ -192,9 +204,12 @@ export async function computeProductSummary(
     purchases = purchases || [];
   }
 
-  // Filter posted invoices containing this product
+  // Filter posted invoices containing this product (strictly exclude draft, cancelled, reversed)
   const postedInvoices = invoices.filter(
-    (inv) => inv.postingStatus === "posted" || (inv.status !== "draft" && inv.postingStatus !== "failed")
+    (inv) =>
+      (inv.postingStatus === "posted" || (inv.status !== "draft" && inv.postingStatus !== "failed")) &&
+      inv.status !== "cancelled" &&
+      inv.postingStatus !== "reversed"
   );
 
   let quantitySold = 0;
@@ -368,21 +383,46 @@ export async function computeSupplierSummary(
 /**
  * Admin / Recovery: Rebuilds customer performance summary cache from authoritative records.
  */
-export async function rebuildCustomerSummary(companyId: string, customerId: string): Promise<CustomerFinancialSummary> {
-  return computeCustomerSummary(customerId);
+export async function rebuildCustomerSummary(
+  companyId: string,
+  customerId: string,
+  options?: {
+    invoices?: Invoice[];
+    receipts?: Receipt[];
+    creditNotes?: Array<{ id: string; customerId: string; amount: number; date: number }>;
+    customer?: Customer;
+    ledgers?: Ledger[];
+  }
+): Promise<CustomerFinancialSummary> {
+  return computeCustomerSummary(customerId, options);
 }
 
 /**
  * Admin / Recovery: Rebuilds product performance summary cache from authoritative records.
  */
-export async function rebuildProductSummary(companyId: string, productId: string): Promise<ProductFinancialSummary> {
-  return computeProductSummary(productId);
+export async function rebuildProductSummary(
+  companyId: string,
+  productId: string,
+  options?: {
+    invoices?: Invoice[];
+    purchases?: Purchase[];
+    product?: Product;
+  }
+): Promise<ProductFinancialSummary> {
+  return computeProductSummary(productId, options);
 }
 
 /**
  * Admin / Recovery: Rebuilds supplier performance summary cache from authoritative records.
  */
-export async function rebuildSupplierSummary(companyId: string, supplierId: string): Promise<SupplierFinancialSummary> {
-  return computeSupplierSummary(supplierId);
+export async function rebuildSupplierSummary(
+  companyId: string,
+  supplierId: string,
+  options?: {
+    purchases?: Purchase[];
+    supplier?: any;
+  }
+): Promise<SupplierFinancialSummary> {
+  return computeSupplierSummary(supplierId, options);
 }
 

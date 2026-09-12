@@ -202,12 +202,24 @@ export interface CreateSupplierWithLedgerParams {
   idempotencyKey?: string;
 }
 
+export function normalizePartyName(name?: string): string {
+  return (name || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function normalizePartyGstin(gstin?: string): string {
+  return (gstin || "").trim().toUpperCase();
+}
+
+const MEMORY_COMPANY_CUSTOMERS: Record<string, Array<{ customer: CustomerParty; ledger: Ledger }>> = {};
+const MEMORY_COMPANY_SUPPLIERS: Record<string, Array<{ supplier: SupplierParty; ledger: Ledger }>> = {};
+
 export interface PartyWithLedgerResult<P> {
   success: boolean;
   party: P;
   ledgerId: string;
   ledger: Ledger;
   isExisting?: boolean;
+  conflictType?: "gstin" | "name" | "id";
   error?: string;
 }
 
@@ -224,43 +236,73 @@ export async function createCustomerWithLedger(
   const canonicalLedgerId = customer.ledgerId || `led_${companyId}_cust_${customer.id}`;
   const now = Date.now();
 
-  try {
-    if (firebaseDb) {
-      // 1. Idempotency Check via idempotencyKey or existing customer
-      if (idempotencyKey) {
-        const mutSnap = await get(ref(firebaseDb, `companyData/${companyId}/partyMutations/${idempotencyKey}`));
-        if (mutSnap.exists()) {
-          const mut = mutSnap.val();
-          const existCustSnap = await get(ref(firebaseDb, `companyData/${companyId}/customers/${mut.customerId}`));
-          const existLedSnap = await get(ref(firebaseDb, `companyData/${companyId}/ledgers/${mut.ledgerId}`));
-          if (existCustSnap.exists() && existLedSnap.exists()) {
-            return {
-              success: true,
-              party: existCustSnap.val(),
-              ledgerId: mut.ledgerId,
-              ledger: existLedSnap.val(),
-              isExisting: true,
-            };
+    const normName = normalizePartyName(customer.name);
+    const normGstin = normalizePartyGstin(customer.gstin);
+
+    if (!MEMORY_COMPANY_CUSTOMERS[companyId]) {
+      MEMORY_COMPANY_CUSTOMERS[companyId] = [];
+    }
+    const memList = MEMORY_COMPANY_CUSTOMERS[companyId];
+
+    // Check in-memory list for instant collision resolution
+    for (const item of memList) {
+      if (item.customer.id === customer.id) {
+        return { success: true, party: item.customer, ledgerId: item.customer.ledgerId || canonicalLedgerId, ledger: item.ledger, isExisting: true, conflictType: "id" };
+      }
+      if (normGstin && normalizePartyGstin(item.customer.gstin) === normGstin) {
+        return { success: true, party: item.customer, ledgerId: item.customer.ledgerId || canonicalLedgerId, ledger: item.ledger, isExisting: true, conflictType: "gstin" };
+      }
+      if (normName && normalizePartyName(item.customer.name) === normName) {
+        return { success: true, party: item.customer, ledgerId: item.customer.ledgerId || canonicalLedgerId, ledger: item.ledger, isExisting: true, conflictType: "name" };
+      }
+    }
+
+    try {
+      if (firebaseDb) {
+        // 1. Idempotency Check via idempotencyKey
+        if (idempotencyKey) {
+          const mutSnap = await get(ref(firebaseDb, `companyData/${companyId}/partyMutations/${idempotencyKey}`));
+          if (mutSnap.exists()) {
+            const mut = mutSnap.val();
+            const existCustSnap = await get(ref(firebaseDb, `companyData/${companyId}/customers/${mut.customerId}`));
+            const existLedSnap = await get(ref(firebaseDb, `companyData/${companyId}/ledgers/${mut.ledgerId}`));
+            if (existCustSnap.exists() && existLedSnap.exists()) {
+              return {
+                success: true,
+                party: existCustSnap.val(),
+                ledgerId: mut.ledgerId,
+                ledger: existLedSnap.val(),
+                isExisting: true,
+              };
+            }
+          }
+        }
+
+        // 2. Concurrency Conflict Check in Company Customers
+        const allCustRef = ref(firebaseDb, `companyData/${companyId}/customers`);
+        const allCustSnap = await get(allCustRef);
+        if (allCustSnap.exists()) {
+          const custMap = allCustSnap.val();
+          for (const ext of Object.values(custMap) as CustomerParty[]) {
+            const isIdMatch = ext.id === customer.id;
+            const isGstinMatch = Boolean(normGstin && normalizePartyGstin(ext.gstin) === normGstin);
+            const isNameMatch = Boolean(normName && normalizePartyName(ext.name) === normName);
+            if (isIdMatch || isGstinMatch || isNameMatch) {
+              const lId = ext.ledgerId || `led_${companyId}_cust_${ext.id}`;
+              const ledSnap = await get(ref(firebaseDb, `companyData/${companyId}/ledgers/${lId}`));
+              const foundLedger = ledSnap.exists() ? ledSnap.val() : ({} as Ledger);
+              return {
+                success: true,
+                party: ext,
+                ledgerId: lId,
+                ledger: foundLedger,
+                isExisting: true,
+                conflictType: isGstinMatch ? "gstin" : isNameMatch ? "name" : "id",
+              };
+            }
           }
         }
       }
-
-      // Check if customer already exists
-      const custRef = ref(firebaseDb, `companyData/${companyId}/customers/${customer.id}`);
-      const custSnap = await get(custRef);
-      if (custSnap.exists()) {
-        const existingCust = custSnap.val();
-        const lId = existingCust.ledgerId || canonicalLedgerId;
-        const ledSnap = await get(ref(firebaseDb, `companyData/${companyId}/ledgers/${lId}`));
-        return {
-          success: true,
-          party: existingCust,
-          ledgerId: lId,
-          ledger: ledSnap.exists() ? ledSnap.val() : ({} as Ledger),
-          isExisting: true,
-        };
-      }
-    }
 
     // 2. Prepare Ledger Record under Sundry Debtors
     const openingPaise = Math.round((customer.openingBalance || 0) * 100);
@@ -339,6 +381,8 @@ export async function createCustomerWithLedger(
       data: ledger,
     });
 
+    memList.push({ customer: customerToSave, ledger });
+
     return {
       success: true,
       party: customerToSave,
@@ -371,6 +415,27 @@ export async function createSupplierWithLedger(
   const canonicalLedgerId = supplier.ledgerId || `led_${companyId}_supp_${supplier.id}`;
   const now = Date.now();
 
+  const normName = normalizePartyName(supplier.name);
+  const normGstin = normalizePartyGstin(supplier.gstin);
+
+  if (!MEMORY_COMPANY_SUPPLIERS[companyId]) {
+    MEMORY_COMPANY_SUPPLIERS[companyId] = [];
+  }
+  const memList = MEMORY_COMPANY_SUPPLIERS[companyId];
+
+  // Check in-memory list for instant collision resolution
+  for (const item of memList) {
+    if (item.supplier.id === supplier.id) {
+      return { success: true, party: item.supplier, ledgerId: item.supplier.ledgerId || canonicalLedgerId, ledger: item.ledger, isExisting: true, conflictType: "id" };
+    }
+    if (normGstin && normalizePartyGstin(item.supplier.gstin) === normGstin) {
+      return { success: true, party: item.supplier, ledgerId: item.supplier.ledgerId || canonicalLedgerId, ledger: item.ledger, isExisting: true, conflictType: "gstin" };
+    }
+    if (normName && normalizePartyName(item.supplier.name) === normName) {
+      return { success: true, party: item.supplier, ledgerId: item.supplier.ledgerId || canonicalLedgerId, ledger: item.ledger, isExisting: true, conflictType: "name" };
+    }
+  }
+
   try {
     if (firebaseDb) {
       if (idempotencyKey) {
@@ -391,19 +456,29 @@ export async function createSupplierWithLedger(
         }
       }
 
-      const suppRef = ref(firebaseDb, `companyData/${companyId}/suppliers/${supplier.id}`);
-      const suppSnap = await get(suppRef);
-      if (suppSnap.exists()) {
-        const existingSupp = suppSnap.val();
-        const lId = existingSupp.ledgerId || canonicalLedgerId;
-        const ledSnap = await get(ref(firebaseDb, `companyData/${companyId}/ledgers/${lId}`));
-        return {
-          success: true,
-          party: existingSupp,
-          ledgerId: lId,
-          ledger: ledSnap.exists() ? ledSnap.val() : ({} as Ledger),
-          isExisting: true,
-        };
+      // Concurrency Conflict Check in Company Suppliers
+      const allSuppRef = ref(firebaseDb, `companyData/${companyId}/suppliers`);
+      const allSuppSnap = await get(allSuppRef);
+      if (allSuppSnap.exists()) {
+        const suppMap = allSuppSnap.val();
+        for (const ext of Object.values(suppMap) as SupplierParty[]) {
+          const isIdMatch = ext.id === supplier.id;
+          const isGstinMatch = Boolean(normGstin && normalizePartyGstin(ext.gstin) === normGstin);
+          const isNameMatch = Boolean(normName && normalizePartyName(ext.name) === normName);
+          if (isIdMatch || isGstinMatch || isNameMatch) {
+            const lId = ext.ledgerId || `led_${companyId}_supp_${ext.id}`;
+            const ledSnap = await get(ref(firebaseDb, `companyData/${companyId}/ledgers/${lId}`));
+            const foundLedger = ledSnap.exists() ? ledSnap.val() : ({} as Ledger);
+            return {
+              success: true,
+              party: ext,
+              ledgerId: lId,
+              ledger: foundLedger,
+              isExisting: true,
+              conflictType: isGstinMatch ? "gstin" : isNameMatch ? "name" : "id",
+            };
+          }
+        }
       }
     }
 
@@ -480,6 +555,8 @@ export async function createSupplierWithLedger(
       entityId: canonicalLedgerId,
       data: ledger,
     });
+
+    memList.push({ supplier: supplierToSave, ledger });
 
     return {
       success: true,

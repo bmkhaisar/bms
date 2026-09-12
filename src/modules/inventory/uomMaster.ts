@@ -161,3 +161,56 @@ export function convertUnit(val: number, fromUnit: string, toUnit: string): numb
 
   return null; // Non-convertible
 }
+
+/**
+ * Deterministic Rate / Price Conversion between compatible dimensions
+ * Note: Rate conversion is mathematically the inverse of quantity conversion.
+ * If 1 SQM = 10.76391 SQFT:
+ * - Rate of ₹120 / SQFT becomes ₹120 * 10.76391 = ₹1,291.67 / SQM
+ * - Rate of ₹1,291.67 / SQM becomes ₹1,291.67 / 10.76391 = ₹120 / SQFT
+ */
+export function convertRate(rate: number, fromUnit: string, toUnit: string): number | null {
+  const f = fromUnit.trim().toUpperCase();
+  const t = toUnit.trim().toUpperCase();
+  if (f === t) return rate;
+
+  // Area: SQFT <-> SQM
+  if ((f === "SQFT" || f === "SQ FT") && (t === "SQM" || t === "SQ M")) {
+    return Math.round(rate * 10.76391 * 100) / 100;
+  }
+  if ((f === "SQM" || f === "SQ M") && (t === "SQFT" || t === "SQ FT")) {
+    return Math.round((rate / 10.76391) * 100) / 100;
+  }
+
+  // Length: FT <-> M
+  if ((f === "FT" || f === "FEET") && (t === "M" || t === "METER" || t === "METERS")) {
+    return Math.round(rate * 3.28084 * 100) / 100;
+  }
+  if ((f === "M" || f === "METER" || f === "METERS") && (t === "FT" || t === "FEET")) {
+    return Math.round((rate / 3.28084) * 100) / 100;
+  }
+
+  // Weight: G <-> KG
+  if ((f === "G" || f === "GRAMS") && (t === "KG" || t === "KILOGRAMS")) {
+    return Math.round(rate * 1000 * 100) / 100;
+  }
+  if ((f === "KG" || f === "KILOGRAMS") && (t === "G" || t === "GRAMS")) {
+    return Math.round((rate / 1000) * 100) / 100;
+  }
+
+  // Weight: KG <-> TON
+  if ((f === "KG" || f === "KILOGRAMS") && (t === "TON" || t === "TONS")) {
+    return Math.round(rate * 1000 * 100) / 100;
+  }
+  if ((f === "TON" || f === "TONS") && (t === "KG" || t === "KILOGRAMS")) {
+    return Math.round((rate / 1000) * 100) / 100;
+  }
+
+  return null;
+}
+
+export function convertRatePaise(ratePaise: number, fromUnit: string, toUnit: string): number | null {
+  const converted = convertRate(ratePaise / 100, fromUnit, toUnit);
+  if (converted === null) return null;
+  return Math.round(converted * 100);
+}

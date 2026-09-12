@@ -381,9 +381,9 @@ export function LineItemsEditor({
                             type="button"
                             onClick={() => update(i, { rate: pi.lastSoldRate! })}
                             className="px-1.5 py-0.2 rounded bg-sky-500/10 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300 font-mono transition-colors"
-                            title="Click to apply last sold rate"
+                            title={`Apply last sold rate: ${formatMoney(pi.lastSoldRate)} / ${it.unit || pi.unit}`}
                           >
-                            Last Sold: {formatMoney(pi.lastSoldRate)}
+                            Last Sold: {formatMoney(pi.lastSoldRate)} / {it.unit || pi.unit}
                           </button>
                         )}
                         {pi.customerLastRate !== null && (
@@ -391,9 +391,10 @@ export function LineItemsEditor({
                             type="button"
                             onClick={() => update(i, { rate: pi.customerLastRate! })}
                             className="px-1.5 py-0.2 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-mono font-medium transition-colors"
-                            title="Click to apply customer's previous purchase rate"
+                            title={`Apply customer last rate: ${formatMoney(pi.customerLastRate)} / ${it.unit || pi.unit}${pi.isUomConverted ? " (converted from alternate unit)" : ""}`}
                           >
-                            Cust Last: {formatMoney(pi.customerLastRate)}
+                            Cust Last: {formatMoney(pi.customerLastRate)} / {it.unit || pi.unit}
+                            {pi.isUomConverted ? " (converted)" : ""}
                           </button>
                         )}
                       </div>

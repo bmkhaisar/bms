@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Download, Printer, Copy, FileText, CheckCircle2, ShieldCheck } from "lucide-react";
+import { Download, Printer, Copy, FileText, CheckCircle2, ShieldCheck, Loader2 } from "lucide-react";
 import { downloadDocumentPDF, type NormalizedDocument, type DocumentCopyType } from "@/lib/documentRenderer";
 import { toast } from "sonner";
 
@@ -121,7 +121,15 @@ export function DocumentCopyModal({ open, onOpenChange, docData, onPrint }: Prop
             <Printer className="h-4 w-4" /> Print {copyLabel}
           </Button>
           <Button size="sm" onClick={handleDownload} disabled={downloading} className="gap-1.5">
-            <Download className="h-4 w-4" /> Download PDF
+            {downloading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Downloading…
+              </>
+            ) : (
+              <>
+                <Download className="h-4 w-4" /> Download PDF
+              </>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
