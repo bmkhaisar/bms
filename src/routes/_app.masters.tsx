@@ -64,7 +64,9 @@ function MastersPage() {
 function SizesMaster() {
   const items = useLive<SizePreset>(() => db().sizes.orderBy("label").toArray());
   const [label, setLabel] = useState("");
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   async function add() {
     if (!label.trim()) return;
     await db().sizes.put({ id: uid(), label: label.trim(), createdAt: Date.now() });
@@ -79,14 +81,33 @@ function SizesMaster() {
       {items.length === 0 ? <Empty text="No sizes yet" /> : (
         <div className="flex flex-wrap gap-2">
           {items.map(s => (
-            <Badge key={s.id} variant="secondary" className="cursor-pointer gap-1 py-1.5" onClick={() => setDeleteId(s.id)}>
+            <Badge key={s.id} variant="secondary" className="cursor-pointer gap-1 py-1.5" onClick={() => setDeleteTarget({ id: s.id, label: s.label })}>
               {s.label} <Trash2 className="h-3 w-3" />
             </Badge>
           ))}
         </div>
       )}
-      <ConfirmDialog open={!!deleteId} onOpenChange={o => !o && setDeleteId(null)} title="Delete this size?" destructive confirmText="Delete"
-        onConfirm={async () => { if (deleteId) { await db().sizes.delete(deleteId); toast.success("Deleted"); } }} />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={o => !o && setDeleteTarget(null)}
+        title={`Delete size "${deleteTarget?.label}"?`}
+        description="This dimension preset will be removed from future quotations."
+        destructive
+        confirmText="Delete Size"
+        isBusy={isDeleting}
+        busyText="Deleting..."
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setIsDeleting(true);
+          try {
+            await db().sizes.delete(deleteTarget.id);
+            toast.success(`Size "${deleteTarget.label}" deleted`);
+            setDeleteTarget(null);
+          } finally {
+            setIsDeleting(false);
+          }
+        }}
+      />
     </Card>
   );
 }
@@ -95,7 +116,8 @@ function SizesMaster() {
 function TermsMaster() {
   const items = useLive<TermsTemplate>(() => db().termsTemplates.orderBy("name").toArray());
   const [editing, setEditing] = useState<TermsTemplate | null>(null);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   async function setDefault(id: string) {
     for (const t of items) await db().termsTemplates.put({ ...t, isDefault: t.id === id });
@@ -128,7 +150,7 @@ function TermsMaster() {
                     {t.isDefault ? <StarOff className="h-4 w-4" /> : <Star className="h-4 w-4" />}
                   </Button>
                   <Button size="icon" variant="ghost" onClick={() => setEditing({ ...t })}><Pencil className="h-4 w-4" /></Button>
-                  <Button size="icon" variant="ghost" onClick={() => setDeleteId(t.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                  <Button size="icon" variant="ghost" onClick={() => setDeleteTarget({ id: t.id, name: t.name })}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                 </TableCell>
               </TableRow>
             ))}
@@ -177,8 +199,27 @@ function TermsMaster() {
         </DialogContent>
       </Dialog>
 
-      <ConfirmDialog open={!!deleteId} onOpenChange={o => !o && setDeleteId(null)} title="Delete this template?" destructive confirmText="Delete"
-        onConfirm={async () => { if (deleteId) { await db().termsTemplates.delete(deleteId); toast.success("Deleted"); } }} />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={o => !o && setDeleteTarget(null)}
+        title={`Delete template "${deleteTarget?.name}"?`}
+        description="This terms template will be removed from master templates. Existing quotations will retain their current terms."
+        destructive
+        confirmText="Delete Template"
+        isBusy={isDeleting}
+        busyText="Deleting..."
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setIsDeleting(true);
+          try {
+            await db().termsTemplates.delete(deleteTarget.id);
+            toast.success(`Template "${deleteTarget.name}" deleted`);
+            setDeleteTarget(null);
+          } finally {
+            setIsDeleting(false);
+          }
+        }}
+      />
     </Card>
   );
 }
@@ -187,7 +228,8 @@ function TermsMaster() {
 function GeneralInfoMaster() {
   const items = useLive<GeneralInfoTemplate>(() => db().generalInfoTemplates.orderBy("name").toArray());
   const [editing, setEditing] = useState<GeneralInfoTemplate | null>(null);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const DEFAULT_KEYS = ["Configuration", "Transportation", "Foundation", "Structural Stability", "Roof Type", "Ventilation", "Wiring", "Insulation", "Power Connection"];
   function newTemplate(): GeneralInfoTemplate {
     return { id: uid(), name: "New template", fields: DEFAULT_KEYS.map(k => ({ key: k, label: k, value: "" })), createdAt: Date.now() };
@@ -208,7 +250,7 @@ function GeneralInfoMaster() {
                 <TableCell className="text-muted-foreground">{t.fields.length} fields</TableCell>
                 <TableCell className="text-right">
                   <Button size="icon" variant="ghost" onClick={() => setEditing({ ...t, fields: [...t.fields] })}><Pencil className="h-4 w-4" /></Button>
-                  <Button size="icon" variant="ghost" onClick={() => setDeleteId(t.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                  <Button size="icon" variant="ghost" onClick={() => setDeleteTarget({ id: t.id, name: t.name })}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                 </TableCell>
               </TableRow>
             ))}
@@ -249,8 +291,27 @@ function GeneralInfoMaster() {
         </DialogContent>
       </Dialog>
 
-      <ConfirmDialog open={!!deleteId} onOpenChange={o => !o && setDeleteId(null)} title="Delete this template?" destructive confirmText="Delete"
-        onConfirm={async () => { if (deleteId) { await db().generalInfoTemplates.delete(deleteId); toast.success("Deleted"); } }} />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={o => !o && setDeleteTarget(null)}
+        title={`Delete template "${deleteTarget?.name}"?`}
+        description="This general info template will be permanently removed from presets."
+        destructive
+        confirmText="Delete Template"
+        isBusy={isDeleting}
+        busyText="Deleting..."
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setIsDeleting(true);
+          try {
+            await db().generalInfoTemplates.delete(deleteTarget.id);
+            toast.success(`Template "${deleteTarget.name}" deleted`);
+            setDeleteTarget(null);
+          } finally {
+            setIsDeleting(false);
+          }
+        }}
+      />
     </Card>
   );
 }
@@ -259,7 +320,8 @@ function GeneralInfoMaster() {
 function TechSpecMaster() {
   const items = useLive<TechSpecTemplate>(() => db().techSpecTemplates.orderBy("name").toArray());
   const [editing, setEditing] = useState<TechSpecTemplate | null>(null);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const DEFAULT_SECTIONS: TechSpecSection[] = [
     { title: "Frame & Structure", rows: [{ label: "Frame Material", value: "" }, { label: "Base Frame", value: "" }] },
@@ -298,7 +360,7 @@ function TechSpecMaster() {
                 <TableCell className="text-muted-foreground">{t.sections.length} sections</TableCell>
                 <TableCell className="text-right">
                   <Button size="icon" variant="ghost" onClick={() => setEditing({ ...t, sections: t.sections.map(s => ({ ...s, rows: [...s.rows] })) })}><Pencil className="h-4 w-4" /></Button>
-                  <Button size="icon" variant="ghost" onClick={() => setDeleteId(t.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                  <Button size="icon" variant="ghost" onClick={() => setDeleteTarget({ id: t.id, name: t.name })}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                 </TableCell>
               </TableRow>
             ))}
@@ -369,8 +431,27 @@ function TechSpecMaster() {
         </DialogContent>
       </Dialog>
 
-      <ConfirmDialog open={!!deleteId} onOpenChange={o => !o && setDeleteId(null)} title="Delete this template?" destructive confirmText="Delete"
-        onConfirm={async () => { if (deleteId) { await db().techSpecTemplates.delete(deleteId); toast.success("Deleted"); } }} />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={o => !o && setDeleteTarget(null)}
+        title={`Delete template "${deleteTarget?.name}"?`}
+        description="This technical/electrical spec template will be permanently removed from presets."
+        destructive
+        confirmText="Delete Template"
+        isBusy={isDeleting}
+        busyText="Deleting..."
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setIsDeleting(true);
+          try {
+            await db().techSpecTemplates.delete(deleteTarget.id);
+            toast.success(`Template "${deleteTarget.name}" deleted`);
+            setDeleteTarget(null);
+          } finally {
+            setIsDeleting(false);
+          }
+        }}
+      />
     </Card>
   );
 }
@@ -379,7 +460,9 @@ function TechSpecMaster() {
 function BanksMaster() {
   const items = useLive<BankAccount>(() => db().bankAccounts.orderBy("bankName").toArray());
   const [editing, setEditing] = useState<BankAccount | null>(null);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   function fresh(): BankAccount {
     return { id: uid(), bankName: "", accountName: "", accountNo: "", ifsc: "", createdAt: Date.now() };
   }
@@ -408,7 +491,7 @@ function BanksMaster() {
                     {b.isDefault ? <StarOff className="h-4 w-4" /> : <Star className="h-4 w-4" />}
                   </Button>
                   <Button size="icon" variant="ghost" onClick={() => setEditing({ ...b })}><Pencil className="h-4 w-4" /></Button>
-                  <Button size="icon" variant="ghost" onClick={() => setDeleteId(b.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                  <Button size="icon" variant="ghost" onClick={() => setDeleteTarget({ id: b.id, name: `${b.bankName} (${b.accountNo})` })}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                 </TableCell>
               </TableRow>
             ))}
@@ -439,8 +522,27 @@ function BanksMaster() {
         </DialogContent>
       </Dialog>
 
-      <ConfirmDialog open={!!deleteId} onOpenChange={o => !o && setDeleteId(null)} title="Delete this bank?" destructive confirmText="Delete"
-        onConfirm={async () => { if (deleteId) { await db().bankAccounts.delete(deleteId); toast.success("Deleted"); } }} />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={o => !o && setDeleteTarget(null)}
+        title={`Delete bank account "${deleteTarget?.name}"?`}
+        description="This bank account will be removed from future quotation selections."
+        destructive
+        confirmText="Delete Bank"
+        isBusy={isDeleting}
+        busyText="Deleting..."
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setIsDeleting(true);
+          try {
+            await db().bankAccounts.delete(deleteTarget.id);
+            toast.success(`Bank account deleted`);
+            setDeleteTarget(null);
+          } finally {
+            setIsDeleting(false);
+          }
+        }}
+      />
     </Card>
   );
 }
@@ -449,7 +551,9 @@ function BanksMaster() {
 function TemplatesMaster() {
   const items = useLive<QuotationTemplate>(() => db().quotationTemplates.orderBy("name").toArray());
   const [editing, setEditing] = useState<QuotationTemplate | null>(null);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   function fresh(): QuotationTemplate {
     return { id: uid(), name: "New template", accent: "#1e40af", fontFamily: "helvetica", showLogo: true, tableStyle: "grid", createdAt: Date.now() };
   }
@@ -481,7 +585,7 @@ function TemplatesMaster() {
                   </Button>
                   <Button size="icon" variant="ghost" onClick={() => setEditing({ ...t })}><Pencil className="h-4 w-4" /></Button>
                   <Button size="icon" variant="ghost" onClick={() => { const dup = { ...t, id: uid(), name: `${t.name} copy`, isDefault: false, createdAt: Date.now() }; db().quotationTemplates.put(dup); toast.success("Duplicated"); }}><Pencil className="h-4 w-4 rotate-45" /></Button>
-                  <Button size="icon" variant="ghost" onClick={() => setDeleteId(t.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                  <Button size="icon" variant="ghost" onClick={() => setDeleteTarget({ id: t.id, name: t.name })}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                 </TableCell>
               </TableRow>
             ))}
@@ -536,8 +640,27 @@ function TemplatesMaster() {
         </DialogContent>
       </Dialog>
 
-      <ConfirmDialog open={!!deleteId} onOpenChange={o => !o && setDeleteId(null)} title="Delete this template?" destructive confirmText="Delete"
-        onConfirm={async () => { if (deleteId) { await db().quotationTemplates.delete(deleteId); toast.success("Deleted"); } }} />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={o => !o && setDeleteTarget(null)}
+        title={`Delete quotation template "${deleteTarget?.name}"?`}
+        description="This quotation design template will be permanently removed from presets."
+        destructive
+        confirmText="Delete Template"
+        isBusy={isDeleting}
+        busyText="Deleting..."
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setIsDeleting(true);
+          try {
+            await db().quotationTemplates.delete(deleteTarget.id);
+            toast.success(`Template "${deleteTarget.name}" deleted`);
+            setDeleteTarget(null);
+          } finally {
+            setIsDeleting(false);
+          }
+        }}
+      />
     </Card>
   );
 }

@@ -10,11 +10,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { ListToolbar, EmptyState, usePagination, Pager } from "@/components/app/ListHelpers";
-import { Pencil, Plus, Trash2, UserPlus, BookOpen, BarChart3 } from "lucide-react";
+import { Pencil, Plus, Trash2, UserPlus, Eye, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { formatMoney } from "@/lib/format";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
@@ -22,6 +23,8 @@ import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database"
 import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
 import { createCustomerWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 import { CustomerInsightDrawer } from "@/components/app/CustomerInsightDrawer";
+import { performOptimisticMutation } from "@/lib/mutationPipeline";
+import { checkEntityHistoricalUsage, type HistoricalUsageResult } from "@/lib/historicalUsage";
 
 export const Route = createFileRoute("/_app/customers")({
   head: () => ({ meta: [{ title: "Customers — BMS NEXT" }] }),
@@ -32,28 +35,39 @@ const empty: Customer = {
   id: "",
   name: "",
   mobile: "",
+  phone: "",
   email: "",
+  company: "",
   gstin: "",
+  pan: "",
   address: "",
   city: "",
   state: "",
+  stateCode: "",
+  country: "India",
   pincode: "",
-  company: "",
   openingBalance: 0,
+  active: true,
   createdAt: 0,
 };
 
-export function CustomersPage() {
+function CustomersPage() {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const [cloudRows, setCloudRows] = useState<Customer[]>([]);
   const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "ALL" | "INACTIVE">("ACTIVE");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Customer>(empty);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedCustomerIdForDrawer, setSelectedCustomerIdForDrawer] = useState<string | null>(null);
+
+  // Target for delete / deactivate modal
+  const [deleteTarget, setDeleteTarget] = useState<{
+    customer: Customer;
+    usage: HistoricalUsageResult;
+  } | null>(null);
 
   // 1. Initial cached retrieval + Realtime Firebase synchronization
   useEffect(() => {
@@ -61,7 +75,7 @@ export function CustomersPage() {
 
     let active = true;
 
-    // Load from Dexie cache immediately for fast startup
+    // Load from Dexie cache immediately for fast startup (zero-flash)
     getCachedEntities<Customer>({
       uid: user.uid,
       companyId: activeCompany.id,
@@ -93,7 +107,7 @@ export function CustomersPage() {
           }))
         );
 
-        // Sync into local legacy Dexie store for seamless compatibility
+        // Sync into local legacy Dexie store
         for (const c of list) {
           db().customers.put(c);
         }
@@ -110,10 +124,16 @@ export function CustomersPage() {
     };
   }, [activeCompany?.id, user?.uid]);
 
-  // Combine rows preferring cloud/cache when active company exists, else dexie fallback
+  // Synchronize local dexieRows into cloudRows on mount if cloudRows was empty
+  useEffect(() => {
+    if (cloudRows.length === 0 && dexieRows.length > 0) {
+      setCloudRows(dexieRows);
+    }
+  }, [dexieRows]);
+
   const rows = activeCompany?.id && cloudRows.length > 0 ? cloudRows : dexieRows;
 
-  // Deep-link support: auto-filter and open customer editor if id or q present in URL
+  // Deep-link support
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -130,7 +150,10 @@ export function CustomersPage() {
   }, [rows]);
 
   const filtered = rows.filter((r) => {
-    const s = q.toLowerCase();
+    if (statusFilter === "ACTIVE" && r.active === false) return false;
+    if (statusFilter === "INACTIVE" && r.active !== false) return false;
+
+    const s = q.toLowerCase().trim();
     return (
       !s ||
       r.name.toLowerCase().includes(s) ||
@@ -148,8 +171,107 @@ export function CustomersPage() {
   }
 
   function openEdit(r: Customer) {
-    setEditing({ ...r });
+    setEditing({ ...r, active: r.active !== false });
     setOpen(true);
+  }
+
+  async function promptDelete(customer: Customer) {
+    const usage = await checkEntityHistoricalUsage({
+      entityType: "customer",
+      entityId: customer.id,
+    });
+    setDeleteTarget({ customer, usage });
+  }
+
+  async function removeCustomerPermanent(customer: Customer) {
+    const id = customer.id;
+    await performOptimisticMutation<Customer>({
+      entityType: "customer",
+      entityId: id,
+      action: "delete",
+      companyId: activeCompany?.id,
+      uid: user?.uid,
+      capturePreviousState: () => customer,
+      onOptimistic: () => {
+        setCloudRows((prev) => prev.filter((c) => c.id !== id));
+      },
+      onRollback: (prev) => {
+        if (prev) {
+          setCloudRows((list) => [prev, ...list]);
+        }
+      },
+      syncDexie: async () => {
+        await db().customers.delete(id);
+        await db().parties.delete(id);
+        if (activeCompany?.id) {
+          await removeCachedEntity({ companyId: activeCompany.id, entityType: "customer", entityId: id });
+          await removeCachedEntity({ companyId: activeCompany.id, entityType: "party", entityId: id });
+        }
+      },
+      rollbackDexie: async (prev) => {
+        if (prev) {
+          await db().customers.put(prev);
+          await db().parties.put(prev);
+          if (activeCompany?.id && user?.uid) {
+            await cacheEntity({ uid: user.uid, companyId: activeCompany.id, entityType: "customer", entityId: id, data: prev });
+          }
+        }
+      },
+      serverMutation: async () => {
+        if (activeCompany?.id && firebaseDb) {
+          await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/customers/${id}`));
+          await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/parties/${id}`));
+        }
+      },
+      queryKeys: [["customers", activeCompany?.id], ["parties", activeCompany?.id], ["dashboard", activeCompany?.id]],
+      successToast: `Customer "${customer.name}" deleted`,
+      errorToast: "Couldn't delete customer. It has been restored.",
+    });
+  }
+
+  async function deactivateCustomer(customer: Customer) {
+    const deactivated: Customer = { ...customer, active: false };
+    const id = customer.id;
+
+    await performOptimisticMutation<Customer>({
+      entityType: "customer",
+      entityId: id,
+      action: "deactivate",
+      companyId: activeCompany?.id,
+      uid: user?.uid,
+      optimisticData: deactivated,
+      capturePreviousState: () => customer,
+      onOptimistic: () => {
+        setCloudRows((prev) => prev.map((c) => (c.id === id ? deactivated : c)));
+      },
+      onRollback: (prev) => {
+        if (prev) {
+          setCloudRows((list) => list.map((c) => (c.id === prev.id ? prev : c)));
+        }
+      },
+      syncDexie: async () => {
+        await db().customers.put(deactivated);
+        await db().parties.put(deactivated);
+        if (activeCompany?.id && user?.uid) {
+          await cacheEntity({ uid: user.uid, companyId: activeCompany.id, entityType: "customer", entityId: id, data: deactivated });
+        }
+      },
+      rollbackDexie: async (prev) => {
+        if (prev) {
+          await db().customers.put(prev);
+          await db().parties.put(prev);
+        }
+      },
+      serverMutation: async () => {
+        if (activeCompany?.id && firebaseDb) {
+          await set(ref(firebaseDb, `companyData/${activeCompany.id}/customers/${id}`), sanitizeForFirebase(deactivated));
+          await set(ref(firebaseDb, `companyData/${activeCompany.id}/parties/${id}`), sanitizeForFirebase(deactivated));
+        }
+      },
+      queryKeys: [["customers", activeCompany?.id], ["parties", activeCompany?.id], ["dashboard", activeCompany?.id]],
+      successToast: `Customer "${customer.name}" deactivated`,
+      errorToast: "Couldn't deactivate customer. Changes reverted.",
+    });
   }
 
   async function save() {
@@ -162,7 +284,7 @@ export function CustomersPage() {
     try {
       let linkedLedgerId: string | undefined = undefined;
 
-      // 1. Atomic Customer + Accounts Receivable Ledger creation (Correction 3)
+      // 1. Atomic Customer + Accounts Receivable Ledger creation
       if (activeCompany?.id && user?.uid) {
         const res = await createCustomerWithLedger({
           companyId: activeCompany.id,
@@ -181,42 +303,86 @@ export function CustomersPage() {
       const customerToSave: Customer = {
         ...editing,
         name: editing.name.trim(),
-        ledgerId: linkedLedgerId,
+        ledgerId: linkedLedgerId || editing.ledgerId,
+        active: editing.active !== false,
       };
 
-      // 2. Keep local legacy Dexie database updated for immediate UI reaction
-      await db().customers.put(customerToSave);
+      const isNew =
+        !cloudRows.some((c) => c.id === customerToSave.id) &&
+        !dexieRows.some((c) => c.id === customerToSave.id);
 
-      toast.success("Customer saved & linked to Accounts Receivable");
+      await performOptimisticMutation<Customer>({
+        entityType: "customer",
+        entityId: customerToSave.id,
+        action: isNew ? "create" : "update",
+        companyId: activeCompany?.id,
+        uid: user?.uid,
+        optimisticData: customerToSave,
+        onOptimistic: () => {
+          setCloudRows((prev) => {
+            const exists = prev.some((c) => c.id === customerToSave.id);
+            if (exists) {
+              return prev.map((c) => (c.id === customerToSave.id ? customerToSave : c));
+            } else {
+              return [customerToSave, ...prev];
+            }
+          });
+        },
+        onRollback: (prev) => {
+          setCloudRows((prevList) => {
+            if (isNew) {
+              return prevList.filter((c) => c.id !== customerToSave.id);
+            } else if (prev) {
+              return prevList.map((c) => (c.id === prev.id ? prev : c));
+            }
+            return prevList;
+          });
+        },
+        syncDexie: async () => {
+          await db().customers.put(customerToSave);
+          await db().parties.put(customerToSave);
+          if (activeCompany?.id && user?.uid) {
+            await cacheEntity({
+              uid: user.uid,
+              companyId: activeCompany.id,
+              entityType: "customer",
+              entityId: customerToSave.id,
+              data: customerToSave,
+            });
+          }
+        },
+        rollbackDexie: async (prev) => {
+          if (isNew) {
+            await db().customers.delete(customerToSave.id);
+            await db().parties.delete(customerToSave.id);
+            if (activeCompany?.id) {
+              await removeCachedEntity({ companyId: activeCompany.id, entityType: "customer", entityId: customerToSave.id });
+            }
+          } else if (prev) {
+            await db().customers.put(prev);
+          }
+        },
+        serverMutation: async () => {
+          if (activeCompany?.id && firebaseDb) {
+            await set(ref(firebaseDb, `companyData/${activeCompany.id}/customers/${customerToSave.id}`), sanitizeForFirebase(customerToSave));
+            await set(ref(firebaseDb, `companyData/${activeCompany.id}/parties/${customerToSave.id}`), sanitizeForFirebase(customerToSave));
+          }
+        },
+        queryKeys: [["customers", activeCompany?.id], ["parties", activeCompany?.id], ["dashboard", activeCompany?.id]],
+        successToast: isNew ? "Customer saved & linked to Accounts Receivable" : "Customer updated",
+        errorToast: "Unable to save customer. Please check your connection.",
+      });
+
       setOpen(false);
     } catch (err) {
       console.error("Failed to save customer:", err);
-      toast.error("Unable to save customer. Please check your connection.");
     } finally {
       setSaving(false);
     }
   }
 
-  async function remove(id: string) {
-    try {
-      if (activeCompany?.id && firebaseDb) {
-        const custRef = ref(firebaseDb, `companyData/${activeCompany.id}/customers/${id}`);
-        await rtdbRemove(custRef);
-      }
-      if (activeCompany?.id) {
-        await removeCachedEntity({
-          companyId: activeCompany.id,
-          entityType: "customer",
-          entityId: id,
-        });
-      }
-      await db().customers.delete(id);
-      toast.success("Customer deleted");
-    } catch (err) {
-      console.error("Failed to delete customer:", err);
-      toast.error("Unable to delete customer");
-    }
-  }
+  const activeCount = rows.filter((r) => r.active !== false).length;
+  const inactiveCount = rows.filter((r) => r.active === false).length;
 
   return (
     <AppShell title="Customers">
@@ -224,22 +390,41 @@ export function CustomersPage() {
         title="Customers"
         description="Manage customer directory with automatic Accounts Receivable ledger linking."
         actions={
-          <Button onClick={openNew} className="gap-2">
+          <Button onClick={openNew} className="gap-2 shadow-sm">
             <UserPlus className="h-4 w-4" /> Add customer
           </Button>
         }
       />
 
-      <ListToolbar query={q} onQuery={setQ} placeholder="Search by name, company, mobile, GST, email…" />
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-4">
+        <div className="flex-1">
+          <ListToolbar query={q} onQuery={setQ} placeholder="Search by name, company, mobile, GST, email…" />
+        </div>
+        <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as any)} className="w-full sm:w-auto">
+          <TabsList className="h-9 w-full sm:w-auto text-xs grid grid-cols-3">
+            <TabsTrigger value="ACTIVE">Active ({activeCount})</TabsTrigger>
+            <TabsTrigger value="ALL">All ({rows.length})</TabsTrigger>
+            <TabsTrigger value="INACTIVE">Inactive ({inactiveCount})</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
 
-      {rows.length === 0 ? (
+      {filtered.length === 0 ? (
         <EmptyState
-          title="No customers yet"
-          description="Add your first customer to start creating invoices and quotations."
+          title={statusFilter === "INACTIVE" ? "No inactive customers" : "No customers yet"}
+          description={
+            statusFilter === "INACTIVE"
+              ? "All customers are currently active."
+              : q
+              ? `No customers matching "${q}".`
+              : "Add your first customer to start creating invoices and quotations."
+          }
           action={
-            <Button onClick={openNew} className="mt-2 gap-2">
-              <Plus className="h-4 w-4" /> Add customer
-            </Button>
+            statusFilter !== "INACTIVE" && !q ? (
+              <Button onClick={openNew} className="mt-2 gap-2">
+                <Plus className="h-4 w-4" /> Add customer
+              </Button>
+            ) : undefined
           }
         />
       ) : (
@@ -248,56 +433,77 @@ export function CustomersPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name / Entity</TableHead>
-                  <TableHead>Mobile</TableHead>
-                  <TableHead>Email</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Contact</TableHead>
                   <TableHead>GSTIN</TableHead>
-                  <TableHead>Receivable Ledger</TableHead>
-                  <TableHead className="text-right">Opening</TableHead>
+                  <TableHead>Location</TableHead>
                   <TableHead className="w-24 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {pager.items.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-medium">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCustomerIdForDrawer(r.id)}
-                        className="text-left font-semibold text-foreground hover:text-primary hover:underline"
-                      >
-                        {r.name}
-                      </button>
-                      {r.company ? <div className="text-xs text-muted-foreground">{r.company}</div> : null}
-                    </TableCell>
-                    <TableCell>{r.mobile || "—"}</TableCell>
-                    <TableCell>{r.email || "—"}</TableCell>
-                    <TableCell className="font-mono text-xs">{r.gstin || "—"}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-mono">
-                        <BookOpen className="h-3.5 w-3.5 text-primary" />
-                        <span>{r.ledgerId ? "Linked" : "Sundry Debtors"}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right font-mono">{formatMoney(r.openingBalance || 0)}</TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        title="View Financial Insights & History"
-                        onClick={() => setSelectedCustomerIdForDrawer(r.id)}
-                      >
-                        <BarChart3 className="h-4 w-4 text-primary" />
-                      </Button>
-                      <Button size="icon" variant="ghost" onClick={() => openEdit(r)}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button size="icon" variant="ghost" onClick={() => setDeleteId(r.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {pager.items.map((r) => {
+                  const isInactive = r.active === false;
+                  return (
+                    <TableRow key={r.id} className={isInactive ? "opacity-60 bg-muted/20" : ""}>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCustomerIdForDrawer(r.id)}
+                            className="font-semibold text-foreground hover:text-primary hover:underline text-left"
+                          >
+                            {r.name}
+                          </button>
+                          {isInactive && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
+                              Inactive
+                            </Badge>
+                          )}
+                        </div>
+                        {r.company ? <div className="text-xs text-muted-foreground">{r.company}</div> : null}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {r.mobile ? <div>{r.mobile}</div> : null}
+                        {r.email ? <div className="text-muted-foreground">{r.email}</div> : null}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{r.gstin || "—"}</TableCell>
+                      <TableCell className="text-xs">
+                        {[r.city, r.state].filter(Boolean).join(", ") || "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-primary"
+                            title="View Customer Profile & Ledger"
+                            onClick={() => setSelectedCustomerIdForDrawer(r.id)}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            title="Edit Customer"
+                            onClick={() => openEdit(r)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                            title={isInactive ? "Delete Customer" : "Delete or Deactivate Customer"}
+                            onClick={() => promptDelete(r)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -306,25 +512,25 @@ export function CustomersPage() {
       <Pager {...pager} />
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editing.createdAt && editing.name ? "Edit Customer" : "New Customer"}</DialogTitle>
+            <DialogTitle>{rows.find((r) => r.id === editing.id) ? "Edit Customer" : "Add Customer"}</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 text-xs">
             <div className="space-y-1">
-              <Label className="text-xs">Customer Name *</Label>
+              <Label className="text-xs">Name *</Label>
               <Input
                 value={editing.name}
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                placeholder="Individual or Business Name"
+                placeholder="Person or Legal Name"
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Company / Trade Name</Label>
+              <Label className="text-xs">Company Name</Label>
               <Input
                 value={editing.company ?? ""}
                 onChange={(e) => setEditing({ ...editing, company: e.target.value })}
-                placeholder="Optional registered trade name"
+                placeholder="Enterprise Ltd"
               />
             </div>
             <div className="space-y-1">
@@ -332,13 +538,12 @@ export function CustomersPage() {
               <Input
                 value={editing.mobile ?? ""}
                 onChange={(e) => setEditing({ ...editing, mobile: e.target.value })}
-                placeholder="+91 98765 43210"
+                placeholder="9876543210"
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Email Address</Label>
+              <Label className="text-xs">Email</Label>
               <Input
-                type="email"
                 value={editing.email ?? ""}
                 onChange={(e) => setEditing({ ...editing, email: e.target.value })}
                 placeholder="billing@customer.com"
@@ -349,25 +554,24 @@ export function CustomersPage() {
               <Input
                 value={editing.gstin ?? ""}
                 onChange={(e) => setEditing({ ...editing, gstin: e.target.value.toUpperCase() })}
-                placeholder="29AAAAA0000A1Z5"
+                placeholder="27ABCDE1234F1Z5"
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Opening Balance (₹)</Label>
+              <Label className="text-xs">PAN</Label>
               <Input
-                type="number"
-                value={editing.openingBalance || ""}
-                onChange={(e) => setEditing({ ...editing, openingBalance: Number(e.target.value) || 0 })}
-                placeholder="0.00"
+                value={editing.pan ?? ""}
+                onChange={(e) => setEditing({ ...editing, pan: e.target.value.toUpperCase() })}
+                placeholder="ABCDE1234F"
               />
             </div>
-            <div className="sm:col-span-2 space-y-1">
+            <div className="space-y-1 sm:col-span-2">
               <Label className="text-xs">Billing Address</Label>
               <Textarea
                 rows={2}
                 value={editing.address ?? ""}
                 onChange={(e) => setEditing({ ...editing, address: e.target.value })}
-                placeholder="Door/Street, Area"
+                placeholder="Street address, building, floor"
               />
             </div>
             <div className="space-y-1">
@@ -375,49 +579,98 @@ export function CustomersPage() {
               <Input
                 value={editing.city ?? ""}
                 onChange={(e) => setEditing({ ...editing, city: e.target.value })}
-                placeholder="City"
+                placeholder="Mumbai"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">State</Label>
+              <Input
+                value={editing.state ?? ""}
+                onChange={(e) => setEditing({ ...editing, state: e.target.value })}
+                placeholder="Maharashtra"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Country</Label>
+              <Input
+                value={editing.country ?? "India"}
+                onChange={(e) => setEditing({ ...editing, country: e.target.value })}
+                placeholder="India"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Pincode</Label>
+              <Input
+                value={editing.pincode ?? ""}
+                onChange={(e) => setEditing({ ...editing, pincode: e.target.value })}
+                placeholder="400001"
               />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Credit Limit (₹)</Label>
               <Input
                 type="number"
-                value={(editing as any).creditLimit || ""}
-                onChange={(e) => setEditing({ ...editing, creditLimit: Number(e.target.value) || 0 } as any)}
-                placeholder="0 (Unlimited)"
+                value={editing.creditLimit || ""}
+                onChange={(e) => setEditing({ ...editing, creditLimit: Number(e.target.value) || 0 })}
+                placeholder="0.00"
               />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Credit Days</Label>
               <Input
                 type="number"
-                value={(editing as any).creditDays || ""}
-                onChange={(e) => setEditing({ ...editing, creditDays: Number(e.target.value) || 0 } as any)}
+                value={editing.creditDays || ""}
+                onChange={(e) => setEditing({ ...editing, creditDays: Number(e.target.value) || 0 })}
                 placeholder="30"
               />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>
+          <DialogFooter className="gap-2 sm:gap-0 mt-3">
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={saving} className="text-xs">
               Cancel
             </Button>
-            <Button onClick={save} disabled={saving}>
-              {saving ? "Saving..." : "Save Customer"}
+            <Button onClick={save} disabled={saving} className="text-xs">
+              {saving ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                  Saving Customer…
+                </>
+              ) : (
+                "Save Customer"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Target-Specific Confirmation Dialog */}
       <ConfirmDialog
-        open={Boolean(deleteId)}
-        onOpenChange={(v) => !v && setDeleteId(null)}
-        title="Delete Customer?"
-        description="This customer will be removed. Existing historical transactions and ledgers will remain protected."
-        onConfirm={() => {
-          if (deleteId) remove(deleteId);
-          setDeleteId(null);
+        open={Boolean(deleteTarget)}
+        onOpenChange={(v) => !v && setDeleteTarget(null)}
+        title={
+          deleteTarget?.usage.hasHistory
+            ? `Deactivate "${deleteTarget.customer.name}"?`
+            : `Delete "${deleteTarget?.customer.name}"?`
+        }
+        description={
+          deleteTarget?.usage.hasHistory
+            ? deleteTarget.usage.reason
+            : `"${deleteTarget?.customer.name}" will be permanently removed from customer records.`
+        }
+        destructive={!deleteTarget?.usage.hasHistory}
+        confirmText={deleteTarget?.usage.hasHistory ? "Deactivate" : "Delete Customer"}
+        busyText={deleteTarget?.usage.hasHistory ? "Deactivating…" : "Deleting…"}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          if (deleteTarget.usage.hasHistory) {
+            await deactivateCustomer(deleteTarget.customer);
+          } else {
+            await removeCustomerPermanent(deleteTarget.customer);
+          }
+          setDeleteTarget(null);
         }}
       />
+
       <CustomerInsightDrawer
         customerId={selectedCustomerIdForDrawer}
         open={Boolean(selectedCustomerIdForDrawer)}

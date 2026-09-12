@@ -45,6 +45,10 @@ import { CalculationReconciliationModal } from "./CalculationReconciliationModal
 import { getPartyFinancialInsight } from "@/modules/accounting/services/partyAdvanceService";
 import { validateDocumentTotals } from "@/modules/tax/canonicalCalculation";
 import { formatAddressLines } from "./AddressDrawer";
+import { firebaseDb } from "@/config/firebase";
+import { ref, remove as rtdbRemove } from "firebase/database";
+import { removeCachedEntity } from "@/modules/sync/dexieCache";
+import { saveDraft, loadDraft, clearDraft } from "@/lib/draftAutosave";
 
 type AnyDoc = Invoice | Quotation | Purchase;
 
@@ -72,7 +76,8 @@ export function DocumentListPage<T extends AnyDoc>({
   const [receiptAmount, setReceiptAmount] = useState<number>(0);
   const [editing, setEditing] = useState<T | null>(null);
   const [preview, setPreview] = useState<T | null>(null);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTargetDoc, setDeleteTargetDoc] = useState<{ doc: T; isPosted: boolean } | null>(null);
+  const [recoverableDraft, setRecoverableDraft] = useState<{ data: T; savedAt: number } | null>(null);
   const [company, setCompany] = useState<CompanySettings | null>(null);
 
   // Document copy export modal
@@ -252,6 +257,12 @@ export function DocumentListPage<T extends AnyDoc>({
     } else {
       setEditing({ ...base, supplierId: "", amountPaid: 0, balance: 0, status: "unpaid" } as unknown as T);
     }
+    const saved = loadDraft<T>(kind);
+    if (saved && saved.data && (saved.data.items?.length > 0 || (saved.data as any).customerId || (saved.data as Purchase).supplierId)) {
+      setRecoverableDraft(saved);
+    } else {
+      setRecoverableDraft(null);
+    }
     setOpen(true);
   }
 
@@ -261,6 +272,18 @@ export function DocumentListPage<T extends AnyDoc>({
     setEnableGst(!isDocNonGst);
     setOpen(true);
   }
+
+  // Periodic autosave for in-flight document draft (PRD § 50)
+  useEffect(() => {
+    if (!open || !editing) return;
+    const hasContent = (editing.items && editing.items.length > 0) || Boolean((editing as any).customerId) || Boolean((editing as Purchase).supplierId);
+    if (hasContent) {
+      const timer = setTimeout(() => {
+        saveDraft(kind, editing);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [open, editing, kind]);
 
   // Auto-update Intra/Inter state when party or place of supply changes
   function onPartySelect(selectedPartyId: string) {
@@ -530,6 +553,8 @@ export function DocumentListPage<T extends AnyDoc>({
       await db().quotations.put(toSave);
     }
 
+      clearDraft(kind);
+      setRecoverableDraft(null);
       toast.success("Document saved successfully");
       setOpen(false);
       setEditing(null);
@@ -540,19 +565,82 @@ export function DocumentListPage<T extends AnyDoc>({
     }
   }
 
-  async function remove(id: string) {
+  async function cancelPostedDoc(doc: T) {
+    const id = doc.id;
+    if (kind === "invoice") {
+      const inv = doc as unknown as Invoice;
+      await applyStockDelta(inv.items, 1);
+      const updated: Invoice = {
+        ...inv,
+        status: "cancelled",
+        postingStatus: "reversed",
+      };
+      await db().invoices.put(updated);
+      if (activeCompany?.id && user?.uid && activeFinancialYear?.id) {
+        try {
+          let idToken: string | undefined;
+          try { idToken = await user.getIdToken(); } catch {}
+          await amendPostedInvoiceTransaction({
+            companyId: activeCompany.id,
+            financialYearId: activeFinancialYear.id,
+            originalInvoice: inv,
+            correctedInvoice: updated,
+            company: activeCompany,
+            customerLedgerId: inv.customerId,
+            idToken,
+            uid: user.uid,
+            amendmentReason: "Invoice cancelled and voided",
+          });
+        } catch (e) {
+          console.warn("Failed to post reversal:", e);
+        }
+      }
+      toast.success(`Invoice ${inv.number} cancelled`);
+    } else if (kind === "purchase") {
+      const pu = doc as unknown as Purchase;
+      await applyStockDelta(pu.items, -1);
+      const updated: Purchase = {
+        ...pu,
+        status: "cancelled",
+        postingStatus: "reversed",
+      };
+      await db().purchases.put(updated);
+      toast.success(`Purchase ${pu.number} cancelled`);
+    }
+  }
+
+  async function removeDraftDoc(doc: T) {
+    const id = doc.id;
     if (kind === "invoice") {
       const prev = await db().invoices.get(id);
       if (prev) await applyStockDelta(prev.items, 1);
       await db().invoices.delete(id);
+      if (activeCompany?.id) {
+        await removeCachedEntity({ companyId: activeCompany.id, entityType: "invoice", entityId: id });
+        if (firebaseDb) {
+          await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/invoices/${id}`));
+        }
+      }
     } else if (kind === "purchase") {
       const prev = await db().purchases.get(id);
       if (prev) await applyStockDelta(prev.items, -1);
       await db().purchases.delete(id);
+      if (activeCompany?.id) {
+        await removeCachedEntity({ companyId: activeCompany.id, entityType: "purchase", entityId: id });
+        if (firebaseDb) {
+          await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/purchases/${id}`));
+        }
+      }
     } else {
       await db().quotations.delete(id);
+      if (activeCompany?.id) {
+        await removeCachedEntity({ companyId: activeCompany.id, entityType: "quotation", entityId: id });
+        if (firebaseDb) {
+          await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${id}`));
+        }
+      }
     }
-    toast.success("Document deleted");
+    toast.success(`${kind === "invoice" ? "Invoice" : kind === "quotation" ? "Quotation" : "Purchase"} deleted`);
   }
 
   async function duplicate(r: T) {
@@ -781,7 +869,26 @@ export function DocumentListPage<T extends AnyDoc>({
                                   <FileText className="h-3.5 w-3.5 text-primary" />
                                 </Button>
                               )}
-                              <Button size="icon" variant="ghost" title="Delete" onClick={() => setDeleteId(r.id)}>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                title={
+                                  kind === "invoice" && (r as unknown as Invoice).postingStatus === "posted"
+                                    ? "Cancel / Void Posted Invoice"
+                                    : kind === "purchase" && (r as unknown as Purchase).postingStatus === "posted"
+                                    ? "Cancel / Void Posted Purchase"
+                                    : "Delete Draft"
+                                }
+                                onClick={() => {
+                                  const isPosted =
+                                    kind === "invoice"
+                                      ? (r as unknown as Invoice).postingStatus === "posted"
+                                      : kind === "purchase"
+                                      ? (r as unknown as Purchase).postingStatus === "posted"
+                                      : false;
+                                  setDeleteTargetDoc({ doc: r, isPosted });
+                                }}
+                              >
                                 <Trash2 className="h-3.5 w-3.5 text-destructive" />
                               </Button>
                             </div>
@@ -1463,14 +1570,29 @@ export function DocumentListPage<T extends AnyDoc>({
       )}
 
       <ConfirmDialog
-        open={Boolean(deleteId)}
-        onOpenChange={o => !o && setDeleteId(null)}
-        title={`Delete this ${title.slice(0, -1).toLowerCase()}?`}
-        description="This cannot be undone. Inventory and stock movements will be reversed."
-        destructive
-        confirmText="Delete"
+        open={Boolean(deleteTargetDoc)}
+        onOpenChange={(o) => !o && setDeleteTargetDoc(null)}
+        title={
+          deleteTargetDoc?.isPosted
+            ? `Cancel / Void ${kind === "invoice" ? "Invoice" : "Purchase"} "${deleteTargetDoc?.doc.number}"?`
+            : `Delete Draft ${kind === "invoice" ? "Invoice" : kind === "quotation" ? "Quotation" : "Purchase"} "${deleteTargetDoc?.doc.number}"?`
+        }
+        description={
+          deleteTargetDoc?.isPosted
+            ? `Posted ${kind === "invoice" ? "invoices" : "purchases"} cannot be deleted per statutory GST and accounting requirements. Cancelling will void the document and post reversal accounting adjustments.`
+            : `This draft document has not been posted to accounting ledgers and will be permanently removed.`
+        }
+        destructive={!deleteTargetDoc?.isPosted}
+        confirmText={deleteTargetDoc?.isPosted ? "Cancel Document" : "Delete Document"}
+        busyText={deleteTargetDoc?.isPosted ? "Cancelling…" : "Deleting…"}
         onConfirm={async () => {
-          if (deleteId) await remove(deleteId);
+          if (!deleteTargetDoc) return;
+          if (deleteTargetDoc.isPosted) {
+            await cancelPostedDoc(deleteTargetDoc.doc);
+          } else {
+            await removeDraftDoc(deleteTargetDoc.doc);
+          }
+          setDeleteTargetDoc(null);
         }}
       />
     </>

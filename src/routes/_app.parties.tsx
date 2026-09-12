@@ -27,6 +27,8 @@ import { createPartyWithLedger } from "@/modules/accounting/services/partyLedger
 import { CustomerInsightDrawer } from "@/components/app/CustomerInsightDrawer";
 import { AddressDrawer } from "@/components/app/AddressDrawer";
 import { isIndia, getPostalCodeLabel, getPostalCodePlaceholder, validatePostalCode } from "@/lib/countryValidation";
+import { performOptimisticMutation } from "@/lib/mutationPipeline";
+import { checkEntityHistoricalUsage, type HistoricalUsageResult } from "@/lib/historicalUsage";
 
 export const Route = createFileRoute("/_app/parties")({
   head: () => ({ meta: [{ title: "Party Master — BMS NEXT" }] }),
@@ -60,6 +62,7 @@ const emptyParty: Party = {
   creditDays: 30,
   openingBalance: 0,
   taxRegistrationType: "regular",
+  active: true,
   createdAt: 0,
 };
 
@@ -69,14 +72,19 @@ export function PartiesPage() {
   const dexieRows = useLive<Party>(() => db().parties.orderBy("name").toArray());
   const [cloudRows, setCloudRows] = useState<Party[]>([]);
   const [q, setQ] = useState("");
-  const [activeTab, setActiveTab] = useState<"ALL" | "CUSTOMER" | "SUPPLIER" | "ADVANCE" | "CREDIT">("ALL");
+  const [activeTab, setActiveTab] = useState<"ALL" | "CUSTOMER" | "SUPPLIER" | "ADVANCE" | "CREDIT" | "INACTIVE">("ALL");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Party>(emptyParty);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedPartyForInsight, setSelectedPartyForInsight] = useState<string | null>(null);
   const [partyForAddressDrawer, setPartyForAddressDrawer] = useState<Party | null>(null);
   const [addressDrawerOpen, setAddressDrawerOpen] = useState(false);
+
+  // Target for delete / deactivate modal
+  const [deleteTarget, setDeleteTarget] = useState<{
+    party: Party;
+    usage: HistoricalUsageResult;
+  } | null>(null);
 
   // 1. Initial cached retrieval + Realtime Firebase sync
   useEffect(() => {
@@ -84,6 +92,7 @@ export function PartiesPage() {
 
     let active = true;
 
+    // Zero-flash immediate load from Dexie cache
     getCachedEntities<Party>({
       uid: user.uid,
       companyId: activeCompany.id,
@@ -153,11 +162,25 @@ export function PartiesPage() {
     };
   }, [activeCompany?.id, user?.uid]);
 
+  // Synchronize local dexieRows into cloudRows on mount if cloudRows was empty
+  useEffect(() => {
+    if (cloudRows.length === 0 && dexieRows.length > 0) {
+      setCloudRows(dexieRows);
+    }
+  }, [dexieRows]);
+
   const rows = activeCompany?.id && cloudRows.length > 0 ? cloudRows : dexieRows;
 
   // Filter based on tab and search
   const filtered = useMemo(() => {
     return rows.filter((r) => {
+      // Status filter
+      if (activeTab === "INACTIVE") {
+        if (r.active !== false) return false;
+      } else {
+        if (r.active === false) return false; // Default: hide inactive from normal tabs
+      }
+
       // Tab filter
       if (activeTab === "CUSTOMER" && r.partyType !== "CUSTOMER" && r.partyType !== "BOTH") return false;
       if (activeTab === "SUPPLIER" && r.partyType !== "SUPPLIER" && r.partyType !== "BOTH") return false;
@@ -202,8 +225,143 @@ export function PartiesPage() {
       country: r.country || activeCompany?.country || "India",
       paymentPolicy: r.paymentPolicy || "CREDIT",
       partyType: r.partyType || "CUSTOMER",
+      active: r.active !== false,
     });
     setOpen(true);
+  }
+
+  async function promptDelete(party: Party) {
+    const usage = await checkEntityHistoricalUsage({
+      entityType: "party",
+      entityId: party.id,
+    });
+    setDeleteTarget({ party, usage });
+  }
+
+  async function removePartyPermanent(party: Party) {
+    const id = party.id;
+    await performOptimisticMutation<Party>({
+      entityType: "party",
+      entityId: id,
+      action: "delete",
+      companyId: activeCompany?.id,
+      uid: user?.uid,
+      capturePreviousState: () => party,
+      onOptimistic: () => {
+        // Immediate UI removal
+        setCloudRows((prev) => prev.filter((p) => p.id !== id));
+      },
+      onRollback: (prev) => {
+        if (prev) {
+          setCloudRows((list) => [prev, ...list]);
+        }
+      },
+      syncDexie: async () => {
+        await db().parties.delete(id);
+        await db().customers.delete(id);
+        await db().suppliers.delete(id);
+        if (activeCompany?.id) {
+          await removeCachedEntity({ companyId: activeCompany.id, entityType: "party", entityId: id });
+          await removeCachedEntity({ companyId: activeCompany.id, entityType: "customer", entityId: id });
+          await removeCachedEntity({ companyId: activeCompany.id, entityType: "supplier", entityId: id });
+        }
+      },
+      rollbackDexie: async (prev) => {
+        if (prev) {
+          await db().parties.put(prev);
+          if (prev.partyType === "CUSTOMER" || prev.partyType === "BOTH") await db().customers.put(prev as any);
+          if (prev.partyType === "SUPPLIER" || prev.partyType === "BOTH") await db().suppliers.put(prev as any);
+          if (activeCompany?.id && user?.uid) {
+            await cacheEntity({ uid: user.uid, companyId: activeCompany.id, entityType: "party", entityId: id, data: prev });
+          }
+        }
+      },
+      serverMutation: async () => {
+        if (activeCompany?.id && firebaseDb) {
+          await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/parties/${id}`));
+          await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/customers/${id}`));
+          await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/suppliers/${id}`));
+        }
+      },
+      queryKeys: [
+        ["parties", activeCompany?.id],
+        ["customers", activeCompany?.id],
+        ["suppliers", activeCompany?.id],
+        ["dashboard", activeCompany?.id],
+      ],
+      successToast: `Party "${party.name}" deleted`,
+      errorToast: "Couldn't delete party. It has been restored.",
+    });
+  }
+
+  async function deactivateParty(party: Party) {
+    const deactivatedParty: Party = { ...party, active: false };
+    const id = party.id;
+
+    await performOptimisticMutation<Party>({
+      entityType: "party",
+      entityId: id,
+      action: "deactivate",
+      companyId: activeCompany?.id,
+      uid: user?.uid,
+      optimisticData: deactivatedParty,
+      capturePreviousState: () => party,
+      onOptimistic: () => {
+        setCloudRows((prev) => prev.map((p) => (p.id === id ? deactivatedParty : p)));
+      },
+      onRollback: (prev) => {
+        if (prev) {
+          setCloudRows((list) => list.map((p) => (p.id === prev.id ? prev : p)));
+        }
+      },
+      syncDexie: async () => {
+        await db().parties.put(deactivatedParty);
+        if (deactivatedParty.partyType === "CUSTOMER" || deactivatedParty.partyType === "BOTH") {
+          await db().customers.put(deactivatedParty as any);
+        }
+        if (deactivatedParty.partyType === "SUPPLIER" || deactivatedParty.partyType === "BOTH") {
+          await db().suppliers.put(deactivatedParty as any);
+        }
+        if (activeCompany?.id && user?.uid) {
+          await cacheEntity({
+            uid: user.uid,
+            companyId: activeCompany.id,
+            entityType: "party",
+            entityId: id,
+            data: deactivatedParty,
+          });
+        }
+      },
+      rollbackDexie: async (prev) => {
+        if (prev) {
+          await db().parties.put(prev);
+          if (prev.partyType === "CUSTOMER" || prev.partyType === "BOTH") await db().customers.put(prev as any);
+          if (prev.partyType === "SUPPLIER" || prev.partyType === "BOTH") await db().suppliers.put(prev as any);
+          if (activeCompany?.id && user?.uid) {
+            await cacheEntity({ uid: user.uid, companyId: activeCompany.id, entityType: "party", entityId: id, data: prev });
+          }
+        }
+      },
+      serverMutation: async () => {
+        if (activeCompany?.id && firebaseDb) {
+          await set(ref(firebaseDb, `companyData/${activeCompany.id}/parties/${id}`), sanitizeForFirebase(deactivatedParty));
+          if (deactivatedParty.partyType === "CUSTOMER" || deactivatedParty.partyType === "BOTH") {
+            await set(ref(firebaseDb, `companyData/${activeCompany.id}/customers/${id}`), sanitizeForFirebase(deactivatedParty));
+          }
+          if (deactivatedParty.partyType === "SUPPLIER" || deactivatedParty.partyType === "BOTH") {
+            await set(ref(firebaseDb, `companyData/${activeCompany.id}/suppliers/${id}`), sanitizeForFirebase(deactivatedParty));
+          }
+        }
+      },
+      queryKeys: [
+        ["parties", activeCompany?.id],
+        ["customers", activeCompany?.id],
+        ["suppliers", activeCompany?.id],
+        ["dashboard", activeCompany?.id],
+      ],
+      successToast: `Party "${party.name}" deactivated`,
+      errorToast: "Couldn't deactivate party. Changes reverted.",
+    });
   }
 
   async function save() {
@@ -234,35 +392,103 @@ export function PartiesPage() {
         gstin: editing.gstin?.trim() ? editing.gstin.trim().toUpperCase() : undefined,
         creditLimit: Number(editing.creditLimit) || 0,
         creditDays: Number(editing.creditDays) || 30,
+        active: editing.active !== false,
         updatedAt: Date.now(),
       };
 
-      if (activeCompany?.id && user?.uid) {
-        await createPartyWithLedger({
-          companyId: activeCompany.id,
-          party: partyData,
-          uid: user.uid,
-          idempotencyKey: `mut_party_${partyData.id}`,
-        });
-      }
+      const isNew =
+        !cloudRows.some((p) => p.id === partyData.id) &&
+        !dexieRows.some((p) => p.id === partyData.id);
 
-      await db().parties.put(partyData);
-      if (partyData.partyType === "CUSTOMER" || partyData.partyType === "BOTH") {
-        await db().customers.put(partyData as any);
-      }
-      if (partyData.partyType === "SUPPLIER" || partyData.partyType === "BOTH") {
-        await db().suppliers.put(partyData as any);
-      }
+      await performOptimisticMutation<Party>({
+        entityType: "party",
+        entityId: partyData.id,
+        action: isNew ? "create" : "update",
+        companyId: activeCompany?.id,
+        uid: user?.uid,
+        optimisticData: partyData,
+        onOptimistic: () => {
+          setCloudRows((prev) => {
+            const exists = prev.some((p) => p.id === partyData.id);
+            if (exists) {
+              return prev.map((p) => (p.id === partyData.id ? partyData : p));
+            } else {
+              return [partyData, ...prev];
+            }
+          });
+        },
+        onRollback: (prev) => {
+          setCloudRows((prevList) => {
+            if (isNew) {
+              return prevList.filter((p) => p.id !== partyData.id);
+            } else if (prev) {
+              return prevList.map((p) => (p.id === prev.id ? prev : p));
+            }
+            return prevList;
+          });
+        },
+        syncDexie: async () => {
+          await db().parties.put(partyData);
+          if (partyData.partyType === "CUSTOMER" || partyData.partyType === "BOTH") {
+            await db().customers.put(partyData as any);
+          }
+          if (partyData.partyType === "SUPPLIER" || partyData.partyType === "BOTH") {
+            await db().suppliers.put(partyData as any);
+          }
+          if (activeCompany?.id && user?.uid) {
+            await cacheEntity({
+              uid: user.uid,
+              companyId: activeCompany.id,
+              entityType: "party",
+              entityId: partyData.id,
+              data: partyData,
+            });
+          }
+        },
+        rollbackDexie: async (prev) => {
+          if (isNew) {
+            await db().parties.delete(partyData.id);
+            await db().customers.delete(partyData.id);
+            await db().suppliers.delete(partyData.id);
+            if (activeCompany?.id) {
+              await removeCachedEntity({ companyId: activeCompany.id, entityType: "party", entityId: partyData.id });
+            }
+          } else if (prev) {
+            await db().parties.put(prev);
+            if (prev.partyType === "CUSTOMER" || prev.partyType === "BOTH") await db().customers.put(prev as any);
+            if (prev.partyType === "SUPPLIER" || prev.partyType === "BOTH") await db().suppliers.put(prev as any);
+          }
+        },
+        serverMutation: async () => {
+          if (activeCompany?.id && user?.uid) {
+            await createPartyWithLedger({
+              companyId: activeCompany.id,
+              party: partyData,
+              uid: user.uid,
+              idempotencyKey: `mut_party_${partyData.id}`,
+            });
+          }
+        },
+        queryKeys: [
+          ["parties", activeCompany?.id],
+          ["customers", activeCompany?.id],
+          ["suppliers", activeCompany?.id],
+          ["dashboard", activeCompany?.id],
+        ],
+        successToast: `Party "${partyData.name}" saved successfully`,
+        errorToast: "Unable to save party. Draft preserved.",
+      });
 
-      toast.success(`Party "${partyData.name}" saved successfully`);
       setOpen(false);
     } catch (err) {
       console.error("Failed to save party:", err);
-      toast.error("Unable to save party. Draft preserved.");
     } finally {
       setSaving(false);
     }
   }
+
+  const activeCount = rows.filter((r) => r.active !== false).length;
+  const inactiveCount = rows.filter((r) => r.active === false).length;
 
   return (
     <AppShell title="Party Master">
@@ -280,14 +506,15 @@ export function PartiesPage() {
         {/* Tab Filters */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full sm:w-auto">
-            <TabsList className="grid grid-cols-5 w-full sm:w-auto text-xs">
-              <TabsTrigger value="ALL">All ({rows.length})</TabsTrigger>
+            <TabsList className="grid grid-cols-6 w-full sm:w-auto text-xs">
+              <TabsTrigger value="ALL">All ({activeCount})</TabsTrigger>
               <TabsTrigger value="CUSTOMER">Customers</TabsTrigger>
               <TabsTrigger value="SUPPLIER">Suppliers</TabsTrigger>
               <TabsTrigger value="ADVANCE" className="text-emerald-600 dark:text-emerald-400">
                 Advance
               </TabsTrigger>
               <TabsTrigger value="CREDIT">Credit</TabsTrigger>
+              <TabsTrigger value="INACTIVE">Inactive ({inactiveCount})</TabsTrigger>
             </TabsList>
           </Tabs>
 
@@ -300,119 +527,155 @@ export function PartiesPage() {
         </div>
 
         {/* Parties Table */}
-        <Card className="p-0 overflow-hidden shadow-xs">
+        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm overflow-hidden">
           <Table>
-            <TableHeader className="bg-muted/40">
-              <TableRow>
-                <TableHead className="text-xs font-semibold">Party Name</TableHead>
-                <TableHead className="text-xs font-semibold">Type</TableHead>
-                <TableHead className="text-xs font-semibold">Payment Policy</TableHead>
-                <TableHead className="text-xs font-semibold">GSTIN / State</TableHead>
-                <TableHead className="text-xs font-semibold">Location</TableHead>
-                <TableHead className="text-xs font-semibold">Contact</TableHead>
-                <TableHead className="text-right text-xs font-semibold">Actions</TableHead>
+            <TableHeader>
+              <TableRow className="bg-muted/40">
+                <TableHead className="font-semibold text-xs">Party Name</TableHead>
+                <TableHead className="font-semibold text-xs">Type</TableHead>
+                <TableHead className="font-semibold text-xs">Policy</TableHead>
+                <TableHead className="font-semibold text-xs">GSTIN / State</TableHead>
+                <TableHead className="font-semibold text-xs">Location</TableHead>
+                <TableHead className="font-semibold text-xs">Contact</TableHead>
+                <TableHead className="font-semibold text-xs text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {pager.items.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="h-32 text-center text-xs text-muted-foreground">
-                    No parties match the current filter or search.
+                  <TableCell colSpan={7} className="text-center py-10 text-muted-foreground text-xs">
+                    {activeTab === "INACTIVE"
+                      ? "No inactive parties found."
+                      : q
+                      ? `No parties found matching "${q}".`
+                      : "No parties configured yet. Click 'Add Party' to create one."}
                   </TableCell>
                 </TableRow>
               ) : (
-                pager.items.map((party: Party) => (
-                  <TableRow key={party.id} className="hover:bg-muted/30 transition-colors">
-                    <TableCell className="py-2.5">
-                      <div className="font-semibold text-xs text-foreground">{party.name}</div>
-                      {party.tradingName && (
-                        <div className="text-[10px] text-muted-foreground">T/A: {party.tradingName}</div>
-                      )}
-                    </TableCell>
+                pager.items.map((party) => {
+                  const isInactive = party.active === false;
+                  return (
+                    <TableRow key={party.id} className={isInactive ? "opacity-60 bg-muted/20 hover:bg-muted/30" : "hover:bg-muted/20"}>
+                      <TableCell className="py-2.5">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPartyForInsight(party.id)}
+                            className="text-left font-medium text-xs text-foreground hover:text-primary hover:underline"
+                          >
+                            {party.name}
+                          </button>
+                          {isInactive && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
+                              Inactive
+                            </Badge>
+                          )}
+                        </div>
+                        {party.tradingName && (
+                          <div className="text-[11px] text-muted-foreground">{party.tradingName}</div>
+                        )}
+                        {party.addresses && party.addresses.length > 0 && (
+                          <div className="text-[10px] text-primary/80 flex items-center gap-0.5 mt-0.5">
+                            <MapPin className="h-2.5 w-2.5" />
+                            {party.addresses.length} address{party.addresses.length > 1 ? "es" : ""} saved
+                          </div>
+                        )}
+                      </TableCell>
 
-                    <TableCell className="py-2.5">
-                      <Badge
-                        variant={party.partyType === "BOTH" ? "default" : "secondary"}
-                        className="text-[10px] font-medium"
-                      >
-                        {party.partyType || "CUSTOMER"}
-                      </Badge>
-                    </TableCell>
-
-                    <TableCell className="py-2.5">
-                      {party.paymentPolicy === "ADVANCE" ? (
-                        <Badge variant="outline" className="text-[10px] font-semibold border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 gap-1">
-                          <Wallet className="h-2.5 w-2.5" /> ADVANCE
+                      <TableCell className="py-2.5 text-xs">
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] uppercase font-semibold ${
+                            party.partyType === "BOTH"
+                              ? "border-purple-500 text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/30"
+                              : party.partyType === "SUPPLIER"
+                              ? "border-sky-500 text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30"
+                              : "border-emerald-500 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/30"
+                          }`}
+                        >
+                          {party.partyType === "BOTH"
+                            ? "Cust + Supp"
+                            : party.partyType || "Customer"}
                         </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-[10px] font-semibold border-blue-500/50 bg-blue-500/10 text-blue-700 dark:text-blue-400">
-                          CREDIT ({party.creditDays ?? 30}d)
-                        </Badge>
-                      )}
-                    </TableCell>
+                      </TableCell>
 
-                    <TableCell className="py-2.5 text-xs">
-                      <div className="font-mono text-[11px]">{party.gstin || "—"}</div>
-                      <div className="text-[10px] text-muted-foreground">{party.state || "—"}</div>
-                    </TableCell>
+                      <TableCell className="py-2.5 text-xs">
+                        {party.paymentPolicy === "ADVANCE" ? (
+                          <Badge className="bg-emerald-600 hover:bg-emerald-700 text-[10px] gap-1 shadow-xs">
+                            <Wallet className="h-3 w-3" />
+                            Advance Only
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-[10px] gap-1">
+                            <ShieldCheck className="h-3 w-3 text-muted-foreground" />
+                            Credit ({party.creditDays || 30}d)
+                          </Badge>
+                        )}
+                      </TableCell>
 
-                    <TableCell className="py-2.5 text-xs">
-                      <div>{[party.city, party.pincode].filter(Boolean).join(" - ") || "—"}</div>
-                      <div className="text-[10px] text-muted-foreground">{party.country || "India"}</div>
-                    </TableCell>
+                      <TableCell className="py-2.5 text-xs">
+                        <div className="font-mono text-[11px]">{party.gstin || "—"}</div>
+                        <div className="text-[10px] text-muted-foreground">{party.state || "—"}</div>
+                      </TableCell>
 
-                    <TableCell className="py-2.5 text-xs">
-                      <div>{party.mobile || party.phone || "—"}</div>
-                      {party.contactPerson && (
-                        <div className="text-[10px] text-muted-foreground">{party.contactPerson}</div>
-                      )}
-                    </TableCell>
+                      <TableCell className="py-2.5 text-xs">
+                        <div>{[party.city, party.pincode].filter(Boolean).join(" - ") || "—"}</div>
+                        <div className="text-[10px] text-muted-foreground">{party.country || "India"}</div>
+                      </TableCell>
 
-                    <TableCell className="py-2.5 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          title="View Ledger & Profile"
-                          onClick={() => setSelectedPartyForInsight(party.id)}
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-primary"
-                          title="Manage Addresses"
-                          onClick={() => {
-                            setPartyForAddressDrawer(party);
-                            setAddressDrawerOpen(true);
-                          }}
-                        >
-                          <MapPin className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          title="Edit Party"
-                          onClick={() => openEdit(party)}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-destructive hover:bg-destructive/10"
-                          title="Delete Party"
-                          onClick={() => setDeleteId(party.id)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
+                      <TableCell className="py-2.5 text-xs">
+                        <div>{party.mobile || party.phone || "—"}</div>
+                        {party.contactPerson && (
+                          <div className="text-[10px] text-muted-foreground">{party.contactPerson}</div>
+                        )}
+                      </TableCell>
+
+                      <TableCell className="py-2.5 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="View Ledger & Profile"
+                            onClick={() => setSelectedPartyForInsight(party.id)}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-primary"
+                            title="Manage Addresses"
+                            onClick={() => {
+                              setPartyForAddressDrawer(party);
+                              setAddressDrawerOpen(true);
+                            }}
+                          >
+                            <MapPin className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Edit Party"
+                            onClick={() => openEdit(party)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                            title={isInactive ? "Delete Party" : "Delete or Deactivate Party"}
+                            onClick={() => promptDelete(party)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>
@@ -426,7 +689,7 @@ export function PartiesPage() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base font-bold">
                 <Users className="h-5 w-5 text-primary" />
-                {editing.id ? "Edit Party Master" : "Create New Party Master"}
+                {editing.id && rows.some(r => r.id === editing.id) ? "Edit Party Master" : "Create New Party Master"}
               </DialogTitle>
             </DialogHeader>
 
@@ -457,65 +720,41 @@ export function PartiesPage() {
                   value={editing.partyType || "CUSTOMER"}
                   onValueChange={(val: PartyType) => setEditing((p) => ({ ...p, partyType: val }))}
                 >
-                  <SelectTrigger className="mt-1 h-8">
+                  <SelectTrigger className="mt-1 h-8 text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="CUSTOMER">Customer (Buyer)</SelectItem>
-                    <SelectItem value="SUPPLIER">Supplier (Vendor)</SelectItem>
-                    <SelectItem value="BOTH">Both (Customer & Supplier)</SelectItem>
+                    <SelectItem value="CUSTOMER">Customer (Accounts Receivable)</SelectItem>
+                    <SelectItem value="SUPPLIER">Supplier (Accounts Payable)</SelectItem>
+                    <SelectItem value="BOTH">Both (Customer & Supplier Linked)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               <div>
-                <Label className="text-xs font-semibold text-primary">Payment Policy * (PRD § 10)</Label>
+                <Label className="text-xs">Payment Policy *</Label>
                 <Select
                   value={editing.paymentPolicy || "CREDIT"}
                   onValueChange={(val: PaymentPolicy) => setEditing((p) => ({ ...p, paymentPolicy: val }))}
                 >
-                  <SelectTrigger className="mt-1 h-8">
+                  <SelectTrigger className="mt-1 h-8 text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="ADVANCE">ADVANCE — Requires receipt before billing</SelectItem>
-                    <SelectItem value="CREDIT">CREDIT — Invoice permitted prior to receipt</SelectItem>
+                    <SelectItem value="CREDIT">Standard Credit (Post Bills & Track Due)</SelectItem>
+                    <SelectItem value="ADVANCE">Advance Required (Strict Pre-Payment)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
-              {editing.paymentPolicy === "CREDIT" && (
-                <>
-                  <div>
-                    <Label className="text-xs">Credit Limit (₹)</Label>
-                    <Input
-                      type="number"
-                      value={editing.creditLimit || ""}
-                      onChange={(e) => setEditing((p) => ({ ...p, creditLimit: Number(e.target.value) }))}
-                      placeholder="e.g. 200000"
-                      className="mt-1 h-8"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Credit Days</Label>
-                    <Input
-                      type="number"
-                      value={editing.creditDays || ""}
-                      onChange={(e) => setEditing((p) => ({ ...p, creditDays: Number(e.target.value) }))}
-                      placeholder="e.g. 30"
-                      className="mt-1 h-8"
-                    />
-                  </div>
-                </>
-              )}
-
               <div>
-                <Label className="text-xs">GSTIN</Label>
+                <Label className="text-xs">GSTIN / Tax ID</Label>
                 <Input
                   value={editing.gstin || ""}
-                  onChange={(e) => setEditing((p) => ({ ...p, gstin: e.target.value }))}
-                  placeholder="15-digit GSTIN"
+                  onChange={(e) => setEditing((p) => ({ ...p, gstin: e.target.value.toUpperCase() }))}
+                  placeholder="27ABCDE1234F1Z5"
                   className="mt-1 h-8 font-mono"
+                  maxLength={15}
                 />
               </div>
 
@@ -523,59 +762,41 @@ export function PartiesPage() {
                 <Label className="text-xs">PAN</Label>
                 <Input
                   value={editing.pan || ""}
-                  onChange={(e) => setEditing((p) => ({ ...p, pan: e.target.value }))}
-                  placeholder="10-digit PAN"
+                  onChange={(e) => setEditing((p) => ({ ...p, pan: e.target.value.toUpperCase() }))}
+                  placeholder="ABCDE1234F"
                   className="mt-1 h-8 font-mono"
+                  maxLength={10}
                 />
               </div>
 
               <div>
-                <Label className="text-xs">Mobile / Phone</Label>
+                <Label className="text-xs">Mobile Number</Label>
                 <Input
-                  value={editing.mobile || editing.phone || ""}
-                  onChange={(e) => setEditing((p) => ({ ...p, mobile: e.target.value, phone: e.target.value }))}
-                  placeholder="Primary phone"
+                  value={editing.mobile || ""}
+                  onChange={(e) => setEditing((p) => ({ ...p, mobile: e.target.value }))}
+                  placeholder="+91 98765 43210"
                   className="mt-1 h-8"
                 />
               </div>
 
               <div>
-                <Label className="text-xs">Email</Label>
+                <Label className="text-xs">Email Address</Label>
                 <Input
                   value={editing.email || ""}
                   onChange={(e) => setEditing((p) => ({ ...p, email: e.target.value }))}
-                  placeholder="billing@party.com"
+                  placeholder="billing@marseng.com"
                   className="mt-1 h-8"
                 />
               </div>
 
-              <div>
-                <Label className="text-xs">Contact Person</Label>
-                <Input
-                  value={editing.contactPerson || ""}
-                  onChange={(e) => setEditing((p) => ({ ...p, contactPerson: e.target.value }))}
-                  placeholder="Contact name"
-                  className="mt-1 h-8"
-                />
-              </div>
-
-              <div>
-                <Label className="text-xs">Country * (Mandatory PRD § 5)</Label>
-                <Input
-                  value={editing.country || "India"}
-                  onChange={(e) => setEditing((p) => ({ ...p, country: e.target.value }))}
-                  placeholder="India"
-                  className="mt-1 h-8"
-                />
-              </div>
-
-              <div>
-                <Label className="text-xs">State *</Label>
-                <Input
-                  value={editing.state || ""}
-                  onChange={(e) => setEditing((p) => ({ ...p, state: e.target.value }))}
-                  placeholder="State"
-                  className="mt-1 h-8"
+              <div className="md:col-span-2">
+                <Label className="text-xs">Primary Billing Address</Label>
+                <Textarea
+                  value={editing.address || ""}
+                  onChange={(e) => setEditing((p) => ({ ...p, address: e.target.value }))}
+                  placeholder="Street name, plot number, industrial area..."
+                  rows={2}
+                  className="mt-1 text-xs"
                 />
               </div>
 
@@ -584,74 +805,107 @@ export function PartiesPage() {
                 <Input
                   value={editing.city || ""}
                   onChange={(e) => setEditing((p) => ({ ...p, city: e.target.value }))}
-                  placeholder="City"
+                  placeholder="Mumbai"
                   className="mt-1 h-8"
                 />
               </div>
 
               <div>
-                <Label className="text-xs">{getPostalCodeLabel(editing.country)} {isIndia(editing.country) ? "(6 digits)" : ""}</Label>
+                <Label className="text-xs">State / Province</Label>
+                <Input
+                  value={editing.state || ""}
+                  onChange={(e) => setEditing((p) => ({ ...p, state: e.target.value }))}
+                  placeholder="Maharashtra"
+                  className="mt-1 h-8"
+                />
+              </div>
+
+              <div>
+                <Label className="text-xs">Country *</Label>
+                <Input
+                  value={editing.country || "India"}
+                  onChange={(e) => setEditing((p) => ({ ...p, country: e.target.value }))}
+                  placeholder="India, UAE, USA..."
+                  className="mt-1 h-8"
+                />
+              </div>
+
+              <div>
+                <Label className="text-xs">{getPostalCodeLabel(editing.country)}</Label>
                 <Input
                   value={editing.pincode || ""}
                   onChange={(e) => setEditing((p) => ({ ...p, pincode: e.target.value }))}
                   placeholder={getPostalCodePlaceholder(editing.country)}
-                  className="mt-1 h-8"
+                  className="mt-1 h-8 font-mono"
                 />
               </div>
 
-              <div className="md:col-span-2">
-                <Label className="text-xs">Billing Address Line 1</Label>
+              <div>
+                <Label className="text-xs">Credit Limit (₹)</Label>
                 <Input
-                  value={editing.billingAddress || editing.address || ""}
-                  onChange={(e) => setEditing((p) => ({ ...p, billingAddress: e.target.value, address: e.target.value }))}
-                  placeholder="Street, Building, Unit"
+                  type="number"
+                  value={editing.creditLimit || ""}
+                  onChange={(e) => setEditing((p) => ({ ...p, creditLimit: Number(e.target.value) || 0 }))}
+                  placeholder="0.00"
                   className="mt-1 h-8"
                 />
               </div>
 
-              <div className="md:col-span-2">
-                <Label className="text-xs">Notes / Commercial Terms</Label>
-                <Textarea
-                  value={editing.notes || ""}
-                  onChange={(e) => setEditing((p) => ({ ...p, notes: e.target.value }))}
-                  placeholder="Internal notes or agreed commercial terms..."
-                  rows={2}
-                  className="mt-1 text-xs"
+              <div>
+                <Label className="text-xs">Credit Days</Label>
+                <Input
+                  type="number"
+                  value={editing.creditDays || ""}
+                  onChange={(e) => setEditing((p) => ({ ...p, creditDays: Number(e.target.value) || 30 }))}
+                  placeholder="30"
+                  className="mt-1 h-8"
                 />
               </div>
             </div>
 
-            <DialogFooter className="gap-2 sm:gap-0">
-              <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+            <DialogFooter className="gap-2 sm:gap-0 mt-3">
+              <Button variant="ghost" onClick={() => setOpen(false)} disabled={saving} className="text-xs">
                 Cancel
               </Button>
-              <Button size="sm" onClick={save} disabled={saving} className="gap-1.5">
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                Save Party
+              <Button onClick={save} disabled={saving} className="text-xs">
+                {saving ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                    Saving Party…
+                  </>
+                ) : (
+                  "Save Party"
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
 
-        {/* Delete Confirmation */}
+        {/* Target-Specific Confirmation Dialog */}
         <ConfirmDialog
-          open={!!deleteId}
-          onOpenChange={(o) => !o && setDeleteId(null)}
-          title="Delete this Party?"
-          destructive
-          confirmText="Delete"
+          open={Boolean(deleteTarget)}
+          onOpenChange={(o) => !o && setDeleteTarget(null)}
+          title={
+            deleteTarget?.usage.hasHistory
+              ? `Deactivate "${deleteTarget.party.name}"?`
+              : `Delete "${deleteTarget?.party.name}"?`
+          }
+          description={
+            deleteTarget?.usage.hasHistory
+              ? deleteTarget.usage.reason
+              : `"${deleteTarget?.party.name}" will be permanently deleted from party records.`
+          }
+          destructive={!deleteTarget?.usage.hasHistory}
+          confirmText={deleteTarget?.usage.hasHistory ? "Deactivate" : "Delete Party"}
+          busyText={deleteTarget?.usage.hasHistory ? "Deactivating…" : "Deleting…"}
           onConfirm={async () => {
-            if (!deleteId) return;
-            await db().parties.delete(deleteId);
-            await db().customers.delete(deleteId);
-            await db().suppliers.delete(deleteId);
-            if (activeCompany?.id && firebaseDb) {
-              await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/parties/${deleteId}`));
-              await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/customers/${deleteId}`));
-              await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/suppliers/${deleteId}`));
+            if (!deleteTarget) return;
+            if (deleteTarget.usage.hasHistory) {
+              await deactivateParty(deleteTarget.party);
+            } else {
+              await removePartyPermanent(deleteTarget.party);
             }
-            toast.success("Party deleted");
-            setDeleteId(null);
+            setDeleteTarget(null);
           }}
         />
 

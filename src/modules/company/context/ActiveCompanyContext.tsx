@@ -218,6 +218,11 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
   }, [user, activeCompanyId, activeFinancialYearId]);
 
   const switchCompany = useCallback((companyId: string) => {
+    // Immediately clear previous company state so child views never render stale records (PRD #62)
+    setActiveCompany(null);
+    setActiveMembership(null);
+    setFinancialYears([]);
+    setActiveFinancialYearId(null);
     setActiveCompanyId(companyId);
   }, []);
 

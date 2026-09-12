@@ -11,7 +11,7 @@ import {
   type Quotation,
   type Receipt,
 } from "@/lib/db";
-import { useLive } from "@/lib/useLive";
+import { useLive, useLiveState } from "@/lib/useLive";
 import { formatMoney, formatDate } from "@/lib/format";
 import {
   ResponsiveContainer,
@@ -22,8 +22,6 @@ import {
   Tooltip,
   CartesianGrid,
   Legend,
-  AreaChart,
-  Area,
 } from "recharts";
 import {
   ArrowDownRight,
@@ -47,9 +45,13 @@ import { Button } from "@/components/ui/button";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { computeDashboardMetrics } from "@/modules/accounting/services/dashboardReportService";
 import type { Ledger } from "@/modules/accounting/types";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { firebaseDb } from "@/config/firebase";
 import { ref, onValue, off } from "firebase/database";
+import { DashboardSkeleton } from "@/components/app/Skeletons";
+
+// In-memory module cache so navigating back to dashboard never flashes skeletons or fake zeroes (PRD #22, #23)
+const dashboardMetricsMemoryCache: Record<string, any> = {};
 
 export const Route = createFileRoute("/_app/")({
   head: () => ({ meta: [{ title: "Dashboard — BMS NEXT" }] }),
@@ -60,7 +62,7 @@ export function Dashboard() {
   const { activeCompany, activeFinancialYear } = useActiveCompany();
 
   // Local Dexie collections with bounded financial year queries for scale
-  const invoices = useLive<Invoice>(() => {
+  const invoicesState = useLiveState<Invoice>(() => {
     if (activeFinancialYear?.startDate && activeFinancialYear?.endDate) {
       return db().invoices
         .where("date")
@@ -71,7 +73,7 @@ export function Dashboard() {
     return db().invoices.orderBy("createdAt").reverse().limit(300).toArray();
   }, [activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
 
-  const purchases = useLive<Purchase>(() => {
+  const purchasesState = useLiveState<Purchase>(() => {
     if (activeFinancialYear?.startDate && activeFinancialYear?.endDate) {
       return db().purchases
         .where("date")
@@ -82,15 +84,27 @@ export function Dashboard() {
     return db().purchases.orderBy("createdAt").reverse().limit(300).toArray();
   }, [activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
 
-  const products = useLive<Product>(() => db().products.toArray());
-  const customers = useLive<Customer>(() => db().customers.toArray());
-  const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
+  const productsState = useLiveState<Product>(() => db().products.toArray());
+  const customersState = useLiveState<Customer>(() => db().customers.toArray());
+  const suppliersState = useLiveState<Supplier>(() => db().suppliers.toArray());
   const recentInvoices = useLive<Invoice>(() =>
     db().invoices.orderBy("createdAt").reverse().limit(5).toArray()
   );
 
+  const invoices = invoicesState.data;
+  const purchases = purchasesState.data;
+  const products = productsState.data;
+  const customers = customersState.data;
+
   // Cloud Realtime Ledgers for authoritative accounting calculations
   const [ledgers, setLedgers] = useState<Ledger[]>([]);
+
+  // Deferred chart rendering for instant header & KPI display (PRD #36)
+  const [renderCharts, setRenderCharts] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setRenderCharts(true), 40);
+    return () => clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     if (!activeCompany?.id || !firebaseDb) {
@@ -115,15 +129,36 @@ export function Dashboard() {
     };
   }, [activeCompany?.id]);
 
+  const isDexieLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded;
+  const cacheKey = `${activeCompany?.id || "default"}_${activeFinancialYear?.id || "all"}`;
+
   // Compute authoritative metrics using formal double-entry and transaction data
-  const metrics = computeDashboardMetrics({
-    ledgers,
-    invoices,
-    purchases,
-    products,
-    financialYearStart: activeFinancialYear?.startDate,
-    financialYearEnd: activeFinancialYear?.endDate,
-  });
+  const metrics = useMemo(() => {
+    if (!isDexieLoaded && dashboardMetricsMemoryCache[cacheKey]) {
+      return dashboardMetricsMemoryCache[cacheKey];
+    }
+    const computed = computeDashboardMetrics({
+      ledgers,
+      invoices,
+      purchases,
+      products,
+      financialYearStart: activeFinancialYear?.startDate,
+      financialYearEnd: activeFinancialYear?.endDate,
+    });
+    if (isDexieLoaded) {
+      dashboardMetricsMemoryCache[cacheKey] = computed;
+    }
+    return computed;
+  }, [isDexieLoaded, ledgers, invoices, purchases, products, activeFinancialYear?.startDate, activeFinancialYear?.endDate, cacheKey]);
+
+  // If Dexie is still querying its initial tick and no memory cache exists yet, show skeleton rather than flashing ₹0 (PRD #22, #23)
+  if (!isDexieLoaded && !dashboardMetricsMemoryCache[cacheKey]) {
+    return (
+      <AppShell title="Dashboard">
+        <DashboardSkeleton />
+      </AppShell>
+    );
+  }
 
   const kpiCards = [
     {
@@ -192,8 +227,8 @@ export function Dashboard() {
     },
   ];
 
-  const hasChartData = metrics.salesVsPurchasesTrend.some((m) => m.sales > 0 || m.purchases > 0);
-  const hasAgingData = metrics.agingReceivables.some((a) => a.amount > 0);
+  const hasChartData = (metrics.salesVsPurchasesTrend || []).some((m: { sales: number; purchases: number }) => m.sales > 0 || m.purchases > 0);
+  const hasAgingData = (metrics.agingReceivables || []).some((a: { amount: number }) => a.amount > 0);
 
   return (
     <AppShell title="Dashboard">
@@ -356,7 +391,9 @@ export function Dashboard() {
             </div>
           </CardHeader>
           <CardContent className="pt-4">
-            {hasChartData ? (
+            {!renderCharts ? (
+              <div className="h-[280px] w-full animate-pulse rounded-xl bg-muted/20" />
+            ) : hasChartData ? (
               <div className="h-[280px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={metrics.salesVsPurchasesTrend} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
@@ -401,7 +438,9 @@ export function Dashboard() {
             <CardDescription className="text-xs">Outstanding customer balance aging</CardDescription>
           </CardHeader>
           <CardContent className="pt-4">
-            {hasAgingData ? (
+            {!renderCharts ? (
+              <div className="h-[280px] w-full animate-pulse rounded-xl bg-muted/20" />
+            ) : hasAgingData ? (
               <div className="h-[280px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart

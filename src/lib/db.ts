@@ -116,6 +116,7 @@ export interface Party {
   taxRegistrationType?: "regular" | "composition" | "unregistered";
   createdAt: number;
   updatedAt?: number;
+  active?: boolean;
 }
 
 export interface Customer extends Party {
@@ -361,7 +362,7 @@ export interface Purchase {
   extraCharges?: ExtraCharge[];
   extraChargesTotal?: number;
   amountPaid: number; balance: number;
-  notes?: string; status: "unpaid" | "partial" | "paid";
+  notes?: string; status: "unpaid" | "partial" | "paid" | "cancelled";
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
   voucherId?: string;
   version?: number;

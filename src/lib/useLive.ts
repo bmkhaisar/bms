@@ -8,6 +8,17 @@ export function useLive<T>(fn: () => Promise<T[]>, deps: unknown[] = []): T[] {
   return result ?? ([] as T[]);
 }
 
+export function useLiveState<T>(fn: () => Promise<T[]>, deps: unknown[] = []): { data: T[]; isLoaded: boolean } {
+  const result = useLiveQuery(async () => {
+    if (typeof window === "undefined") return [] as T[];
+    try { return await fn(); } catch { return [] as T[]; }
+  }, deps, undefined);
+  return {
+    data: result ?? [],
+    isLoaded: result !== undefined,
+  };
+}
+
 export function useLiveOne<T>(fn: () => Promise<T | undefined>, deps: unknown[] = []): T | undefined {
   return useLiveQuery(async () => {
     if (typeof window === "undefined") return undefined;
