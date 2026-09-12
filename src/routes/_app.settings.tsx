@@ -108,38 +108,48 @@ export function SettingsPage() {
     }
 
     setSaving(true);
-    const updatedData: Partial<Company> = {
+    const rawData = {
       ...form,
       name: form.name.trim(),
       legalName: form.legalName?.trim() || form.name.trim(),
-      tradingName: form.tradingName?.trim(),
+      tradingName: form.tradingName?.trim() || "",
       address: form.address?.trim() || "",
       city: form.city?.trim() || "",
       state: form.state?.trim() || "",
       pincode: form.pincode?.trim() || "",
-      country: form.country || "India",
+      country: form.country?.trim() || "India",
       phone: form.phone?.trim() || "",
-      altPhone: form.altPhone?.trim(),
-      email: form.email?.trim(),
-      website: form.website?.trim(),
-      gstin: form.gstin?.trim().toUpperCase(),
-      pan: form.pan?.trim().toUpperCase(),
-      cin: form.cin?.trim().toUpperCase(),
-      stateCode: form.stateCode?.trim(),
-      bankName: form.bankName?.trim(),
-      bankBranch: form.bankBranch?.trim(),
-      bankAccountNo: form.bankAccountNo?.trim(),
-      bankIfsc: form.bankIfsc?.trim().toUpperCase(),
-      upiId: form.upiId?.trim(),
-      authorizedSignatory: form.authorizedSignatory?.trim(),
-      terms: form.terms?.trim(),
+      altPhone: form.altPhone?.trim() || "",
+      email: form.email?.trim() || "",
+      website: form.website?.trim() || "",
+      gstin: form.gstin?.trim().toUpperCase() || "",
+      pan: form.pan?.trim().toUpperCase() || "",
+      cin: form.cin?.trim().toUpperCase() || "",
+      stateCode: form.stateCode?.trim() || "",
+      bankName: form.bankName?.trim() || "",
+      bankBranch: form.bankBranch?.trim() || "",
+      bankAccountNo: form.bankAccountNo?.trim() || "",
+      bankIfsc: form.bankIfsc?.trim().toUpperCase() || "",
+      upiId: form.upiId?.trim() || "",
+      authorizedSignatory: form.authorizedSignatory?.trim() || "",
+      terms: form.terms?.trim() || "",
       invoicePrefix: form.invoicePrefix?.trim() || "INV",
       quotationPrefix: form.quotationPrefix?.trim() || "QT",
       purchasePrefix: form.purchasePrefix?.trim() || "PO",
       receiptPrefix: form.receiptPrefix?.trim() || "REC",
       paymentPrefix: form.paymentPrefix?.trim() || "PAY",
+      logoUrl: form.logoUrl || "",
+      signatureUrl: form.signatureUrl || "",
       updatedAt: Date.now(),
     };
+
+    // Strip any remaining undefined values so Firebase update never throws
+    const updatedData: Record<string, any> = {};
+    for (const [key, value] of Object.entries(rawData)) {
+      if (value !== undefined) {
+        updatedData[key] = value;
+      }
+    }
 
     try {
       // 1. Save to Firebase RTDB if available
