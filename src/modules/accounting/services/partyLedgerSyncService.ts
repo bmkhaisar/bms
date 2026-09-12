@@ -577,3 +577,172 @@ export async function createSupplierWithLedger(
     };
   }
 }
+
+/**
+ * ATOMIC & IDEMPOTENT Party Master provisioning (PRD §§ 3, 4, 10, 24, 80).
+ * Handles CUSTOMER, SUPPLIER, and BOTH party types with dedicated AR/AP subledgers.
+ */
+export async function createPartyWithLedger(
+  params: {
+    companyId: string;
+    party: any; // Party type
+    uid: string;
+    idempotencyKey?: string;
+  }
+): Promise<{
+  success: boolean;
+  party: any;
+  ledgerId?: string;
+  apLedgerId?: string;
+  isExisting?: boolean;
+  error?: string;
+}> {
+  const { companyId, party, uid, idempotencyKey } = params;
+  const partyType = party.partyType || "CUSTOMER";
+  const now = Date.now();
+
+  const canonicalArLedgerId = party.ledgerId || `led_${companyId}_ar_${party.id}`;
+  const canonicalApLedgerId = party.apLedgerId || `led_${companyId}_ap_${party.id}`;
+
+  try {
+    const openingPaise = Math.round((party.openingBalance || 0) * 100);
+    const updates: Record<string, unknown> = {};
+
+    let arLedger: Ledger | undefined;
+    let apLedger: Ledger | undefined;
+
+    if (partyType === "CUSTOMER" || partyType === "BOTH") {
+      arLedger = {
+        id: canonicalArLedgerId,
+        companyId,
+        name: party.tradingName || (party.company ? `${party.name} (${party.company})` : party.name),
+        groupId: "grp_sundry_debtors",
+        groupNature: "asset",
+        openingBalance: Math.abs(openingPaise),
+        openingBalanceType: openingPaise < 0 ? "cr" : "dr",
+        currentBalance: openingPaise,
+        currency: "INR",
+        gstin: party.gstin,
+        partyType: "customer",
+        partyId: party.id,
+        active: true,
+        createdAt: party.createdAt || now,
+        updatedAt: now,
+      };
+      updates[`companyData/${companyId}/ledgers/${canonicalArLedgerId}`] = sanitizeForFirebase(arLedger);
+    }
+
+    if (partyType === "SUPPLIER" || partyType === "BOTH") {
+      apLedger = {
+        id: canonicalApLedgerId,
+        companyId,
+        name: party.tradingName || (party.company ? `${party.name} (${party.company})` : party.name),
+        groupId: "grp_sundry_creditors",
+        groupNature: "liability",
+        openingBalance: Math.abs(openingPaise),
+        openingBalanceType: openingPaise < 0 ? "dr" : "cr",
+        currentBalance: -Math.abs(openingPaise),
+        currency: "INR",
+        gstin: party.gstin,
+        partyType: "supplier",
+        partyId: party.id,
+        active: true,
+        createdAt: party.createdAt || now,
+        updatedAt: now,
+      };
+      updates[`companyData/${companyId}/ledgers/${canonicalApLedgerId}`] = sanitizeForFirebase(apLedger);
+    }
+
+    const partyToSave = {
+      ...party,
+      partyType,
+      ledgerId: arLedger ? canonicalArLedgerId : party.ledgerId,
+      apLedgerId: apLedger ? canonicalApLedgerId : party.apLedgerId,
+      createdAt: party.createdAt || now,
+      updatedAt: now,
+    };
+
+    const auditId = `audit_${now}_${Math.random().toString(36).substring(2, 6)}`;
+    updates[`companyData/${companyId}/parties/${party.id}`] = sanitizeForFirebase(partyToSave);
+
+    // Mirror to legacy collections for seamless backward compatibility
+    if (partyType === "CUSTOMER" || partyType === "BOTH") {
+      updates[`companyData/${companyId}/customers/${party.id}`] = sanitizeForFirebase(partyToSave);
+    }
+    if (partyType === "SUPPLIER" || partyType === "BOTH") {
+      updates[`companyData/${companyId}/suppliers/${party.id}`] = sanitizeForFirebase(partyToSave);
+    }
+
+    updates[`companyData/${companyId}/auditLogs/${auditId}`] = {
+      id: auditId,
+      entityType: "party",
+      entityId: party.id,
+      action: "create_party_with_ledger",
+      performedBy: uid,
+      timestamp: now,
+      details: {
+        name: party.name,
+        partyType,
+        paymentPolicy: party.paymentPolicy || "CREDIT",
+        arLedgerId: arLedger?.id,
+        apLedgerId: apLedger?.id,
+      },
+    };
+
+    if (idempotencyKey) {
+      updates[`companyData/${companyId}/partyMutations/${idempotencyKey}`] = {
+        partyId: party.id,
+        timestamp: now,
+        performedBy: uid,
+      };
+    }
+
+    if (firebaseDb) {
+      await update(ref(firebaseDb), updates);
+    }
+
+    // Cache locally
+    await cacheEntity({
+      uid,
+      companyId,
+      entityType: "party",
+      entityId: party.id,
+      data: partyToSave,
+    });
+    if (partyType === "CUSTOMER" || partyType === "BOTH") {
+      await cacheEntity({
+        uid,
+        companyId,
+        entityType: "customer",
+        entityId: party.id,
+        data: partyToSave,
+      });
+    }
+    if (partyType === "SUPPLIER" || partyType === "BOTH") {
+      await cacheEntity({
+        uid,
+        companyId,
+        entityType: "supplier",
+        entityId: party.id,
+        data: partyToSave,
+      });
+    }
+
+    return {
+      success: true,
+      party: partyToSave,
+      ledgerId: arLedger?.id,
+      apLedgerId: apLedger?.id,
+      isExisting: false,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("Failed createPartyWithLedger:", err);
+    return {
+      success: false,
+      party,
+      error: msg,
+    };
+  }
+}
+

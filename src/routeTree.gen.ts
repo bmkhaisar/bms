@@ -24,6 +24,7 @@ import { Route as AppCustomersRouteImport } from './routes/_app.customers'
 import { Route as AppInvoicesRouteImport } from './routes/_app.invoices'
 import { Route as AppLedgerRouteImport } from './routes/_app.ledger'
 import { Route as AppMastersRouteImport } from './routes/_app.masters'
+import { Route as AppPartiesRouteImport } from './routes/_app.parties'
 import { Route as AppProductsRouteImport } from './routes/_app.products'
 import { Route as AppPurchasesRouteImport } from './routes/_app.purchases'
 import { Route as AppQuotationsRouteImport } from './routes/_app.quotations'
@@ -107,6 +108,11 @@ const AppMastersRoute = AppMastersRouteImport.update({
   path: '/masters',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPartiesRoute = AppPartiesRouteImport.update({
+  id: '/parties',
+  path: '/parties',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppProductsRoute = AppProductsRouteImport.update({
   id: '/products',
   path: '/products',
@@ -158,6 +164,7 @@ export interface FileRoutesByFullPath {
   '/invoices': typeof AppInvoicesRoute
   '/ledger': typeof AppLedgerRoute
   '/masters': typeof AppMastersRoute
+  '/parties': typeof AppPartiesRoute
   '/products': typeof AppProductsRoute
   '/purchases': typeof AppPurchasesRoute
   '/quotations': typeof AppQuotationsRoute
@@ -180,6 +187,7 @@ export interface FileRoutesByTo {
   '/invoices': typeof AppInvoicesRoute
   '/ledger': typeof AppLedgerRoute
   '/masters': typeof AppMastersRoute
+  '/parties': typeof AppPartiesRoute
   '/products': typeof AppProductsRoute
   '/purchases': typeof AppPurchasesRoute
   '/quotations': typeof AppQuotationsRoute
@@ -205,6 +213,7 @@ export interface FileRoutesById {
   '/_app/invoices': typeof AppInvoicesRoute
   '/_app/ledger': typeof AppLedgerRoute
   '/_app/masters': typeof AppMastersRoute
+  '/_app/parties': typeof AppPartiesRoute
   '/_app/products': typeof AppProductsRoute
   '/_app/purchases': typeof AppPurchasesRoute
   '/_app/quotations': typeof AppQuotationsRoute
@@ -231,6 +240,7 @@ export interface FileRouteTypes {
     | '/invoices'
     | '/ledger'
     | '/masters'
+    | '/parties'
     | '/products'
     | '/purchases'
     | '/quotations'
@@ -253,6 +263,7 @@ export interface FileRouteTypes {
     | '/invoices'
     | '/ledger'
     | '/masters'
+    | '/parties'
     | '/products'
     | '/purchases'
     | '/quotations'
@@ -277,6 +288,7 @@ export interface FileRouteTypes {
     | '/_app/invoices'
     | '/_app/ledger'
     | '/_app/masters'
+    | '/_app/parties'
     | '/_app/products'
     | '/_app/purchases'
     | '/_app/quotations'
@@ -405,6 +417,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMastersRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/parties': {
+      id: '/_app/parties'
+      path: '/parties'
+      fullPath: '/parties'
+      preLoaderRoute: typeof AppPartiesRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/products': {
       id: '/_app/products'
       path: '/products'
@@ -464,6 +483,7 @@ interface AppRouteChildren {
   AppInvoicesRoute: typeof AppInvoicesRoute
   AppLedgerRoute: typeof AppLedgerRoute
   AppMastersRoute: typeof AppMastersRoute
+  AppPartiesRoute: typeof AppPartiesRoute
   AppProductsRoute: typeof AppProductsRoute
   AppPurchasesRoute: typeof AppPurchasesRoute
   AppQuotationsRoute: typeof AppQuotationsRoute
@@ -481,6 +501,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppInvoicesRoute: AppInvoicesRoute,
   AppLedgerRoute: AppLedgerRoute,
   AppMastersRoute: AppMastersRoute,
+  AppPartiesRoute: AppPartiesRoute,
   AppProductsRoute: AppProductsRoute,
   AppPurchasesRoute: AppPurchasesRoute,
   AppQuotationsRoute: AppQuotationsRoute,

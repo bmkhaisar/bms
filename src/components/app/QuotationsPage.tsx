@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  Copy, Download, FileText, Pencil, Plus, Printer, Trash2, FileType2, Share2, FileCheck,
+  Copy, Download, FileText, Pencil, Plus, Printer, Trash2, FileType2, Share2, FileCheck, Eye,
 } from "lucide-react";
 import {
   db, uid, nextNumber, getCompany,
@@ -17,6 +17,7 @@ import { useLive } from "@/lib/useLive";
 import { formatDate, formatMoney } from "@/lib/format";
 import { downloadQuotationPDF, downloadQuotationDOCX, exportQuotationPDF } from "@/lib/quotationExport";
 import { QuotationForm } from "./QuotationForm";
+import { QuotationQuickPreviewModal } from "./QuotationQuickPreviewModal";
 import { ListToolbar, EmptyState, usePagination, Pager } from "./ListHelpers";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ListSkeleton } from "./Skeletons";
@@ -39,6 +40,7 @@ export function QuotationsPage() {
   const [status, setStatus] = useState<string>("all");
   const [sort, setSort] = useState<"new" | "old" | "amount" | "number">("new");
   const [editing, setEditing] = useState<Quotation | null>(null);
+  const [previewQuotation, setPreviewQuotation] = useState<Quotation | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const initialLoading = useInitialLoading();
 
@@ -283,8 +285,9 @@ export function QuotationsPage() {
                 <Table>
                   <TableHeader><TableRow>
                     <TableHead>Number</TableHead>
-                    <TableHead>Date</TableHead>
                     <TableHead>Customer</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Valid Until</TableHead>
                     <TableHead>Items</TableHead>
                     <TableHead className="text-right">Grand Total</TableHead>
                     <TableHead>Status</TableHead>
@@ -293,19 +296,23 @@ export function QuotationsPage() {
                   <TableBody>
                     {pager.items.map(r => (
                       <TableRow key={r.id}>
-                        <TableCell className="font-mono">{r.number}</TableCell>
+                        <TableCell className="font-mono font-semibold text-primary">{r.number}</TableCell>
+                        <TableCell className="font-medium">{cust(r.customerId)?.name || "—"}</TableCell>
                         <TableCell>{formatDate(r.date)}</TableCell>
-                        <TableCell>{cust(r.customerId)?.name || "—"}</TableCell>
+                        <TableCell className="text-muted-foreground">{r.validity ? formatDate(r.validity) : "—"}</TableCell>
                         <TableCell>{r.items.length}</TableCell>
-                        <TableCell className="text-right font-mono">{formatMoney(r.grandTotal)}</TableCell>
-                        <TableCell><span className="rounded-md bg-muted px-2 py-0.5 text-xs uppercase">{r.status}</span></TableCell>
+                        <TableCell className="text-right font-mono font-semibold">{formatMoney(r.grandTotal)}</TableCell>
+                        <TableCell><span className="rounded-md bg-muted px-2 py-0.5 text-xs uppercase font-semibold">{r.status}</span></TableCell>
                         <TableCell className="text-right">
-                          <Button size="icon" variant="ghost" title="Print" onClick={() => printQuote(r)}><Printer className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" title="Quick Preview (PRD § 32)" onClick={() => setPreviewQuotation(r)} className="text-primary hover:bg-primary/10">
+                            <Eye className="h-4 w-4" />
+                          </Button>
                           <Button size="icon" variant="ghost" title="Download PDF" onClick={() => exportPDF(r)}><Download className="h-4 w-4" /></Button>
-                          <Button size="icon" variant="ghost" title="Download DOCX" onClick={() => exportDOCX(r)}><FileType2 className="h-4 w-4" /></Button>
-                          <Button size="icon" variant="ghost" title="Share" onClick={() => share(r)}><Share2 className="h-4 w-4" /></Button>
-                          <Button size="icon" variant="ghost" title="Convert to Invoice" onClick={() => handleConvert(r)}><FileCheck className="h-4 w-4 text-primary" /></Button>
+                          <Button size="icon" variant="ghost" title="Convert to Invoice" onClick={() => handleConvert(r)} className="text-emerald-600 hover:bg-emerald-500/10">
+                            <FileCheck className="h-4 w-4" />
+                          </Button>
                           <Button size="icon" variant="ghost" title="Edit" onClick={() => setEditing({ ...r })}><Pencil className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" title="Print" onClick={() => printQuote(r)}><Printer className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Duplicate" onClick={() => duplicate(r)}><Copy className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Delete" onClick={() => setDeleteId(r.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                         </TableCell>
@@ -319,6 +326,15 @@ export function QuotationsPage() {
           <Pager {...pager} />
         </div>
       )}
+
+      {/* Quick Preview Modal (PRD §§ 32, 33) */}
+      <QuotationQuickPreviewModal
+        open={!!previewQuotation}
+        onOpenChange={(o) => !o && setPreviewQuotation(null)}
+        quotation={previewQuotation}
+        onEdit={(q) => setEditing({ ...q })}
+        onConvert={(q) => handleConvert(q)}
+      />
 
       <Dialog open={!!editing} onOpenChange={o => !o && setEditing(null)}>
         <DialogContent className="max-w-6xl w-[96vw] p-0 gap-0 h-[95vh] max-h-[95vh] overflow-hidden flex flex-col [&>button.absolute]:hidden">

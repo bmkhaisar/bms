@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell, PageHeader } from "@/components/app/AppShell";
-import { db, type Invoice, type Purchase, type Product, type Customer, type Supplier } from "@/lib/db";
+import { db, type Invoice, type Purchase, type Product, type Customer, type Supplier, type Receipt, type Party } from "@/lib/db";
 import { useLive } from "@/lib/useLive";
 import { useMemo, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Download, Printer } from "lucide-react";
+import { Download, Printer, HandCoins, Clock, ShieldCheck } from "lucide-react";
 import { formatDate, formatMoney, toDateInput, fromDateInput } from "@/lib/format";
 
 export const Route = createFileRoute("/_app/reports")({
@@ -59,7 +59,8 @@ function ReportsPage() {
         <TabsList className="flex-wrap">
           <TabsTrigger value="sales">Sales</TabsTrigger>
           <TabsTrigger value="purchases">Purchases</TabsTrigger>
-          <TabsTrigger value="outstanding">Outstanding</TabsTrigger>
+          <TabsTrigger value="outstanding">Credit Outstanding & Aging</TabsTrigger>
+          <TabsTrigger value="advances">Customer Advances</TabsTrigger>
           <TabsTrigger value="stock">Stock</TabsTrigger>
           <TabsTrigger value="profit">Profit</TabsTrigger>
           <TabsTrigger value="gst">GST</TabsTrigger>
@@ -67,6 +68,7 @@ function ReportsPage() {
         <TabsContent value="sales"><SalesReport from={from} to={to} /></TabsContent>
         <TabsContent value="purchases"><PurchaseReport from={from} to={to} /></TabsContent>
         <TabsContent value="outstanding"><OutstandingReport /></TabsContent>
+        <TabsContent value="advances"><CustomerAdvanceRegisterReport /></TabsContent>
         <TabsContent value="stock"><StockReport /></TabsContent>
         <TabsContent value="profit"><ProfitReport from={from} to={to} /></TabsContent>
         <TabsContent value="gst"><GstReport from={from} to={to} /></TabsContent>
@@ -130,29 +132,293 @@ function OutstandingReport() {
   const purchases = useLive<Purchase>(() => db().purchases.toArray());
   const customers = useLive<Customer>(() => db().customers.toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
-  const recv = invoices.filter(i => i.balance > 0.01);
-  const pay = purchases.filter(p => p.balance > 0.01);
+
+  const recv = useMemo(() => {
+    const now = Date.now();
+    return invoices
+      .filter((i) => i.balance > 0.01 && i.status !== "cancelled")
+      .map((i) => {
+        const cust = customers.find((c) => c.id === i.customerId);
+        const refDate = i.dueDate || i.date;
+        const ageDays = Math.max(0, Math.floor((now - refDate) / (1000 * 60 * 60 * 24)));
+        const creditDays = cust?.creditDays ?? (i.dueDate ? Math.round((i.dueDate - i.date) / (1000 * 60 * 60 * 24)) : 30);
+        return {
+          ...i,
+          customerName: cust?.name || "Customer",
+          creditDays,
+          ageDays,
+        };
+      });
+  }, [invoices, customers]);
+
+  const pay = purchases.filter((p) => p.balance > 0.01);
+
+  // Aging buckets (PRD § 94)
+  const aging = useMemo(() => {
+    let b0_30 = 0;
+    let b31_60 = 0;
+    let b61_90 = 0;
+    let b90_plus = 0;
+
+    for (const inv of recv) {
+      if (inv.ageDays <= 30) b0_30 += inv.balance;
+      else if (inv.ageDays <= 60) b31_60 += inv.balance;
+      else if (inv.ageDays <= 90) b61_90 += inv.balance;
+      else b90_plus += inv.balance;
+    }
+    return { b0_30, b31_60, b61_90, b90_plus, total: b0_30 + b31_60 + b61_90 + b90_plus };
+  }, [recv]);
+
   return (
-    <div className="mt-4 grid gap-4 lg:grid-cols-2">
-      <Card className="card-soft p-4">
-        <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">Receivables</h3><ExportBtn name="receivables.json" data={recv} /></div>
-        <Table><TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>Customer</TableHead><TableHead className="text-right">Balance</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {recv.map(i => <TableRow key={i.id}><TableCell className="font-mono text-xs">{i.number}</TableCell><TableCell>{customers.find(c => c.id === i.customerId)?.name}</TableCell><TableCell className="text-right font-mono">{formatMoney(i.balance)}</TableCell></TableRow>)}
-            {recv.length === 0 && <TableRow><TableCell colSpan={3} className="py-6 text-center text-sm text-muted-foreground">Nothing outstanding.</TableCell></TableRow>}
-          </TableBody>
-        </Table>
-      </Card>
-      <Card className="card-soft p-4">
-        <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">Payables</h3><ExportBtn name="payables.json" data={pay} /></div>
-        <Table><TableHeader><TableRow><TableHead>Bill</TableHead><TableHead>Supplier</TableHead><TableHead className="text-right">Balance</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {pay.map(i => <TableRow key={i.id}><TableCell className="font-mono text-xs">{i.number}</TableCell><TableCell>{suppliers.find(c => c.id === i.supplierId)?.name}</TableCell><TableCell className="text-right font-mono">{formatMoney(i.balance)}</TableCell></TableRow>)}
-            {pay.length === 0 && <TableRow><TableCell colSpan={3} className="py-6 text-center text-sm text-muted-foreground">Nothing owed.</TableCell></TableRow>}
-          </TableBody>
-        </Table>
-      </Card>
+    <div className="mt-4 space-y-4">
+      {/* Receivable Aging Summary Cards (PRD § 94) */}
+      <div className="grid gap-3 sm:grid-cols-5">
+        <div className="rounded-xl border bg-card p-3">
+          <div className="text-xs text-muted-foreground flex items-center gap-1">
+            <Clock className="h-3.5 w-3.5 text-emerald-600" /> Current (0–30 Days)
+          </div>
+          <div className="font-mono text-base font-bold text-foreground mt-1">{formatMoney(aging.b0_30)}</div>
+        </div>
+        <div className="rounded-xl border bg-card p-3">
+          <div className="text-xs text-muted-foreground flex items-center gap-1">
+            <Clock className="h-3.5 w-3.5 text-blue-600" /> 31–60 Days
+          </div>
+          <div className="font-mono text-base font-bold text-foreground mt-1">{formatMoney(aging.b31_60)}</div>
+        </div>
+        <div className="rounded-xl border bg-card p-3">
+          <div className="text-xs text-muted-foreground flex items-center gap-1">
+            <Clock className="h-3.5 w-3.5 text-amber-600" /> 61–90 Days
+          </div>
+          <div className="font-mono text-base font-bold text-amber-600 dark:text-amber-400 mt-1">{formatMoney(aging.b61_90)}</div>
+        </div>
+        <div className="rounded-xl border bg-card p-3">
+          <div className="text-xs text-muted-foreground flex items-center gap-1">
+            <Clock className="h-3.5 w-3.5 text-destructive" /> Over 90+ Days
+          </div>
+          <div className="font-mono text-base font-bold text-destructive mt-1">{formatMoney(aging.b90_plus)}</div>
+        </div>
+        <div className="rounded-xl border border-primary/30 bg-primary/5 p-3">
+          <div className="text-xs text-primary font-medium">Total Receivables</div>
+          <div className="font-mono text-base font-bold text-primary mt-1">{formatMoney(aging.total)}</div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="card-soft p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-sm">Credit Receivables Register (PRD § 93)</h3>
+              <p className="text-[11px] text-muted-foreground">Detailed bill-wise aging and due dates</p>
+            </div>
+            <ExportBtn name="receivables.json" data={recv} />
+          </div>
+          <div className="overflow-x-auto rounded border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Due Date</TableHead>
+                  <TableHead className="text-right">Age</TableHead>
+                  <TableHead className="text-right">Original</TableHead>
+                  <TableHead className="text-right">Outstanding</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {recv.map((i) => (
+                  <TableRow key={i.id}>
+                    <TableCell className="font-mono text-xs font-semibold">{i.number}</TableCell>
+                    <TableCell className="text-xs font-medium">{i.customerName}</TableCell>
+                    <TableCell className="text-xs">{i.dueDate ? formatDate(i.dueDate) : formatDate(i.date)}</TableCell>
+                    <TableCell className={`text-right font-mono text-xs ${i.ageDays > 60 ? "text-destructive font-bold" : i.ageDays > 30 ? "text-amber-600 font-semibold" : ""}`}>
+                      {i.ageDays}d
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs text-muted-foreground">{formatMoney(i.grandTotal)}</TableCell>
+                    <TableCell className="text-right font-mono text-xs font-bold text-foreground">{formatMoney(i.balance)}</TableCell>
+                  </TableRow>
+                ))}
+                {recv.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="py-6 text-center text-xs text-muted-foreground">
+                      No overdue credit receivables.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
+
+        <Card className="card-soft p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-sm">Supplier Payables</h3>
+              <p className="text-[11px] text-muted-foreground">Vendor bills awaiting settlement</p>
+            </div>
+            <ExportBtn name="payables.json" data={pay} />
+          </div>
+          <div className="overflow-x-auto rounded border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Bill #</TableHead>
+                  <TableHead>Supplier</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pay.map((i) => (
+                  <TableRow key={i.id}>
+                    <TableCell className="font-mono text-xs font-semibold">{i.number}</TableCell>
+                    <TableCell className="text-xs font-medium">{suppliers.find((c) => c.id === i.supplierId)?.name || "Vendor"}</TableCell>
+                    <TableCell className="text-right font-mono text-xs font-bold">{formatMoney(i.balance)}</TableCell>
+                  </TableRow>
+                ))}
+                {pay.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={3} className="py-6 text-center text-xs text-muted-foreground">
+                      Nothing owed.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
+      </div>
     </div>
+  );
+}
+
+function CustomerAdvanceRegisterReport() {
+  const receipts = useLive<Receipt>(() => db().receipts.toArray());
+  const invoices = useLive<Invoice>(() => db().invoices.toArray());
+  const customers = useLive<Customer>(() => db().customers.toArray());
+
+  // Derive per-customer advance summary (PRD § 92)
+  const rows = useMemo(() => {
+    return customers.map((c) => {
+      const custReceipts = receipts.filter(
+        (r) => r.customerId === c.id && r.postingStatus !== "failed" && r.postingStatus !== "reversed"
+      );
+      const advanceReceipts = custReceipts.filter(
+        (r) => r.allocationType === "ADVANCE" || !r.invoiceId
+      );
+      const totalAdvanceReceived = advanceReceipts.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+
+      const custInvoices = invoices.filter(
+        (i) => i.customerId === c.id && i.status !== "cancelled"
+      );
+      const totalAdvanceAdjusted = custInvoices.reduce(
+        (s, i) => s + ((i.advanceAllocatedPaise || 0) / 100),
+        0
+      );
+
+      const availableAdvance = Math.max(0, totalAdvanceReceived - totalAdvanceAdjusted);
+      const lastReceipt = advanceReceipts.sort((a, b) => b.date - a.date)[0];
+      const references = advanceReceipts
+        .map((r) => r.reference || r.number)
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(", ");
+
+      return {
+        customer: c,
+        paymentPolicy: c.paymentPolicy || "CREDIT",
+        totalAdvanceReceived,
+        totalAdvanceAdjusted,
+        availableAdvance,
+        lastReceiptDate: lastReceipt?.date,
+        reference: references || "—",
+      };
+    }).filter((r) => r.totalAdvanceReceived > 0 || r.availableAdvance > 0 || r.paymentPolicy === "ADVANCE");
+  }, [customers, receipts, invoices]);
+
+  const totalReceived = rows.reduce((s, r) => s + r.totalAdvanceReceived, 0);
+  const totalAdjusted = rows.reduce((s, r) => s + r.totalAdvanceAdjusted, 0);
+  const totalAvailable = rows.reduce((s, r) => s + r.availableAdvance, 0);
+
+  return (
+    <Card className="card-soft mt-4 p-4 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-base flex items-center gap-2">
+            <HandCoins className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+            Customer Advance Register
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Tally-style unapplied customer deposits and voucher allocation tracking (PRD § 92)
+          </p>
+        </div>
+        <ExportBtn name="customer-advance-register.json" data={rows} />
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl border bg-card p-3">
+          <div className="text-xs text-muted-foreground">Total Advances Received</div>
+          <div className="font-mono text-lg font-bold text-foreground mt-1">{formatMoney(totalReceived)}</div>
+        </div>
+        <div className="rounded-xl border bg-card p-3">
+          <div className="text-xs text-muted-foreground">Adjusted Against Invoices</div>
+          <div className="font-mono text-lg font-bold text-muted-foreground mt-1">{formatMoney(totalAdjusted)}</div>
+        </div>
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-50/40 dark:bg-emerald-950/20 p-3">
+          <div className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">Net Available Unapplied Advance</div>
+          <div className="font-mono text-lg font-bold text-emerald-600 dark:text-emerald-400 mt-1">{formatMoney(totalAvailable)}</div>
+        </div>
+      </div>
+
+      <div className="rounded-md border overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Party / Customer</TableHead>
+              <TableHead>Billing Policy</TableHead>
+              <TableHead className="text-right">Advance Received</TableHead>
+              <TableHead className="text-right">Adjusted</TableHead>
+              <TableHead className="text-right">Available Advance</TableHead>
+              <TableHead>Last Receipt</TableHead>
+              <TableHead>Reference(s)</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} className="py-8 text-center text-xs text-muted-foreground">
+                  No advance receipts recorded yet.
+                </TableCell>
+              </TableRow>
+            ) : (
+              rows.map((r) => (
+                <TableRow key={r.customer.id}>
+                  <TableCell className="font-medium">
+                    <Link to="/parties" className="text-primary hover:underline">
+                      {r.customer.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                      r.paymentPolicy === "ADVANCE"
+                        ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-400"
+                        : "bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-400"
+                    }`}>
+                      {r.paymentPolicy}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right font-mono">{formatMoney(r.totalAdvanceReceived)}</TableCell>
+                  <TableCell className="text-right font-mono text-muted-foreground">{formatMoney(r.totalAdvanceAdjusted)}</TableCell>
+                  <TableCell className="text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                    {formatMoney(r.availableAdvance)}
+                  </TableCell>
+                  <TableCell className="text-xs">{r.lastReceiptDate ? formatDate(r.lastReceiptDate) : "—"}</TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">{r.reference}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </Card>
   );
 }
 

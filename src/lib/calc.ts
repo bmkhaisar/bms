@@ -93,6 +93,21 @@ export function computeLine(item: Partial<LineItem>): LineItem {
   };
 }
 
+import {
+  calculateCanonicalTotals,
+  extractCanonicalInputFromInvoice,
+  validateDocumentTotals,
+  type CanonicalCalculationInput,
+  type CanonicalCalculationResult,
+} from "@/modules/tax/canonicalCalculation";
+
+export {
+  calculateCanonicalTotals,
+  extractCanonicalInputFromInvoice,
+  validateDocumentTotals,
+};
+export type { CanonicalCalculationInput, CanonicalCalculationResult };
+
 export interface Totals {
   subtotal: number;
   discountTotal: number;
@@ -102,6 +117,8 @@ export interface Totals {
   igstTotal: number;
   roundOff: number;
   grandTotal: number;
+  extraChargesTotal?: number;
+  extraChargesTaxTotal?: number;
 }
 
 export function computeTotals(
@@ -109,40 +126,51 @@ export function computeTotals(
   isIgst = false,
   options?: {
     enableGst?: boolean;
-    extraCharges?: Array<{ name: string; amount: number; taxable?: boolean; gstRate?: number }>;
+    extraCharges?: Array<{ name?: string; label?: string; amount: number; isTaxable?: boolean; taxable?: boolean; gstRate?: number; taxRate?: number }>;
+    companyStateCode?: string;
+    placeOfSupply?: string;
+    companyGstMode?: string;
+    documentDiscountValue?: number;
   }
 ): Totals {
-  const calculated = calculateDocumentTaxes({
-    items: items.map((it) => ({
+  const result = calculateCanonicalTotals({
+    items: (items || []).map((it) => ({
       productId: it.productId,
-      name: it.name,
+      name: it.productName || it.name || "Item",
       hsn: it.hsn,
-      quantity: it.quantity,
+      quantity: Number(it.quantity) || 0,
+      rate: Number(it.rate) || 0,
+      discountPct: it.discountPct ?? it.discountPercent ?? 0,
+      gstRate: it.gstRate !== undefined ? Number(it.gstRate) : it.taxRate !== undefined ? Number(it.taxRate) : 0,
+      cessRate: Number(it.cessRate) || 0,
+      isTaxInclusive: Boolean(it.isTaxInclusive),
       unit: it.unit,
-      rate: it.rate,
-      discountValue: it.discountPct,
-      discountType: "percentage",
-      gstRate: it.gstRate,
     })),
-    extraCharges: options?.extraCharges?.map((c) => ({
-      name: c.name,
-      amount: c.amount,
-      taxable: c.taxable,
-      gstRate: c.gstRate,
+    extraCharges: (options?.extraCharges || []).map((c) => ({
+      name: c.name || c.label || "Charge",
+      amount: Number(c.amount) || 0,
+      isTaxable: c.isTaxable !== false && (c as any).taxable !== false,
+      gstRate: (c as any).gstRate !== undefined ? Number((c as any).gstRate) : c.taxRate !== undefined ? Number(c.taxRate) : 0,
     })),
     isInterState: isIgst,
     enableGst: options?.enableGst ?? true,
+    companyStateCode: options?.companyStateCode,
+    placeOfSupply: options?.placeOfSupply,
+    companyGstMode: options?.companyGstMode,
+    documentDiscountValue: options?.documentDiscountValue,
   });
 
   return {
-    subtotal: calculated.subtotal,
-    discountTotal: calculated.totalDiscount,
-    gstTotal: calculated.gstTotal,
-    cgstTotal: calculated.cgstTotal,
-    sgstTotal: calculated.sgstTotal,
-    igstTotal: calculated.igstTotal,
-    roundOff: calculated.roundOff,
-    grandTotal: calculated.grandTotal,
+    subtotal: result.subtotal,
+    discountTotal: result.totalDiscount,
+    gstTotal: result.gstTotal,
+    cgstTotal: result.cgstTotal,
+    sgstTotal: result.sgstTotal,
+    igstTotal: result.igstTotal,
+    roundOff: result.roundOff,
+    grandTotal: result.grandTotal,
+    extraChargesTotal: result.extraChargesTotal,
+    extraChargesTaxTotal: result.extraChargesTaxTotal,
   };
 }
 

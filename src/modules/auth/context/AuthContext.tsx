@@ -208,25 +208,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               });
             }
 
-            // Derive auth_time (in seconds)
-            let authTimeSeconds = Math.floor(Date.now() / 1000);
-            if (typeof tokenResult.claims.auth_time === "number") {
-              authTimeSeconds = tokenResult.claims.auth_time;
-            } else if (tokenResult.authTime) {
-              authTimeSeconds = Math.floor(new Date(tokenResult.authTime).getTime() / 1000);
-            }
-
-            const expiryMs = authTimeSeconds * 1000 + MAX_SESSION_AGE_MS;
-            setSessionExpiresAt(expiryMs);
-
-            const remainingMs = expiryMs - Date.now();
-            if (remainingMs <= 0) {
-              signOut("expired");
-            } else {
-              expiryTimerRef.current = setTimeout(() => {
-                signOut("expired");
-              }, remainingMs);
-            }
+            // PRD §§ 37-43: Persistent login policy - no hard fixed 2-hour session expiry
+            // User remains authenticated as long as Firebase auth remains valid
+            setSessionExpiresAt(null);
+            clearTimer();
           } catch (e) {
             console.warn("Token inspection error:", e);
             setIsPlatformAdmin(false);

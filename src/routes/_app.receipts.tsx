@@ -398,9 +398,17 @@ export function ReceiptsAndPaymentsPage() {
                 <Label className="text-xs">Customer *</Label>
                 <Select
                   value={editingReceipt.customerId}
-                  onValueChange={(v) =>
-                    setEditingReceipt({ ...editingReceipt, customerId: v, invoiceId: undefined })
-                  }
+                  onValueChange={(v) => {
+                    const cust = customers.find((c) => c.id === v);
+                    const isAdvanceCust = cust?.paymentPolicy === "ADVANCE";
+                    setEditingReceipt({
+                      ...editingReceipt,
+                      customerId: v,
+                      invoiceId: undefined,
+                      allocationType: isAdvanceCust ? "ADVANCE" : "ON_ACCOUNT",
+                      reference: isAdvanceCust ? `ADV-${editingReceipt.number}` : editingReceipt.reference,
+                    });
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select customer…" />
@@ -408,32 +416,65 @@ export function ReceiptsAndPaymentsPage() {
                   <SelectContent>
                     {customers.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
-                        {c.name}
+                        {c.name} {c.paymentPolicy === "ADVANCE" ? "• [ADVANCE]" : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Against Invoice</Label>
+                <Label className="text-xs">Allocation Type</Label>
                 <Select
-                  value={editingReceipt.invoiceId || "none"}
-                  onValueChange={(v) =>
-                    setEditingReceipt({ ...editingReceipt, invoiceId: v === "none" ? undefined : v })
-                  }
+                  value={editingReceipt.allocationType || (editingReceipt.invoiceId ? "AGAINST_REF" : "ON_ACCOUNT")}
+                  onValueChange={(v: "ADVANCE" | "AGAINST_REF" | "ON_ACCOUNT") => {
+                    setEditingReceipt({
+                      ...editingReceipt,
+                      allocationType: v,
+                      invoiceId: v === "AGAINST_REF" ? editingReceipt.invoiceId : undefined,
+                      reference: v === "ADVANCE" ? (editingReceipt.reference || `ADV-${editingReceipt.number}`) : editingReceipt.reference,
+                    });
+                  }}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="None (On account)" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">On Account</SelectItem>
-                    {custInvoices.map((i) => (
-                      <SelectItem key={i.id} value={i.id}>
-                        {i.number} · Bal {formatMoney(i.balance)}
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="ADVANCE">Advance (Customer Deposit)</SelectItem>
+                    <SelectItem value="AGAINST_REF">Against Invoice (Reference)</SelectItem>
+                    <SelectItem value="ON_ACCOUNT">On Account (General)</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              {editingReceipt.allocationType === "AGAINST_REF" && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Against Invoice</Label>
+                  <Select
+                    value={editingReceipt.invoiceId || "none"}
+                    onValueChange={(v) =>
+                      setEditingReceipt({ ...editingReceipt, invoiceId: v === "none" ? undefined : v })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select invoice…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Select Invoice</SelectItem>
+                      {custInvoices.map((i) => (
+                        <SelectItem key={i.id} value={i.id}>
+                          {i.number} · Bal {formatMoney(i.balance)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Reference Number</Label>
+                <Input
+                  value={editingReceipt.reference || ""}
+                  onChange={(e) => setEditingReceipt({ ...editingReceipt, reference: e.target.value })}
+                  placeholder="e.g. ADV-00012 or Cheque #"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Amount (₹) *</Label>

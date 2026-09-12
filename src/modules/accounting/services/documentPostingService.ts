@@ -13,6 +13,11 @@ import {
   createTaxSnapshot,
   validateGstInvoiceNumber,
 } from "@/modules/tax/taxEngine";
+import {
+  calculateCanonicalTotals,
+  extractCanonicalInputFromInvoice,
+  validateDocumentTotals,
+} from "@/modules/tax/canonicalCalculation";
 import { recordInvoicePriceHistory, recordPurchasePriceHistory } from "@/modules/pricing/priceHistoryService";
 import { recordStockMovement } from "@/modules/inventory/stockMovementService";
 
@@ -21,6 +26,8 @@ export interface PostingResult {
   voucherId?: string;
   documentId?: string;
   error?: string;
+  recomputedGrandTotal?: number;
+  discrepancy?: boolean;
 }
 
 /**
@@ -65,42 +72,26 @@ export async function postInvoiceTransaction(params: {
       }
     }
 
-    // 2. Authoritative Server-Side Tax Recomputation (Correction 2: Never blind-trust client totals)
+    // 2. Authoritative Server-Side Tax Recomputation via Canonical Contract (PRD §§ 44-55)
     const placeOfSupply = invoice.placeOfSupply || invoice.customerSnapshot?.state || company.state || "27";
-    const recomputed = calculateDocumentTaxes({
-      items: (invoice.items || []).map((it) => ({
-        productId: it.productId,
-        name: it.name,
-        hsn: it.hsn,
-        quantity: it.quantity,
-        rate: it.rate,
-        gstRate: it.taxRate || 0,
-        cessRate: it.cessRate || 0,
-        discountValue: it.discountPercent ? (it.rate * it.quantity * it.discountPercent) / 100 : 0,
-        discountType: "fixed",
-        pricingMode: it.isTaxInclusive ? "inclusive" : "exclusive",
-      })),
-      extraCharges: (invoice.extraCharges || []).map((c) => ({
-        name: c.name || (c as any).label || "Charge",
-        amount: c.amount,
-        taxable: c.isTaxable !== false,
-        gstRate: c.taxRate || 0,
-      })),
-      companyGstMode: normMode as any,
-      companyStateCode: company.state,
-      placeOfSupply,
-      documentDiscountValue: invoice.discountTotal,
-      documentDiscountType: "fixed",
-    });
-
-    // 3. Reject Tampered Client Totals (Prevent manipulated browser payloads)
+    const validation = validateDocumentTotals(invoice, company);
+    const recomputed = validation.authoritative;
     const clientGrandTotal = Number(invoice.grandTotal) || 0;
-    if (clientGrandTotal > 0 && Math.abs(clientGrandTotal - recomputed.grandTotal) > 1.0) {
+
+    // 3. Reject Tampered Client Totals (Prevent manipulated browser payloads - PRD §§ 48-50)
+    if (!validation.matches) {
+      console.warn("[Calculation Drift Diagnostic]", {
+        clientClaimed: clientGrandTotal,
+        authoritative: recomputed.grandTotal,
+        diff: validation.diff,
+      });
       return {
         success: false,
-        error: `Calculation discrepancy rejected: Client payload claimed grandTotal ₹${clientGrandTotal.toFixed(
+        error: `Invoice totals changed during validation (Authoritative: ₹${recomputed.grandTotal.toFixed(
           2
-        )}, but authoritative server recomputation calculated ₹${recomputed.grandTotal.toFixed(2)}.`,
+        )}, Submitted: ₹${clientGrandTotal.toFixed(2)}). Please review the updated total before posting.`,
+        recomputedGrandTotal: recomputed.grandTotal,
+        discrepancy: true,
       };
     }
 
@@ -568,7 +559,9 @@ export async function postReceiptTransaction(params: {
           financialYearId,
           voucherType: "receipt",
           date: toCanonicalDate(receipt.date),
-          narration: `Receipt ${receipt.number} for customer payment`,
+          narration: receipt.allocationType === "ADVANCE"
+            ? `Customer Advance Receipt ${receipt.number} [Ref: ${receipt.reference || receipt.number}]`
+            : `Receipt ${receipt.number} against receivables`,
           clientMutationId: `mut-rec-${receipt.id}-${Date.now()}`,
           lines,
         },

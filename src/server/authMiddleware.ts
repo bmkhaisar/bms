@@ -21,12 +21,17 @@ export interface AuthVerificationResult {
   code?: "UNAUTHORIZED" | "FORBIDDEN" | "SERVER_CONFIG_REQUIRED" | "SESSION_EXPIRED";
 }
 
-export function checkSessionAge(decodedToken: { auth_time?: number }): {
+export function checkSessionAge(
+  decodedToken: { auth_time?: number },
+  policy: "persistent" | "idle" | "strict" = "persistent"
+): {
   valid: boolean;
   error?: string;
   code?: "SESSION_EXPIRED";
 } {
-  if (decodedToken.auth_time) {
+  // PRD § 37-41: Default is persistent session (no fixed 2-hour timeout).
+  // Only enforce 2-hour session expiry if strict session policy is explicitly requested.
+  if (policy === "strict" && decodedToken.auth_time) {
     const nowSeconds = Math.floor(Date.now() / 1000);
     const sessionAge = nowSeconds - decodedToken.auth_time;
     if (sessionAge > MAX_SESSION_AGE_SECONDS) {

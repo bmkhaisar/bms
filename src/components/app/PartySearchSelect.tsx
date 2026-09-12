@@ -55,6 +55,8 @@ export function PartySearchSelect({
     if ((p as Customer).phone && String((p as Customer).phone).includes(query)) return true;
     if ((p as Customer).gstin && String((p as Customer).gstin).toLowerCase().includes(normQ)) return true;
     if (p.email && p.email.toLowerCase().includes(normQ)) return true;
+    if ((p as Customer).city && normalizeName((p as Customer).city).includes(normQ)) return true;
+    if ((p as Customer).pincode && String((p as Customer).pincode).includes(query)) return true;
     if (Array.isArray(p.aliases)) {
       for (const a of p.aliases) {
         if (normalizeName(a).includes(normQ)) return true;
@@ -130,6 +132,8 @@ export function PartySearchSelect({
 
               {filtered.map((p) => {
                 const isSelected = p.id === value;
+                const pol = (p as any).paymentPolicy || "CREDIT";
+                const locStr = [(p as Customer).city, (p as Customer).pincode].filter(Boolean).join(" - ");
                 return (
                   <div
                     key={p.id}
@@ -142,15 +146,26 @@ export function PartySearchSelect({
                     }`}
                   >
                     <div className="space-y-0.5 truncate pr-2">
-                      <div className="truncate text-foreground flex items-center gap-1">
-                        <span>{p.name}</span>
+                      <div className="truncate text-foreground flex items-center gap-1.5">
+                        <span className="font-medium">{p.name}</span>
                         {p.company && (
                           <span className="text-[10px] text-muted-foreground font-normal">({p.company})</span>
                         )}
+                        <Badge
+                          variant="outline"
+                          className={`text-[9px] px-1 py-0 h-4 font-semibold ${
+                            pol === "ADVANCE"
+                              ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                              : "border-blue-500/50 bg-blue-500/10 text-blue-700 dark:text-blue-400"
+                          }`}
+                        >
+                          {pol}
+                        </Badge>
                       </div>
                       <div className="text-[10px] text-muted-foreground truncate flex items-center gap-2">
                         {p.gstin && <span className="font-mono">{p.gstin}</span>}
                         {(p as Customer).mobile && <span>{(p as Customer).mobile}</span>}
+                        {locStr && <span>&bull; {locStr}</span>}
                       </div>
                     </div>
                     {isSelected && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}

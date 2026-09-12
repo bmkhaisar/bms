@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 
 const MAX_SESSION_AGE_SECONDS = 7200;
 
-function checkSessionAge(decodedToken) {
-  if (decodedToken.auth_time) {
+function checkSessionAge(decodedToken, policy = "persistent") {
+  if (policy === "strict" && decodedToken.auth_time) {
     const nowSeconds = Math.floor(Date.now() / 1000);
     const sessionAge = nowSeconds - decodedToken.auth_time;
     if (sessionAge > MAX_SESSION_AGE_SECONDS) {
@@ -62,15 +62,15 @@ function createCompanySnapshot(company) {
 
 // Phase 3 Invariant Tests
 
-test("Phase 3 - Sec 1: Session age < 7200s is accepted by server authorization", () => {
+test("Phase 3 - Sec 1: Persistent Session policy accepts valid auth regardless of 7200s session age", () => {
   const now = Math.floor(Date.now() / 1000);
-  const result = checkSessionAge({ auth_time: now - 3600 });
+  const result = checkSessionAge({ auth_time: now - 7205 }, "persistent");
   assert.equal(result.valid, true);
 });
 
-test("Phase 3 - Sec 2: Session age >= 7200s is strictly rejected with SESSION_EXPIRED", () => {
+test("Phase 3 - Sec 2: Strict Session policy rejects session age >= 7200s with SESSION_EXPIRED", () => {
   const now = Math.floor(Date.now() / 1000);
-  const result = checkSessionAge({ auth_time: now - 7205 });
+  const result = checkSessionAge({ auth_time: now - 7205 }, "strict");
   assert.equal(result.valid, false);
   assert.equal(result.code, "SESSION_EXPIRED");
 });

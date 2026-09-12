@@ -34,22 +34,96 @@ export interface CompanySettings {
   nextQuotationNo: number;
   nextReceiptNo: number;
   nextPurchaseNo: number;
+  defaultCountry?: string;
+  defaultState?: string;
+  defaultPincode?: string;
+  advancePartyPolicy?: "STRICT" | "WARN_AND_ALLOW" | "MANAGER_OVERRIDE";
+  creditLimitPolicy?: "WARN" | "BLOCK" | "MANAGER_APPROVAL";
+  sessionPolicy?: "persistent" | "idle" | "strict";
 }
 
-export interface Customer {
-  id: ID; name: string; company?: string; mobile?: string; phone?: string; email?: string;
-  gstin?: string; pan?: string; address?: string; billingAddress?: string; city?: string; state?: string; pincode?: string;
-  openingBalance: number; ledgerId?: string; createdAt: number;
+export type PartyType = "CUSTOMER" | "SUPPLIER" | "BOTH";
+export type PaymentPolicy = "ADVANCE" | "CREDIT";
+
+export interface PartyAddress {
+  id: string;
+  label: string; // "Billing Address" | "Shipping Address" | "Site Address" | "Branch Address" | "Other Address"
+  addressLine1: string;
+  addressLine2?: string;
+  city: string;
+  district?: string;
+  state: string;
+  stateCode?: string;
+  country: string; // Mandatory per PRD § 5
+  pincode: string; // Mandatory per PRD § 5
+  contactPerson?: string;
+  phone?: string;
+  isDefaultBilling?: boolean;
+  isDefaultShipping?: boolean;
+}
+
+export interface AddressSnapshot {
+  name?: string;
+  tradingName?: string;
+  gstin?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  district?: string;
+  state?: string;
+  stateCode?: string;
+  country?: string;
+  pincode?: string;
+  contactPerson?: string;
+  phone?: string;
+}
+
+export interface Party {
+  id: ID;
+  name: string;
+  tradingName?: string;
+  partyType?: PartyType;
+  mobile?: string;
+  phone?: string;
+  alternatePhone?: string;
+  email?: string;
+  gstin?: string;
+  pan?: string;
+  company?: string;
+  address?: string; // primary address
+  billingAddress?: string;
+  shippingAddress?: string;
+  city?: string;
+  district?: string;
+  state?: string;
+  stateCode?: string;
+  country?: string; // PRD § 5: Country mandatory
+  pincode?: string; // PRD § 5: Pincode mandatory
+  contactPerson?: string;
+  addresses?: PartyAddress[];
+  defaultBillingAddressId?: string;
+  defaultShippingAddressId?: string;
+  openingBalance: number;
+  ledgerId?: string;
+  apLedgerId?: string;
   creditLimit?: number;
   creditDays?: number;
+  paymentPolicy?: PaymentPolicy; // PRD § 10: ADVANCE | CREDIT
+  advanceBalancePaise?: number; // Cached available advance in paise
+  outstandingPaise?: number; // Cached AR exposure in paise
   aliases?: string[];
+  notes?: string;
   taxRegistrationType?: "regular" | "composition" | "unregistered";
+  createdAt: number;
+  updatedAt?: number;
 }
 
-export interface Supplier {
-  id: ID; name: string; company?: string; mobile?: string; phone?: string; email?: string;
-  gstin?: string; pan?: string; address?: string; billingAddress?: string; openingBalance: number; ledgerId?: string; createdAt: number;
-  aliases?: string[];
+export interface Customer extends Party {
+  // Retains full backward compatibility with Customer code
+}
+
+export interface Supplier extends Party {
+  // Retains full backward compatibility with Supplier code
 }
 
 export interface Category { id: ID; name: string; createdAt: number; }
@@ -128,7 +202,12 @@ export interface Quotation {
   notes?: string; terms?: string;
   status: "draft" | "sent" | "accepted" | "converted" | "rejected";
   createdAt: number;
+  billingAddressId?: string;
+  billingAddress?: string;
+  shippingAddress?: string;
   // Snapshots at time of save
+  billingAddressSnapshot?: AddressSnapshot;
+  shippingAddressSnapshot?: AddressSnapshot;
   generalInfoSnapshot?: GeneralInfoField[];
   techSpecSnapshot?: TechSpecSection[];
   electricalSnapshot?: TechSpecSection[];
@@ -155,6 +234,9 @@ export interface Invoice {
   signatorySnapshot?: any;
   placeOfSupply?: string;
   billingAddress?: string; shippingAddress?: string;
+  billingAddressId?: string;
+  billingAddressSnapshot?: AddressSnapshot;
+  shippingAddressSnapshot?: AddressSnapshot;
   items: LineItem[];
   lineSnapshots?: LineItem[];
   subtotal: number; discountTotal: number;
@@ -165,6 +247,8 @@ export interface Invoice {
   extraCharges?: ExtraCharge[];
   extraChargesTotal?: number;
   amountPaid: number; balance: number; isIgst: boolean;
+  advanceAllocatedPaise?: number;
+  advanceAllocations?: { receiptId: string; receiptNumber: string; amountPaise: number }[];
   notes?: string; terms?: string;
   status: "draft" | "unpaid" | "partial" | "paid" | "posted" | "cancelled";
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
@@ -189,6 +273,10 @@ export interface Receipt {
   signatoryOverride?: any;
   signatorySnapshot?: any;
   reference?: string; notes?: string; createdAt: number;
+  allocationType?: "ADVANCE" | "AGAINST_REF" | "ON_ACCOUNT";
+  referenceType?: "ADVANCE" | "AGAINST_REF" | "ON_ACCOUNT";
+  allocatedInvoices?: { invoiceId: string; invoiceNumber: string; amountPaise: number }[];
+  advanceAvailablePaise?: number;
 }
 
 export interface Payment {
@@ -282,6 +370,7 @@ class BizDB extends Dexie {
   techSpecTemplates!: Table<TechSpecTemplate, ID>;
   bankAccounts!: Table<BankAccount, ID>;
   quotationTemplates!: Table<QuotationTemplate, ID>;
+  parties!: Table<Party, ID>;
 
   constructor() {
     super("bms_db_v1");
@@ -304,6 +393,9 @@ class BizDB extends Dexie {
       bankAccounts: "id, bankName, createdAt",
       quotationTemplates: "id, name, createdAt",
     });
+    this.version(3).stores({
+      parties: "id, name, partyType, paymentPolicy, createdAt",
+    });
   }
 }
 
@@ -323,6 +415,11 @@ export const DEFAULT_COMPANY: CompanySettings = {
   currency: "INR", currencySymbol: "₹",
   invoicePrefix: "INV-", quotationPrefix: "QT-", receiptPrefix: "RCP-", purchasePrefix: "PUR-",
   nextInvoiceNo: 1, nextQuotationNo: 1, nextReceiptNo: 1, nextPurchaseNo: 1,
+  defaultCountry: "India",
+  defaultState: "Maharashtra",
+  advancePartyPolicy: "STRICT",
+  creditLimitPolicy: "WARN",
+  sessionPolicy: "persistent",
   terms: "1. Goods once sold will not be taken back.\n2. Interest @18% p.a. will be charged on overdue bills.",
   declaration: "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.",
 };

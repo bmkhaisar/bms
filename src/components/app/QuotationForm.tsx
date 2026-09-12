@@ -25,6 +25,9 @@ import { QuickCreateCustomerDrawer } from "./QuickCreateCustomerDrawer";
 import { QuickCreateProductModal } from "./QuickCreateProductModal";
 import { PartySearchSelect } from "./PartySearchSelect";
 import { CustomerInsightDrawer } from "./CustomerInsightDrawer";
+import { PartyAddressSelect } from "./PartyAddressSelect";
+import { formatAddressLines } from "./AddressDrawer";
+import { LineItemsEditor } from "./LineItemsEditor";
 
 import {
   db, uid, type Quotation, type LineItem, type Customer, type Product, type ExtraCharge,
@@ -183,6 +186,10 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
     const finalQ: Quotation = {
       ...q,
       customerSnapshot: cust,
+      billingAddressId: (q as any).billingAddressId,
+      billingAddressSnapshot: (q as any).billingAddressSnapshot,
+      billingAddress: q.billingAddress,
+      shippingAddress: q.shippingAddress,
       subtotal: totals.subtotal,
       discountTotal: totals.discountTotal,
       gstTotal: totals.gstTotal,
@@ -257,6 +264,22 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
                     onAddNew={() => setQuickCustomerOpen(true)}
                   />
                 </div>
+                <div className="space-y-1.5 md:col-span-2">
+                  <PartyAddressSelect
+                    party={customers.find(c => c.id === q.customerId)}
+                    selectedAddressId={(q as any).billingAddressId}
+                    onChange={(snapshot, addressId) => {
+                      setQ(prev => ({
+                        ...prev,
+                        billingAddressId: addressId,
+                        billingAddressSnapshot: snapshot,
+                        billingAddress: formatAddressLines(snapshot),
+                        shippingAddress: prev.shippingAddress || formatAddressLines(snapshot),
+                      }));
+                    }}
+                    label="Customer Billing Address (Saved Party Master)"
+                  />
+                </div>
                 <Field label="Date">
                   <Input type="date" value={toDateInput(q.date)} onChange={e => setQ({ ...q, date: fromDateInput(e.target.value) })} />
                 </Field>
@@ -299,147 +322,14 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
           {/* ============ ITEMS ============ */}
           <TabsContent value="items">
             <Card className="p-3">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div className="text-sm text-muted-foreground">Drag rows to reorder. Click a product to auto-fill.</div>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setQuickProductOpen(true)}>
-                    <Plus className="h-4 w-4" /> New product
-                  </Button>
-                  <Button size="sm" className="gap-2" onClick={addRow}><Plus className="h-4 w-4" /> Add row</Button>
-                </div>
-              </div>
-              <div className="space-y-3 sm:hidden">
-                {itemsWithIds.length === 0 && (
-                  <div className="rounded-md border border-dashed py-6 text-center text-sm text-muted-foreground">No items yet. Tap "Add row".</div>
-                )}
-                {itemsWithIds.map((it, i) => (
-                  <div key={it._rid} className="rounded-md border bg-card p-3 shadow-sm">
-                    <div className="mb-3 flex items-center justify-between gap-2">
-                      <div className="text-sm font-medium">Item {i + 1}</div>
-                      <div className="flex gap-1">
-                        <Button size="icon" variant="ghost" title="Duplicate" onClick={() => duplicateRow(i)}><Copy className="h-4 w-4" /></Button>
-                        <Button size="icon" variant="ghost" title="Delete" onClick={() => removeRow(i)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Select
-                        value={it.productId || "custom"}
-                        onValueChange={v => {
-                          if (v === "__new__") {
-                            setQuickProductOpen(true);
-                            return;
-                          }
-                          v === "custom" ? updateItem(i, { productId: "" }) : pickProduct(i, v);
-                        }}
-                      >
-                        <SelectTrigger className="h-10"><SelectValue placeholder="Select product" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__new__" className="font-semibold text-primary">+ Add New Product</SelectItem>
-                          <SelectItem value="custom">Custom item</SelectItem>
-                          {products.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <Input className="h-10" value={it.name} onChange={e => updateItem(i, { name: e.target.value })} placeholder="Item name" />
-                      <Textarea className="min-h-20 text-sm" placeholder="Description / specifications" value={it.description || ""} onChange={e => updateItem(i, { description: e.target.value })} />
-                      <SizePicker
-                        value={it.size || ""}
-                        onChange={v => updateItem(i, { size: v })}
-                        productSizes={products.find(p => p.id === it.productId)?.defaultSizes || []}
-                        sizes={sizes}
-                        onSave={saveSizeIfNew}
-                      />
-                      <div className="grid grid-cols-2 gap-2">
-                        <Input className="h-10 text-right" type="number" step="0.01" value={it.quantity} onChange={e => updateItem(i, { quantity: Number(e.target.value) })} placeholder="Qty" />
-                        <Input className="h-10" value={it.unit} onChange={e => updateItem(i, { unit: e.target.value })} placeholder="Unit" />
-                        <Input className="h-10 text-right" type="number" step="0.01" value={it.rate} onChange={e => updateItem(i, { rate: Number(e.target.value) })} placeholder="Rate" />
-                        <Input className="h-10 text-right" type="number" step="0.01" value={it.discountPct} onChange={e => updateItem(i, { discountPct: Number(e.target.value) })} placeholder="Disc%" />
-                        <Input className="h-10 text-right" type="number" step="0.01" value={it.gstRate} onChange={e => updateItem(i, { gstRate: Number(e.target.value) })} placeholder="GST%" />
-                        <div className="flex h-10 items-center justify-end rounded-md bg-muted/40 px-3 font-mono text-sm font-semibold">{formatMoney(it.total)}</div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="hidden max-w-full overflow-x-auto scrollbar-hidden rounded-md border sm:block">
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-                  <SortableContext items={itemsWithIds.map(x => x._rid)} strategy={verticalListSortingStrategy}>
-                    <Table className="min-w-[920px]">
-                      <TableHeader className="bg-muted/60">
-                        <TableRow>
-                          <TableHead className="w-6"></TableHead>
-                          <TableHead className="w-[24%]">Product</TableHead>
-                          <TableHead>Size</TableHead>
-                          <TableHead className="text-right">Qty</TableHead>
-                          <TableHead>Unit</TableHead>
-                          <TableHead className="text-right">Rate</TableHead>
-                          <TableHead className="text-right">Disc%</TableHead>
-                          <TableHead className="text-right">GST%</TableHead>
-                          <TableHead className="text-right">Amount</TableHead>
-                          <TableHead className="w-20"></TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {itemsWithIds.length === 0 && (
-                          <TableRow><TableCell colSpan={10} className="py-6 text-center text-sm text-muted-foreground">No items yet. Click "Add row".</TableCell></TableRow>
-                        )}
-                        {itemsWithIds.map((it, i) => (
-                          <SortableRow key={it._rid} id={it._rid}>
-                            {(dragHandleProps) => (
-                              <>
-                                <TableCell>
-                                  <button {...dragHandleProps} className="cursor-grab text-muted-foreground hover:text-foreground" aria-label="Drag">
-                                    <GripVertical className="h-4 w-4" />
-                                  </button>
-                                </TableCell>
-                                <TableCell>
-                                  <Select
-                                    value={it.productId || "custom"}
-                                    onValueChange={v => {
-                                      if (v === "__new__") {
-                                        setQuickProductOpen(true);
-                                        return;
-                                      }
-                                      v === "custom" ? updateItem(i, { productId: "" }) : pickProduct(i, v);
-                                    }}
-                                  >
-                                    <SelectTrigger className="h-9 min-w-[180px]"><SelectValue placeholder="Select product" /></SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="__new__" className="font-semibold text-primary">+ Add New Product</SelectItem>
-                                      <SelectItem value="custom">Custom item</SelectItem>
-                                      {products.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                                    </SelectContent>
-                                  </Select>
-                                  <Input className="mt-1 h-8" value={it.name} onChange={e => updateItem(i, { name: e.target.value })} placeholder="Item name" />
-                                  <Textarea className="mt-1 h-14 text-xs" placeholder="Description / specifications" value={it.description || ""} onChange={e => updateItem(i, { description: e.target.value })} />
-                                </TableCell>
-                                <TableCell>
-                                  <SizePicker
-                                    value={it.size || ""}
-                                    onChange={v => updateItem(i, { size: v })}
-                                    productSizes={products.find(p => p.id === it.productId)?.defaultSizes || []}
-                                    sizes={sizes}
-                                    onSave={saveSizeIfNew}
-                                  />
-                                </TableCell>
-                                <TableCell><Input className="h-9 w-20 text-right" type="number" step="0.01" value={it.quantity} onChange={e => updateItem(i, { quantity: Number(e.target.value) })} /></TableCell>
-                                <TableCell><Input className="h-9 w-16" value={it.unit} onChange={e => updateItem(i, { unit: e.target.value })} /></TableCell>
-                                <TableCell><Input className="h-9 w-24 text-right" type="number" step="0.01" value={it.rate} onChange={e => updateItem(i, { rate: Number(e.target.value) })} /></TableCell>
-                                <TableCell><Input className="h-9 w-16 text-right" type="number" step="0.01" value={it.discountPct} onChange={e => updateItem(i, { discountPct: Number(e.target.value) })} /></TableCell>
-                                <TableCell><Input className="h-9 w-16 text-right" type="number" step="0.01" value={it.gstRate} onChange={e => updateItem(i, { gstRate: Number(e.target.value) })} /></TableCell>
-                                <TableCell className="text-right font-mono">{formatMoney(it.total)}</TableCell>
-                                <TableCell className="text-right">
-                                  <Button size="icon" variant="ghost" title="Duplicate" onClick={() => duplicateRow(i)}><Copy className="h-4 w-4" /></Button>
-                                  <Button size="icon" variant="ghost" title="Delete" onClick={() => removeRow(i)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                                </TableCell>
-                              </>
-                            )}
-                          </SortableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </SortableContext>
-                </DndContext>
-              </div>
+              <LineItemsEditor
+                items={q.items}
+                onChange={(items) => setQ({ ...q, items })}
+                mode="sales"
+                isIgst={false}
+                enableGst={true}
+                customerId={q.customerId}
+              />
             </Card>
           </TabsContent>
 

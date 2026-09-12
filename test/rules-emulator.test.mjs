@@ -318,26 +318,27 @@ test("Emulator Rule 8: Read privacy for /userCompanies and /memberships", () => 
   assert.equal(rulesEngine.evaluateRead("memberships/comp_A", authInactiveUser, mockDatabase), false);
 });
 
-test("Emulator Rule 9: Session < 2h (7190s) is accepted by RTDB rules", () => {
-  const validAuth = {
-    uid: "user_A",
-    token: { auth_time: Math.floor(Date.now() / 1000) - 7190 },
-  };
-  const canRead = rulesEngine.evaluateRead("companyData/comp_A", validAuth, mockDatabase);
-  assert.equal(canRead, true, "Valid session under 2 hours must be permitted");
-});
-
-test("Emulator Rule 10: Session > 2h (7210s) is strictly rejected by RTDB rules", () => {
-  const expiredAuth = {
+test("Emulator Rule 9: Persistent Session: active member with session > 2h (7210s) is accepted by RTDB rules", () => {
+  const longSessionAuth = {
     uid: "user_A",
     token: { auth_time: Math.floor(Date.now() / 1000) - 7210 },
   };
-  const canRead = rulesEngine.evaluateRead("companyData/comp_A", expiredAuth, mockDatabase);
-  assert.equal(canRead, false, "Expired session (> 2 hours) must be strictly denied by RTDB rules");
+  const canRead = rulesEngine.evaluateRead("companyData/comp_A", longSessionAuth, mockDatabase);
+  assert.equal(canRead, true, "Active authenticated member must be permitted regardless of 2h session age under persistent policy");
+});
 
-  const canWrite = rulesEngine.evaluateWrite("companyData/comp_A/customers", expiredAuth, mockDatabase, {
-    cNew: { name: "Expired Attempt" },
+test("Emulator Rule 10: Unauthenticated or unauthorized access is strictly rejected by RTDB rules", () => {
+  const unauth = null;
+  const canRead = rulesEngine.evaluateRead("companyData/comp_A", unauth, mockDatabase);
+  assert.equal(canRead, false, "Unauthenticated access must be strictly denied by RTDB rules");
+
+  const nonMemberAuth = {
+    uid: "user_non_member",
+    token: { auth_time: Math.floor(Date.now() / 1000) },
+  };
+  const canWrite = rulesEngine.evaluateWrite("companyData/comp_A/customers", nonMemberAuth, mockDatabase, {
+    cNew: { name: "Non Member Attempt" },
   });
-  assert.equal(canWrite, false, "Expired session write must be strictly denied by RTDB rules");
+  assert.equal(canWrite, false, "Non-member write must be strictly denied by RTDB rules");
 });
 

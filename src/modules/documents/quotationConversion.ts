@@ -90,7 +90,7 @@ export async function convertQuotationToInvoice(
       }
     }
 
-    // 5. Construct independent DRAFT invoice (Correction 4: Do not auto-post accounting by default)
+    // 5. Construct independent DRAFT invoice (PRD § 35: Preserve party, address snapshot, signatory, items)
     const invoiceId = uid();
     const invoice: Invoice = {
       id: invoiceId,
@@ -98,6 +98,10 @@ export async function convertQuotationToInvoice(
       date: now,
       customerId: quotation.customerId,
       customerSnapshot,
+      billingAddressId: (quotation as any).billingAddressId,
+      billingAddressSnapshot: (quotation as any).billingAddressSnapshot,
+      billingAddress: quotation.billingAddress || (quotation as any).billingAddressSnapshot?.addressLine1 || customer?.billingAddress || customer?.address,
+      shippingAddress: quotation.shippingAddress || (quotation as any).shippingAddressSnapshot?.addressLine1,
       items,
       subtotal: quotation.subtotal,
       discountTotal: quotation.discountTotal,
@@ -115,6 +119,9 @@ export async function convertQuotationToInvoice(
       status: "draft", // Correction 4: Draft invoice awaiting employee review
       notes: quotation.notes,
       terms: quotation.terms,
+      companySnapshot: quotation.companySnapshot,
+      signatorySnapshot: quotation.signatorySnapshot,
+      signatoryOverride: quotation.signatoryOverride,
       convertedFromQuotationId: quotation.id,
       createdAt: now,
       version: 1,

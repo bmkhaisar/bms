@@ -38,6 +38,13 @@ import { PartySearchSelect } from "./PartySearchSelect";
 import { CustomerInsightDrawer } from "./CustomerInsightDrawer";
 import { SupplierInsightDrawer } from "./SupplierInsightDrawer";
 import { DocumentCopyModal } from "./DocumentCopyModal";
+import { InvoicePartyStatusPanel } from "./InvoicePartyStatusPanel";
+import { PartyAddressSelect } from "./PartyAddressSelect";
+import { AdvanceRestrictionModal } from "./AdvanceRestrictionModal";
+import { CalculationReconciliationModal } from "./CalculationReconciliationModal";
+import { getPartyFinancialInsight } from "@/modules/accounting/services/partyAdvanceService";
+import { validateDocumentTotals } from "@/modules/tax/canonicalCalculation";
+import { formatAddressLines } from "./AddressDrawer";
 
 type AnyDoc = Invoice | Quotation | Purchase;
 
@@ -82,6 +89,26 @@ export function DocumentListPage<T extends AnyDoc>({
   const [chargeAmount, setChargeAmount] = useState<number>(0);
   const [savingDoc, setSavingDoc] = useState<boolean>(false);
   const [recordingReceipt, setRecordingReceipt] = useState<boolean>(false);
+
+  // Advance payment restriction modal state (PRD §§ 16-18)
+  const [advanceRestrictionData, setAdvanceRestrictionData] = useState<{
+    open: boolean;
+    partyName: string;
+    availableAdvance: number;
+    invoiceTotal: number;
+    pendingInvoice: Invoice;
+  } | null>(null);
+
+  // Authoritative calculation reconciliation modal state (PRD §§ 48-50)
+  const [reconciliationData, setReconciliationData] = useState<{
+    open: boolean;
+    clientTotal: number;
+    authoritativeTotal: number;
+    pendingInvoice: Invoice;
+  } | null>(null);
+
+  // Posting button progression (PRD § 55)
+  const [postingPhase, setPostingPhase] = useState<"idle" | "validating" | "calculating" | "posting" | "posted">("idle");
 
   useEffect(() => { getCompany().then(setCompany); }, []);
   const initialLoading = useInitialLoading();
@@ -297,6 +324,23 @@ export function DocumentListPage<T extends AnyDoc>({
     } as T);
   }
 
+  function mapFriendlyError(err?: string): string {
+    if (!err) return "Failed to post document. Please try again.";
+    if (err.includes("PERMISSION_DENIED") || err.includes("permission")) {
+      return "You don't have permission to post this invoice.";
+    }
+    if (err.includes("ADVANCE_REQUIRED") || err.includes("advance")) {
+      return "This party requires advance payment before billing.";
+    }
+    if (err.includes("Rule 46") || err.includes("numbering")) {
+      return "The invoice number does not conform to GST statutory numbering requirements.";
+    }
+    if (err.includes("discrepancy") || err.includes("validation") || err.includes("changed during validation")) {
+      return "Invoice totals changed during validation. Review the updated total.";
+    }
+    return err;
+  }
+
   async function save() {
     if (!editing) return;
     const partyId = (editing as any).customerId ?? (editing as Purchase).supplierId;
@@ -328,6 +372,63 @@ export function DocumentListPage<T extends AnyDoc>({
 
     if (kind === "invoice") {
       const inv = patched as Invoice;
+      setPostingPhase("validating");
+
+      // 1. Advance Party Restriction Check (PRD §§ 16-18, 100, 106)
+      if (tableFor === "customer") {
+        const partyInsight = await getPartyFinancialInsight(partyId);
+        const finalGrandTotalPaise = Math.round(finalGrandTotal * 100);
+
+        if (partyInsight.paymentPolicy === "ADVANCE") {
+          if (partyInsight.availableAdvancePaise < finalGrandTotalPaise) {
+            setPostingPhase("idle");
+            setSavingDoc(false);
+            setAdvanceRestrictionData({
+              open: true,
+              partyName: party?.name || "Customer",
+              availableAdvance: partyInsight.availableAdvanceRupees,
+              invoiceTotal: finalGrandTotal,
+              pendingInvoice: inv,
+            });
+            return;
+          } else {
+            // Sufficient advance available! Auto-allocate advance against invoice (PRD § 17)
+            inv.advanceAllocatedPaise = finalGrandTotalPaise;
+            inv.amountPaid = finalGrandTotal;
+            inv.balance = 0;
+            inv.status = "paid";
+          }
+        }
+      }
+
+      // 2. Authoritative Server Calculation Preflight (PRD §§ 48-50, 99)
+      setPostingPhase("calculating");
+      const validation = validateDocumentTotals(inv, activeCompany || company || {});
+      if (!validation.matches) {
+        setPostingPhase("idle");
+        setSavingDoc(false);
+        setReconciliationData({
+          open: true,
+          clientTotal: inv.grandTotal,
+          authoritativeTotal: validation.authoritative.grandTotal,
+          pendingInvoice: {
+            ...inv,
+            ...validation.authoritative,
+            subtotal: validation.authoritative.subtotal,
+            taxableAmount: validation.authoritative.taxableValue,
+            gstTotal: validation.authoritative.gstTotal,
+            cgstTotal: validation.authoritative.cgst,
+            sgstTotal: validation.authoritative.sgst,
+            igstTotal: validation.authoritative.igst,
+            roundOff: validation.authoritative.roundOff,
+            grandTotal: validation.authoritative.grandTotal,
+            balance: Math.max(0, validation.authoritative.grandTotal - inv.amountPaid),
+          },
+        });
+        return;
+      }
+
+      setPostingPhase("posting");
       inv.balance = Math.max(0, inv.grandTotal - inv.amountPaid);
       inv.status = inv.balance <= 0.01 ? "paid" : inv.amountPaid > 0 ? "partial" : "unpaid";
 
@@ -355,7 +456,8 @@ export function DocumentListPage<T extends AnyDoc>({
             amendmentReason: "Invoice edit and amendment",
           });
           if (!res.success) {
-            toast.error(`Amendment failed: ${res.error}`);
+            setPostingPhase("idle");
+            toast.error(mapFriendlyError(res.error));
             return;
           }
         } else {
@@ -369,13 +471,15 @@ export function DocumentListPage<T extends AnyDoc>({
             uid: user.uid,
           });
           if (!res.success) {
-            toast.error(`Posting failed: ${res.error}`);
+            setPostingPhase("idle");
+            toast.error(mapFriendlyError(res.error));
             return;
           }
         }
       } else {
         await db().invoices.put(inv);
       }
+      setPostingPhase("posted");
     } else if (kind === "purchase") {
       const pu = patched as Purchase;
       pu.balance = Math.max(0, pu.grandTotal - pu.amountPaid);
@@ -753,6 +857,40 @@ export function DocumentListPage<T extends AnyDoc>({
                   />
                 </div>
 
+                {tableFor === "customer" && (editing as any).customerId && (
+                  <div className="sm:col-span-3">
+                    <InvoicePartyStatusPanel
+                      party={partyById((editing as any).customerId) as any}
+                      invoiceTotal={
+                        computeTotals(editing.items, Boolean(kind === "invoice" && (editing as any).isIgst), { enableGst }).grandTotal +
+                        ((editing as any).extraChargesTotal || 0)
+                      }
+                      onRecordReceipt={(_p, deficit) => {
+                        setSelectedInvoiceForReceipt(null);
+                        setReceiptAmount(deficit > 0 ? deficit : 0);
+                        setOpenReceiptModal(true);
+                      }}
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-1 sm:col-span-3">
+                  <PartyAddressSelect
+                    party={partyById((editing as any).customerId ?? (editing as Purchase).supplierId)}
+                    selectedAddressId={(editing as any).billingAddressId}
+                    onChange={(snapshot, addressId) => {
+                      setEditing({
+                        ...editing,
+                        billingAddressId: addressId,
+                        billingAddressSnapshot: snapshot,
+                        billingAddress: formatAddressLines(snapshot),
+                        shippingAddress: (editing as any).shippingAddress || formatAddressLines(snapshot),
+                      } as T);
+                    }}
+                    label={tableFor === "customer" ? "Billing Address (Saved Party Master)" : "Supplier Address (Saved Party Master)"}
+                  />
+                </div>
+
                 {kind === "invoice" && (
                   <>
                     <div className="space-y-1 sm:col-span-3">
@@ -982,7 +1120,19 @@ export function DocumentListPage<T extends AnyDoc>({
               {savingDoc ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  {kind === "invoice" ? "Posting Invoice…" : kind === "purchase" ? "Posting Purchase…" : "Saving Draft…"}
+                  {postingPhase === "validating"
+                    ? "Validating…"
+                    : postingPhase === "calculating"
+                    ? "Calculating…"
+                    : postingPhase === "posting"
+                    ? "Posting…"
+                    : postingPhase === "posted"
+                    ? "Posted"
+                    : kind === "invoice"
+                    ? "Posting Invoice…"
+                    : kind === "purchase"
+                    ? "Posting Purchase…"
+                    : "Saving Draft…"}
                 </>
               ) : (
                 kind === "invoice" ? "Post Invoice" : kind === "purchase" ? "Post Purchase" : "Save Document"
@@ -1204,6 +1354,113 @@ export function DocumentListPage<T extends AnyDoc>({
         onOpenChange={(o) => !o && setCopyModalDoc(null)}
         docData={copyModalDoc ? getNormalizedDoc(copyModalDoc) : null}
       />
+
+      {/* Advance Payment Restriction Modal (PRD §§ 16-18) */}
+      {advanceRestrictionData && (
+        <AdvanceRestrictionModal
+          open={advanceRestrictionData.open}
+          onOpenChange={(o) => {
+            if (!o) setAdvanceRestrictionData(null);
+          }}
+          partyName={advanceRestrictionData.partyName}
+          availableAdvance={advanceRestrictionData.availableAdvance}
+          invoiceTotal={advanceRestrictionData.invoiceTotal}
+          onRecordReceipt={() => {
+            const deficit = advanceRestrictionData.invoiceTotal - advanceRestrictionData.availableAdvance;
+            setAdvanceRestrictionData(null);
+            setSelectedInvoiceForReceipt(null);
+            setReceiptAmount(deficit > 0 ? deficit : 0);
+            setOpenReceiptModal(true);
+          }}
+          onSaveDraft={async () => {
+            const inv = advanceRestrictionData.pendingInvoice;
+            inv.status = "draft";
+            inv.postingStatus = "draft";
+            await db().invoices.put(inv);
+            toast.success(`Invoice ${inv.number} saved as draft`);
+            setAdvanceRestrictionData(null);
+            setOpen(false);
+            setEditing(null);
+          }}
+        />
+      )}
+
+      {/* Authoritative Calculation Reconciliation Modal (PRD §§ 48-50) */}
+      {reconciliationData && (
+        <CalculationReconciliationModal
+          open={reconciliationData.open}
+          onOpenChange={(o) => {
+            if (!o) setReconciliationData(null);
+          }}
+          clientTotal={reconciliationData.clientTotal}
+          authoritativeTotal={reconciliationData.authoritativeTotal}
+          onConfirmAndPost={async () => {
+            const inv = reconciliationData.pendingInvoice;
+            setReconciliationData(null);
+            setSavingDoc(true);
+            setPostingPhase("posting");
+            try {
+              let idToken: string | undefined;
+              try { idToken = await user?.getIdToken(); } catch {}
+
+              const prev = await db().invoices.get(inv.id);
+              if (prev) await applyStockDelta(prev.items, 1);
+              await applyStockDelta(inv.items, -1);
+
+              if (activeCompany?.id && activeFinancialYear?.id && user) {
+                const custLedger = await ensureCustomerLedger({
+                  companyId: activeCompany.id,
+                  customer: partyById(inv.customerId) as Customer,
+                  uid: user.uid,
+                });
+
+                if (prev && prev.postingStatus === "posted") {
+                  const res = await amendPostedInvoiceTransaction({
+                    companyId: activeCompany.id,
+                    financialYearId: activeFinancialYear.id,
+                    originalInvoice: prev,
+                    correctedInvoice: inv,
+                    company: activeCompany,
+                    customerLedgerId: custLedger,
+                    idToken,
+                    uid: user.uid,
+                    amendmentReason: "Invoice reconciled and posted",
+                  });
+                  if (!res.success) {
+                    toast.error(mapFriendlyError(res.error));
+                    return;
+                  }
+                } else {
+                  const res = await postInvoiceTransaction({
+                    companyId: activeCompany.id,
+                    financialYearId: activeFinancialYear.id,
+                    invoice: inv,
+                    company: activeCompany,
+                    customerLedgerId: custLedger,
+                    idToken,
+                    uid: user.uid,
+                  });
+                  if (!res.success) {
+                    toast.error(mapFriendlyError(res.error));
+                    return;
+                  }
+                }
+              } else {
+                await db().invoices.put(inv);
+              }
+
+              toast.success("Invoice posted successfully with verified totals");
+              setOpen(false);
+              setEditing(null);
+            } catch (err: any) {
+              toast.error(err?.message || "Failed to post reconciled invoice");
+            } finally {
+              setSavingDoc(false);
+              setPostingPhase("idle");
+            }
+          }}
+        />
+      )}
 
       <ConfirmDialog
         open={Boolean(deleteId)}

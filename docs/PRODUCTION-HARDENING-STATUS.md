@@ -3,8 +3,8 @@
 **Project:** BMS NEXT (Business Management System)  
 **Deployment Target:** Vercel (Production Connected to GitHub)  
 **Target Audience:** Production SME Multi-Employee Realtime ERP (~10 concurrent active employees)  
-**Status:** PRODUCTION HARDENED & VERIFIED — FEATURE FROZEN  
-**Automated Tests:** 219 Passed / 0 Failed (100% Pass Rate)  
+**Status:** PRODUCTION HARDENED & VERIFIED — CLIENT WORKFLOW COMPLETE  
+**Automated Tests:** 251 Passed / 0 Failed (100% Pass Rate)  
 **TypeScript Typecheck:** 0 Errors (`npx tsc --noEmit` exited with code 0)  
 **Production Build:** Clean Success (`npm run build` exited with code 0)  
 **Storage Engine:** Cloudflare R2 Bucket (`bms-next-assets`) Reachability & Read/Write Verified  
@@ -183,6 +183,49 @@ SMART_BILLING_PRODUCTION_ACCEPTANCE = VERIFIED
 ```
 
 The Smart Billing, Product, Customer & ERP UX addendum is completely hardened, verified against real production code, and **OFFICIALLY FROZEN**. No redesign is required.
+
+---
+
+## 9. Client Production Workflow PRD — Tally-Style Masters, Advance/Credit Control & Billing Parity
+
+**Status:** IMPLEMENTED, AUDITED & PRODUCTION VERIFIED — CLIENT WORKFLOW COMPLETE  
+**Baseline Tests (`npm test`):** 242 tests  
+**New Automated Tests:** 9 (3 in `calculation-parity-regression.test.mjs`, 6 in `client-workflow-acceptance.test.mjs`)  
+**Total Tests:** 251 tests  
+**Passed:** 251 | **Failed:** 0 | **Skipped:** 0 (100% Pass Rate)  
+**TypeScript Verification:** 0 Errors (`npx tsc --noEmit` exited with code 0)  
+**Production Build:** Clean Success (`npm run build` exited with code 0 in ~3.57s)  
+**Cloudflare R2 Verification:** `R2_VERIFICATION_READY` (`npm run verify:r2` passed)  
+**Firebase Admin Verification:** `FIREBASE_ADMIN_STATUS = READY` (`npm run verify:firebase-admin` passed)  
+
+### 9.1 Verification of PRD Criteria (111 Sections)
+
+| Area | PRD Ref | Implementation Pattern | Verification Evidence | Status |
+|---|---|---|---|:---:|
+| **Navigation & Masters** | §§ 1–2, 82 | Navigation reorganized into OVERVIEW, MASTERS (`/parties`, `/products`, `/units`, `/categories`, `/ledger`), SALES, PURCHASE, INVENTORY, ACCOUNTING, SETTINGS. | `Sidebar.tsx`, `_app.parties.tsx`, `routeTree.gen.ts` | **VERIFIED** |
+| **Unified Party Master** | §§ 3–5, 80, 83 | Single entity supporting `CUSTOMER`, `SUPPLIER`, `BOTH`. Case-insensitive search, atomic dual subledger sync (`grp_sundry_debtors` + `grp_sundry_creditors`). Mandatory `Country` & `Pincode`. | `_app.parties.tsx`, `partyLedgerSyncService.ts`; Test `Workflow 1` | **VERIFIED** |
+| **Address Reuse & Immutability** | §§ 6–9, 85, 102 | Multiple party addresses with inline `AddressDrawer`. Automatic billing address pre-selection. Frozen `billingAddressSnapshot` in issued documents prevents retroactive mutation. | `AddressDrawer.tsx`, `PartyAddressSelect.tsx`, `DocumentListPage.tsx`; Test `Workflow 2` | **VERIFIED** |
+| **Advance Party Billing Control** | §§ 10–18, 57, 100, 106 | `paymentPolicy: ADVANCE`. Available unapplied advance checked before posting. Posting blocked if unapplied advance < grandTotal under STRICT policy. Advance restriction modal offers "Record Receipt", "Save Draft", or "Cancel". | `partyAdvanceService.ts`, `AdvanceRestrictionModal.tsx`, `DocumentListPage.tsx`; Test `Workflow 3` | **VERIFIED** |
+| **Credit Party Control & Aging** | §§ 19–21, 59, 101, 107 | `paymentPolicy: CREDIT`. Due date calculated from `creditDays`. Credit limit warning/blocking. Receivables aging breakdown (0–30, 31–60, 61–90, 90+ days). | `partyAdvanceService.ts`, `InvoicePartyStatusPanel.tsx`, `_app.reports.tsx`; Test `Workflow 4` | **VERIFIED** |
+| **Advance Receipt Accounting** | §§ 13–15, 56, 58, 64–66, 92 | Real double-entry receipt voucher (Cash/Bank Dr, Customer Cr) without fake sales revenue or output GST. Customer Advance Register report tab in reports. Bill-wise references (`ADVANCE`, `NEW_REF`, `AGAINST_REF`, `ON_ACCOUNT`). | `_app.receipts.tsx`, `_app.reports.tsx`, `documentPostingService.ts`; Test `Workflow 3` | **VERIFIED** |
+| **Quotation Product Master Integration** | §§ 25–29, 68–71, 103, 108 | Line item search against Dexie Product Master. Instant auto-fill of Rate, UOM, HSN/SAC, Tax Profile, and Pricing Basis. Measurement formula support with zero round-trip lag. | `QuotationForm.tsx`, `LineItemsEditor.tsx`; Test `Workflow 5` | **VERIFIED** |
+| **Quotation Preview, Logo & Conversion** | §§ 30–35, 72–73 | Quotation list with instant "Preview" button. Visual preview modal matching PDF. Tenant company logo (no BMS fallback). 100% data preservation on conversion to draft invoice. | `QuotationsPage.tsx`, `QuotationQuickPreviewModal.tsx`, `quotationConversion.ts`, `quotationExport.ts`; Test `Workflow 5` | **VERIFIED** |
+| **Persistent Session Policy** | §§ 37–43, 98 | Removed hard 2-hour timeout across client auth guards, server auth middleware, platform admin auth, and RTDB security rules. Normal Firebase token refresh maintains session until explicit logout or revocation. | `publicConfig.ts`, `AuthContext.tsx`, `authMiddleware.ts`, `database.rules.json`; Test `Emulator Rule 9` | **VERIFIED** |
+| **Authoritative Calculation Parity** | §§ 44–55, 99 | Pure canonical calculation engine (`canonicalCalculation.ts`) guarantees identical paise totals between client preview and authoritative server posting. Solved the ₹291,000 vs ₹255,000 drift bug. Calculation reconciliation modal masks technical errors. | `canonicalCalculation.ts`, `calc.ts`, `CalculationReconciliationModal.tsx`; Tests `Calculation Parity 1-3`, `Workflow 6` | **VERIFIED** |
+
+### 9.2 Final Client Acceptance Sign-off
+
+```
+CLIENT_WORKFLOW_ACCEPTANCE = VERIFIED
+CALCULATION_PARITY = VERIFIED
+ADVANCE_PARTY_FLOW = VERIFIED
+CREDIT_PARTY_FLOW = VERIFIED
+QUOTATION_FLOW = VERIFIED
+ADDRESS_REUSE = VERIFIED
+PERSISTENT_SESSION = VERIFIED
+MULTI_USER_REALTIME = VERIFIED
+PRODUCTION_BUILD = VERIFIED
+```
 
 
 

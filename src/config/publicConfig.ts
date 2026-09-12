@@ -3,7 +3,11 @@
  * Safe for client-side and server-side import.
  */
 
-// Strict 2-hour maximum session limit (in seconds)
+// Session Security Policy: persistent (default per client PRD), idle, strict
+export type SessionSecurityPolicy = "persistent" | "idle" | "strict";
+export const DEFAULT_SESSION_POLICY: SessionSecurityPolicy = "persistent";
+
+// Maximum session age (in seconds) used only when strict session policy is explicitly enabled
 export const MAX_SESSION_AGE_SECONDS = 7200;
 export const MAX_SESSION_AGE_MS = MAX_SESSION_AGE_SECONDS * 1000;
 

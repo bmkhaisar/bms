@@ -57,8 +57,8 @@ async function pdfHeader(ctx: PdfContext, isCover = false): Promise<number> {
   doc.setFillColor(accent[0], accent[1], accent[2]);
   doc.rect(0, 0, pageW, isCover ? 3 : 2, "F");
 
-  // Logo: prefer company logo, fallback to BMS logo
-  const logo = companyLogoData || logoData;
+  // PRD § 30: Display current tenant Company Logo when configured. Do NOT use BMS logo fallback.
+  const logo = companyLogoData || (company as any)?.logoUrl || (company as any)?.logo || null;
   if (template.showLogo && logo) {
     try {
       const size = isCover ? 22 : 14;
@@ -423,6 +423,24 @@ export async function downloadQuotationPDF(
 ) {
   const blob = await exportQuotationPDF(quotation, company, customer, template);
   triggerDownload(blob, `${quotation.number}.pdf`);
+}
+
+export async function printQuotationPDF(
+  quotation: Quotation, company: CompanySettings, customer?: Customer, template?: QuotationTemplate,
+) {
+  const blob = await exportQuotationPDF(quotation, company, customer, template);
+  const url = URL.createObjectURL(blob);
+  const iframe = document.createElement("iframe");
+  iframe.style.display = "none";
+  iframe.src = url;
+  document.body.appendChild(iframe);
+  iframe.onload = () => {
+    iframe.contentWindow?.print();
+    setTimeout(() => {
+      if (document.body.contains(iframe)) document.body.removeChild(iframe);
+      URL.revokeObjectURL(url);
+    }, 60000);
+  };
 }
 
 // ========================================================================

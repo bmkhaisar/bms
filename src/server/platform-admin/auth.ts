@@ -57,17 +57,7 @@ export async function requirePlatformAdmin(idToken: string): Promise<PlatformAdm
     };
   }
 
-  // Strict 2-Hour Session Expiration Check
-  if (decodedToken.auth_time) {
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    if (nowSeconds - decodedToken.auth_time > MAX_SESSION_AGE_SECONDS) {
-      return {
-        success: false,
-        error: "Your session expired. Sign in again to continue.",
-        code: "UNAUTHORIZED",
-      };
-    }
-  }
+  // PRD §§ 37-43: Persistent login policy - normal token validity governs session life.
 
   const callerUid = decodedToken.uid;
 

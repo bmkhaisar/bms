@@ -22,40 +22,47 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
+    title: "MASTERS",
+    items: [
+      { to: "/parties", label: "Party Master", icon: Users },
+      { to: "/products", label: "Product Master", icon: Package },
+      { to: "/categories", label: "Category Master", icon: Tags },
+      { to: "/ledger", label: "Ledger Master", icon: BookOpen },
+      { to: "/masters", label: "Quote & Doc Masters", icon: Layers },
+    ],
+  },
+  {
     title: "SALES",
     items: [
-      { to: "/customers", label: "Customers", icon: Users },
       { to: "/quotations", label: "Quotations", icon: FileText },
       { to: "/invoices", label: "Invoices", icon: Receipt },
       { to: "/receipts", label: "Receipts", icon: HandCoins },
-      { to: "/masters", label: "Quote Masters", icon: Layers },
     ],
   },
   {
     title: "PURCHASE",
     items: [
-      { to: "/suppliers", label: "Suppliers", icon: Truck },
       { to: "/purchases", label: "Purchases", icon: ShoppingCart },
+      { to: "/suppliers", label: "Suppliers & Payables", icon: Truck },
     ],
   },
   {
     title: "INVENTORY",
     items: [
-      { to: "/products", label: "Products", icon: Package },
-      { to: "/categories", label: "Categories", icon: Tags },
+      { to: "/products", label: "Stock & Inventory", icon: Package },
     ],
   },
   {
     title: "ACCOUNTING",
     items: [
-      { to: "/ledger", label: "Ledgers & Vouchers", icon: BookOpen },
+      { to: "/ledger", label: "Vouchers & Ledgers", icon: BookOpen },
       { to: "/reports", label: "Reports & GST", icon: BarChart3 },
     ],
   },
   {
     title: "SETTINGS",
     items: [
-      { to: "/settings", label: "Company", icon: Building2 },
+      { to: "/settings", label: "Company Settings", icon: Building2 },
       { to: "/backup", label: "Backup & Sync", icon: HardDriveDownload },
     ],
   },

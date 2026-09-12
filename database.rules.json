@@ -2,20 +2,20 @@
   "rules": {
     "users": {
       "$uid": {
-        ".read": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && auth.uid === $uid",
-        ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && auth.uid === $uid",
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
         ".validate": "newData.hasChildren(['email', 'createdAt'])"
       }
     },
     "userCompanies": {
       "$uid": {
-        ".read": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && auth.uid === $uid",
+        ".read": "auth != null && auth.uid === $uid",
         ".write": false
       }
     },
     "memberships": {
       "$companyId": {
-        ".read": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && data.child(auth.uid).child('status').val() === 'active'",
+        ".read": "auth != null && data.child(auth.uid).child('status').val() === 'active'",
         ".write": false
       }
     },
@@ -35,19 +35,19 @@
     },
     "companySummaries": {
       "$companyId": {
-        ".read": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200))",
+        ".read": "auth != null",
         ".write": false
       }
     },
     "companies": {
       "$companyId": {
-        ".read": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'",
-        ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+        ".read": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'",
+        ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
       }
     },
     "companyData": {
       "$companyId": {
-        ".read": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'",
+        ".read": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'",
 
         "docCounters": {
           ".write": false
@@ -66,62 +66,62 @@
         },
         "financialYears": {
           ".indexOn": ["startDate", "endDate", "locked"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner'"
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner'"
         },
         "branches": {
           ".indexOn": ["code", "active"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && (root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' || root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'admin')"
+          ".write": "auth != null && (root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' || root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'admin')"
         },
         "warehouses": {
           ".indexOn": ["code", "branchId", "active"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && (root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' || root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'admin')"
+          ".write": "auth != null && (root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' || root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'admin')"
         },
         "accountGroups": {
           ".indexOn": ["parentGroupId", "nature"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && (root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' || root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'accountant')"
+          ".write": "auth != null && (root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' || root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'accountant')"
         },
         "ledgers": {
           ".indexOn": ["groupId", "partyType", "partyId", "active"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && (root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' || root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'accountant')"
+          ".write": "auth != null && (root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' || root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'accountant')"
         },
         "customers": {
           ".indexOn": ["name", "createdAt", "updatedAt"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "suppliers": {
           ".indexOn": ["name", "createdAt", "updatedAt"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "products": {
           ".indexOn": ["categoryId", "name", "createdAt", "updatedAt"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "categories": {
           ".indexOn": ["name"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "quotations": {
           ".indexOn": ["customerId", "date", "status", "createdAt"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "invoices": {
           ".indexOn": ["customerId", "date", "status", "financialYearId", "createdAt"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "purchases": {
           ".indexOn": ["supplierId", "date", "status", "financialYearId", "createdAt"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "receipts": {
           ".indexOn": ["customerId", "date", "financialYearId", "createdAt"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "payments": {
           ".indexOn": ["supplierId", "date", "financialYearId", "createdAt"],
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "quotationMasters": {
-          ".write": "auth != null && (!auth.token.auth_time || ((now / 1000) - auth.token.auth_time < 7200)) && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         }
       }
     }
