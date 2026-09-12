@@ -2,7 +2,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { formatMoney, formatDate, numberToWordsIndian } from "@/lib/format";
 import type { CompanySnapshot, SignatoryConfig, SignatorySnapshot } from "@/modules/company/types";
-import { resolveDocumentSignatory } from "@/modules/company/signatoryHelper";
+import { resolveDocumentSignatory, createTypedSignatureDataUrl } from "@/modules/company/signatoryHelper";
 import type { LineItem, ExtraCharge } from "@/lib/db";
 
 const PDF_CCY = "Rs. ";
@@ -22,6 +22,14 @@ export interface DocumentParty {
   placeOfSupply?: string;
   shippingAddress?: string;
 }
+
+export type DocumentCopyType =
+  | "ORIGINAL"
+  | "COPY"
+  | "CUSTOMER COPY"
+  | "OFFICE COPY"
+  | "TRANSPORT COPY"
+  | "DRIVER COPY";
 
 export interface NormalizedDocument {
   kind: "quotation" | "invoice" | "purchase" | "receipt" | "payment" | "credit_note" | "debit_note";
@@ -53,6 +61,7 @@ export interface NormalizedDocument {
   customWatermarkText?: string;
   signatoryOverride?: Partial<SignatoryConfig>;
   signatorySnapshot?: Partial<SignatorySnapshot>;
+  copyLabel?: DocumentCopyType;
 }
 
 /**
@@ -183,7 +192,33 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   doc.setFontSize(13);
   doc.setTextColor(30, 64, 175);
   doc.text(docTitle, metaX, metaY, { align: "right" });
-  metaY += 6;
+  metaY += 5;
+
+  // Render Document Copy Badge (Original, Copy, Driver Copy, etc.)
+  if (docData.copyLabel) {
+    const copyText = docData.copyLabel.toUpperCase();
+    const isOrig = copyText === "ORIGINAL";
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    const badgeW = doc.getTextWidth(copyText) + 4;
+    const badgeH = 4.2;
+    const badgeX = metaX - badgeW;
+    const badgeY = metaY - 3.2;
+
+    if (isOrig) {
+      doc.setFillColor(239, 246, 255);
+      doc.setDrawColor(191, 219, 254);
+      doc.rect(badgeX, badgeY, badgeW, badgeH, "FD");
+      doc.setTextColor(30, 64, 175);
+    } else {
+      doc.setFillColor(254, 242, 242);
+      doc.setDrawColor(248, 113, 113);
+      doc.rect(badgeX, badgeY, badgeW, badgeH, "FD");
+      doc.setTextColor(220, 38, 38);
+    }
+    doc.text(copyText, badgeX + 2, badgeY + 3.1);
+    metaY += 5;
+  }
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
@@ -281,18 +316,23 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   let colStyles: Record<number, any>;
 
   if (isTaxDoc) {
-    tableHeaders = ["#", "Item Description", "HSN/SAC", "Qty", "Unit", "Rate", "Disc", "GST", "Total"];
-    tableRows = docData.items.map((item, idx) => [
-      idx + 1,
-      item.size ? `${item.name}\nSize: ${item.size}` : item.name,
-      item.hsn || "—",
-      item.quantity,
-      item.unit || "NOS",
-      money(item.rate),
-      item.discountPct > 0 ? `${item.discountPct}%` : "0%",
-      `${item.gstRate}%`,
-      money(item.total),
-    ]);
+    tableHeaders = ["#", "Item Description", "HSN/SAC", "Qty", "Unit", "Rate", "Discount", "GST", "Amount"];
+    tableRows = docData.items.map((item, idx) => {
+      let desc = item.name;
+      if (item.size) desc += `\nSize: ${item.size}`;
+      if (item.measurementSummary) desc += `\n${item.measurementSummary}`;
+      return [
+        idx + 1,
+        desc,
+        item.hsn || "—",
+        item.quantity,
+        item.unit || "NOS",
+        money(item.rate),
+        item.discountPct > 0 ? `${item.discountPct}%` : "0%",
+        `${item.gstRate}%`,
+        money(item.total),
+      ];
+    });
     colStyles = {
       0: { cellWidth: 8, halign: "center" },
       1: { cellWidth: "auto" },
@@ -307,15 +347,20 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   } else {
     // Clean Commercial / Non-GST Table without empty GST columns
     tableHeaders = ["#", "Item Description", "Qty", "Unit", "Rate", "Discount", "Amount"];
-    tableRows = docData.items.map((item, idx) => [
-      idx + 1,
-      item.size ? `${item.name}\nSize: ${item.size}` : item.name,
-      item.quantity,
-      item.unit || "NOS",
-      money(item.rate),
-      item.discountPct > 0 ? `${item.discountPct}%` : "0%",
-      money(item.total),
-    ]);
+    tableRows = docData.items.map((item, idx) => {
+      let desc = item.name;
+      if (item.size) desc += `\nSize: ${item.size}`;
+      if (item.measurementSummary) desc += `\n${item.measurementSummary}`;
+      return [
+        idx + 1,
+        desc,
+        item.quantity,
+        item.unit || "NOS",
+        money(item.rate),
+        item.discountPct > 0 ? `${item.discountPct}%` : "0%",
+        money(item.total),
+      ];
+    });
     colStyles = {
       0: { cellWidth: 8, halign: "center" },
       1: { cellWidth: "auto" },
@@ -563,14 +608,33 @@ function renderDocumentSignatoryBlock(
   if (hasSig) {
     if (resolved.signatureMode === "typed") {
       const name = resolved.signatoryName;
-      // Intelligent scale-down to prevent multi-line wrap or clipping
-      const nameLen = name.length || 4;
-      const fontSize = nameLen > 24 ? 9.5 : nameLen > 18 ? 11 : nameLen > 12 ? 13 : 15;
+      let typedSigImg: string | null = null;
+      try {
+        typedSigImg = createTypedSignatureDataUrl(name, resolved.typedSignatureStyle, "#1e293b");
+      } catch (e) {
+        console.warn("Typed signature canvas render failed:", e);
+      }
 
-      doc.setFont("helvetica", "bolditalic");
-      doc.setFontSize(fontSize);
-      doc.setTextColor(30, 41, 59); // Deep dark ink tone
-      doc.text(name, rightX, y + 11, { align: "right" });
+      if (typedSigImg) {
+        const sigW = 42;
+        const sigH = 15;
+        try {
+          doc.addImage(typedSigImg, "PNG", rightX - sigW, y + 1, sigW, sigH);
+        } catch (e) {
+          console.warn("Failed to embed canvas signature image in PDF, using fallback:", e);
+          typedSigImg = null;
+        }
+      }
+
+      // Emergency fallback only: bold-italic standard PDF font
+      if (!typedSigImg) {
+        const nameLen = name.length || 4;
+        const fontSize = nameLen > 24 ? 9.5 : nameLen > 18 ? 11 : nameLen > 12 ? 13 : 15;
+        doc.setFont("helvetica", "bolditalic");
+        doc.setFontSize(fontSize);
+        doc.setTextColor(30, 41, 59);
+        doc.text(name, rightX, y + 11, { align: "right" });
+      }
     } else if (resolved.signatureUrl && (resolved.signatureUrl.startsWith("data:image") || resolved.signatureUrl.startsWith("http"))) {
       try {
         const sigW = 42;
@@ -591,22 +655,25 @@ function renderDocumentSignatoryBlock(
     y += 14;
   }
 
-  // 3. Signatory Name
+  // 3. Signatory Name (wrapped to max 65mm to prevent right margin clipping)
   if (resolved.showSignatoryName) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.5);
     doc.setTextColor(17, 24, 39);
-    doc.text(resolved.signatoryName || "Authorized Signatory", rightX, y, { align: "right" });
-    y += 3.8;
+    const nameText = resolved.signatoryName || "Authorized Signatory";
+    const nameLines = doc.splitTextToSize(nameText, 65);
+    doc.text(nameLines, rightX, y, { align: "right" });
+    y += nameLines.length * 3.8;
   }
 
-  // 4. Designation
+  // 4. Designation (wrapped to max 65mm to prevent right margin clipping)
   if (resolved.showDesignation && resolved.designation) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     doc.setTextColor(107, 114, 128);
-    doc.text(resolved.designation, rightX, y, { align: "right" });
-    y += 3.5;
+    const desLines = doc.splitTextToSize(resolved.designation, 65);
+    doc.text(desLines, rightX, y, { align: "right" });
+    y += desLines.length * 3.5;
   }
 
   // 5. Signature Date
@@ -626,7 +693,14 @@ function renderDocumentSignatoryBlock(
  */
 export function downloadDocumentPDF(docData: NormalizedDocument, filename?: string): void {
   const doc = buildDocumentPDF(docData);
-  const fname = filename || `${docData.title.toLowerCase().replace(/\s+/g, "_")}_${docData.number}.pdf`;
+  let fname = filename;
+  if (!fname) {
+    const copySuffix = docData.copyLabel
+      ? `-${docData.copyLabel.toLowerCase().replace(/\s+/g, "-")}`
+      : "";
+    const cleanNum = (docData.number || "document").replace(/[/\\?%*:|"<>]/g, "-");
+    fname = `${cleanNum}${copySuffix}.pdf`;
+  }
   doc.save(fname);
 }
 

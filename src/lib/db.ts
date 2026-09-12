@@ -40,14 +40,22 @@ export interface Customer {
   id: ID; name: string; company?: string; mobile?: string; phone?: string; email?: string;
   gstin?: string; pan?: string; address?: string; billingAddress?: string; city?: string; state?: string; pincode?: string;
   openingBalance: number; ledgerId?: string; createdAt: number;
+  creditLimit?: number;
+  creditDays?: number;
+  aliases?: string[];
+  taxRegistrationType?: "regular" | "composition" | "unregistered";
 }
 
 export interface Supplier {
   id: ID; name: string; company?: string; mobile?: string; phone?: string; email?: string;
   gstin?: string; pan?: string; address?: string; billingAddress?: string; openingBalance: number; ledgerId?: string; createdAt: number;
+  aliases?: string[];
 }
 
 export interface Category { id: ID; name: string; createdAt: number; }
+
+export type PricingBasis = "per_unit" | "per_area" | "per_length" | "per_weight" | "fixed";
+export type ProductType = "stock_item" | "service" | "non_stock_item";
 
 export interface Product {
   id: ID; name: string; sku?: string; categoryId?: ID; unit: string; hsn?: string;
@@ -58,6 +66,25 @@ export interface Product {
   specifications?: string;
   defaultSizes?: string[];
   createdAt: number;
+  normalizedName?: string;
+  aliases?: string[];
+  productType?: ProductType;
+  pricingBasis?: PricingBasis;
+  defaultUomId?: string;
+  defaultSalesRatePaise?: number;
+  defaultPurchaseRatePaise?: number;
+  lastSalesRatePaise?: number;
+  lastPurchaseRatePaise?: number;
+  taxProfileId?: string;
+  active?: boolean;
+}
+
+export interface MeasurementEntry {
+  width: number;
+  height: number;
+  pieces: number;
+  unit?: string;
+  totalArea?: number;
 }
 
 export interface LineItem {
@@ -67,6 +94,10 @@ export interface LineItem {
   isTaxInclusive?: boolean;
   size?: string;
   description?: string;
+  pricingBasis?: PricingBasis;
+  measurements?: MeasurementEntry[];
+  measurementSummary?: string;
+  saveToMaster?: boolean;
 }
 
 export interface ExtraCharge {
@@ -103,6 +134,7 @@ export interface Quotation {
   bankSnapshot?: BankAccount;
   templateId?: ID;
   convertedInvoiceId?: ID;
+  companySnapshot?: any;
   signatoryOverride?: any;
   signatorySnapshot?: any;
   // References
@@ -150,6 +182,7 @@ export interface Receipt {
   settlementLedgerId?: string;
   voucherId?: string;
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
+  companySnapshot?: any;
   signatoryOverride?: any;
   signatorySnapshot?: any;
   reference?: string; notes?: string; createdAt: number;
@@ -164,6 +197,7 @@ export interface Payment {
   settlementLedgerId?: string;
   voucherId?: string;
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
+  companySnapshot?: any;
   signatoryOverride?: any;
   signatorySnapshot?: any;
   reference?: string; notes?: string; createdAt: number;

@@ -27,6 +27,8 @@ import { getNextDocumentNumber } from "@/lib/numberingClient";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, set, onValue } from "firebase/database";
 import { cacheEntity } from "@/modules/sync/dexieCache";
+import { createCompanySnapshot } from "@/modules/company/types";
+import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 
 export function QuotationsPage() {
   const rows = useLive<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
@@ -133,12 +135,25 @@ export function QuotationsPage() {
     setEditing({ ...r, id: uid(), number, createdAt: Date.now(), date: Date.now(), status: "draft" });
   }
   async function saveQuotation(next: Quotation) {
-    await db().quotations.put(next);
+    const comp = activeCompany || company;
+    const toSave: Quotation = {
+      ...next,
+      companySnapshot:
+        next.status !== "draft"
+          ? next.companySnapshot || (comp ? createCompanySnapshot(comp as any) : undefined)
+          : next.companySnapshot,
+      signatorySnapshot:
+        next.status !== "draft"
+          ? next.signatorySnapshot ||
+            (comp ? createSignatorySnapshot(comp as any, next.signatoryOverride, next.date) : undefined)
+          : next.signatorySnapshot,
+    };
+    await db().quotations.put(toSave);
     if (activeCompany?.id && firebaseDb) {
       try {
-        const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${next.id}`);
+        const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${toSave.id}`);
         await set(qRef, sanitizeForFirebase({
-          ...next,
+          ...toSave,
           companyId: activeCompany.id,
           financialYearId: activeFinancialYear?.id,
           updatedAt: Date.now(),
@@ -147,10 +162,10 @@ export function QuotationsPage() {
           uid: user?.uid || "",
           companyId: activeCompany.id,
           entityType: "quotations",
-          entityId: next.id,
-          data: next,
+          entityId: toSave.id,
+          data: toSave,
           financialYearId: activeFinancialYear?.id,
-          name: next.number,
+          name: toSave.number,
         });
       } catch (e) {
         console.warn("Quotation RTDB sync error:", e);

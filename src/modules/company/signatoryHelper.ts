@@ -10,9 +10,13 @@ import type {
 import { formatDate } from "@/lib/format";
 
 /**
- * Tasteful, legally distributable CSS font-family stacks for Typed Signature.
- * Uses bundled/system cursive handwriting stacks that reliably render across
- * all browsers, web views, canvas rasterizers, and vector PDF fallbacks.
+ * Open-Source SIL OFL 1.1 fonts for Typed Signature.
+ * - Dancing Script (Impallari Type, SIL Open Font License 1.1)
+ * - Great Vibes (TypeSETit, SIL Open Font License 1.1)
+ * - Caveat (Pablo Impallari, SIL Open Font License 1.1)
+ *
+ * Strictly avoids proprietary/system fonts (Brush Script MT, Segoe Script, Lucida Handwriting).
+ * Settings Preview, Print Window, and Vector PDF all visually match this exact typography.
  */
 export const TYPED_SIGNATURE_STYLES: Record<
   TypedSignatureStyle,
@@ -20,26 +24,68 @@ export const TYPED_SIGNATURE_STYLES: Record<
 > = {
   style_1: {
     label: "Style 1 (Flowing Script)",
-    fontFamily: "'Dancing Script', 'Brush Script MT', 'Segoe Script', cursive",
+    fontFamily: "'Dancing Script', cursive",
     slant: "italic",
     weight: "600",
     letterSpacing: "0.5px",
   },
   style_2: {
     label: "Style 2 (Executive Flourish)",
-    fontFamily: "'Great Vibes', 'Lucida Handwriting', 'Apple Chancery', cursive",
+    fontFamily: "'Great Vibes', cursive",
     slant: "italic",
     weight: "500",
     letterSpacing: "1px",
   },
   style_3: {
     label: "Style 3 (Modern Casual)",
-    fontFamily: "'Caveat', 'Segoe Print', 'Bradley Hand', cursive",
+    fontFamily: "'Caveat', cursive",
     slant: "normal",
     weight: "700",
     letterSpacing: "0.2px",
   },
 };
+
+/**
+ * Renders high-resolution (300+ DPI vector equivalent) cursive typed signature
+ * to a PNG data URL for embedding into jsPDF vector documents.
+ * Ensures that Settings Preview, Print Window, and Vector PDF visually match identically.
+ */
+export function createTypedSignatureDataUrl(
+  text: string,
+  style: TypedSignatureStyle = "style_1",
+  color = "#1e293b"
+): string | null {
+  if (typeof document === "undefined") return null;
+  try {
+    const config = TYPED_SIGNATURE_STYLES[style] || TYPED_SIGNATURE_STYLES.style_1;
+    const canvas = document.createElement("canvas");
+    // High-resolution canvas: 600 x 180 for 300+ DPI crisp vector equivalent
+    const width = 600;
+    const height = 180;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const len = (text || "").trim().length || 4;
+    const pxSize = len > 24 ? 54 : len > 18 ? 64 : len > 12 ? 76 : 88;
+
+    const fontStyle = config.slant === "italic" ? "italic" : "normal";
+    const fontWeight = config.weight || "600";
+    ctx.font = `${fontStyle} ${fontWeight} ${pxSize}px ${config.fontFamily}`;
+    ctx.fillStyle = color;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+
+    ctx.fillText(text, width - 20, height / 2);
+
+    return canvas.toDataURL("image/png");
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Resolves the visual signature date string based on configured mode.
@@ -102,8 +148,13 @@ export function resolveDocumentSignatory(params: {
 }): ResolvedSignatory {
   const { company = {}, signatoryOverride, signatorySnapshot, documentDate } = params;
 
-  // 1. If document is posted/finalized with frozen snapshot, use snapshot
-  if (signatorySnapshot && signatorySnapshot.companyName) {
+  // 1. If document is posted/finalized with frozen snapshot, use snapshot unconditionally
+  if (
+    signatorySnapshot &&
+    (signatorySnapshot.snapshotAt !== undefined ||
+      signatorySnapshot.companyName !== undefined ||
+      signatorySnapshot.authorizedSignatory !== undefined)
+  ) {
     const s = signatorySnapshot;
     const dateText = s.resolvedDateText || resolveSignatoryDate(s.signatureDateMode, documentDate, s.customSignatureDate);
     return {

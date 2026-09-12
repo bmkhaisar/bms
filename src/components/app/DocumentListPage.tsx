@@ -32,6 +32,12 @@ import { ensureCustomerLedger, ensureSupplierLedger } from "@/modules/accounting
 import { QuickCreateCustomerDrawer } from "./QuickCreateCustomerDrawer";
 import { QuickCreateSupplierDrawer } from "./QuickCreateSupplierDrawer";
 import { determineInterState } from "@/modules/tax/taxEngine";
+import { createCompanySnapshot } from "@/modules/company/types";
+import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
+import { PartySearchSelect } from "./PartySearchSelect";
+import { CustomerInsightDrawer } from "./CustomerInsightDrawer";
+import { SupplierInsightDrawer } from "./SupplierInsightDrawer";
+import { DocumentCopyModal } from "./DocumentCopyModal";
 
 type AnyDoc = Invoice | Quotation | Purchase;
 
@@ -62,6 +68,12 @@ export function DocumentListPage<T extends AnyDoc>({
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [company, setCompany] = useState<CompanySettings | null>(null);
 
+  // Document copy export modal
+  const [copyModalDoc, setCopyModalDoc] = useState<T | null>(null);
+  // Live party insight drawers
+  const [insightCustomerId, setInsightCustomerId] = useState<string | null>(null);
+  const [insightSupplierId, setInsightSupplierId] = useState<string | null>(null);
+
   // Non-GST commercial invoice mode toggle
   const [enableGst, setEnableGst] = useState<boolean>(true);
 
@@ -71,6 +83,84 @@ export function DocumentListPage<T extends AnyDoc>({
 
   useEffect(() => { getCompany().then(setCompany); }, []);
   const initialLoading = useInitialLoading();
+
+  function getNormalizedDoc(doc: T): NormalizedDocument {
+    const isInv = kind === "invoice";
+    const party = (partyById((doc as any).customerId ?? (doc as Purchase).supplierId) || { name: "Client" }) as any;
+    const docCompany = (doc as any).companySnapshot || activeCompany || company || {};
+    const isTaxDoc = enableGst && (doc.gstTotal > 0 || (doc as Invoice).isIgst);
+
+    return {
+      kind: kind as any,
+      title: isTaxDoc ? "Tax Invoice" : kind === "invoice" ? "Commercial Invoice" : kind === "quotation" ? "Quotation" : "Purchase Bill",
+      number: doc.number,
+      date: doc.date,
+      dueDate: (doc as Invoice).dueDate,
+      company: {
+        name: docCompany.name,
+        legalName: docCompany.legalName || docCompany.name,
+        address: docCompany.address,
+        city: docCompany.city,
+        state: docCompany.state,
+        pincode: docCompany.pincode,
+        gstin: docCompany.gstin,
+        pan: docCompany.pan,
+        phone: docCompany.phone || docCompany.mobile,
+        email: docCompany.email,
+        logo: docCompany.logoUrl || (docCompany as any).logo,
+        bankName: docCompany.bankName,
+        bankAccountNo: docCompany.bankAccount || docCompany.bankAccountNo,
+        bankIfsc: docCompany.bankIfsc,
+        upiId: docCompany.upiId,
+        terms: docCompany.terms,
+        authorizedSignatory: docCompany.authorizedSignatory,
+        designation: docCompany.designation,
+        signatureMode: docCompany.signatureMode,
+        typedSignatureStyle: docCompany.typedSignatureStyle,
+        signatureUrl: docCompany.signatureUrl,
+        stampUrl: docCompany.stampUrl,
+        stampMode: docCompany.stampMode,
+        showSignature: docCompany.showSignature,
+        showStamp: docCompany.showStamp,
+        showSignatoryName: docCompany.showSignatoryName,
+        showDesignation: docCompany.showDesignation,
+        showSignatureDate: docCompany.showSignatureDate,
+        signatureDateMode: docCompany.signatureDateMode,
+        customSignatureDate: docCompany.customSignatureDate,
+      },
+      signatoryOverride: (doc as any).signatoryOverride,
+      signatorySnapshot: (doc as any).signatorySnapshot,
+      party: {
+        name: party.name,
+        company: party.company,
+        address: party.address,
+        city: party.city,
+        state: party.state,
+        pincode: party.pincode,
+        gstin: party.gstin,
+        phone: party.mobile || party.phone,
+        email: party.email,
+        placeOfSupply: party.state,
+      },
+      items: doc.items,
+      subtotal: doc.subtotal,
+      discountTotal: doc.discountTotal,
+      cgstTotal: (doc as Invoice).cgstTotal,
+      sgstTotal: (doc as Invoice).sgstTotal,
+      igstTotal: (doc as Invoice).igstTotal,
+      gstTotal: doc.gstTotal,
+      extraCharges: (doc as Invoice).extraCharges,
+      extraChargesTotal: (doc as Invoice).extraChargesTotal,
+      roundOff: doc.roundOff,
+      grandTotal: doc.grandTotal,
+      amountPaid: (doc as Invoice).amountPaid,
+      balance: (doc as Invoice).balance,
+      notes: doc.notes,
+      terms: (doc as any).terms,
+      enableGst: isTaxDoc,
+      watermarkMode: (docCompany as any).watermarkSetting || "off",
+    };
+  }
 
   // Deep-link support
   useEffect(() => {
@@ -314,7 +404,21 @@ export function DocumentListPage<T extends AnyDoc>({
         await db().purchases.put(pu);
       }
     } else {
-      await db().quotations.put(patched as Quotation);
+      const q = patched as Quotation;
+      const comp = activeCompany || company;
+      const toSave: Quotation = {
+        ...q,
+        companySnapshot:
+          q.status !== "draft"
+            ? q.companySnapshot || (comp ? createCompanySnapshot(comp as any) : undefined)
+            : q.companySnapshot,
+        signatorySnapshot:
+          q.status !== "draft"
+            ? q.signatorySnapshot ||
+              (comp ? createSignatorySnapshot(comp as any, q.signatoryOverride, q.date) : undefined)
+            : q.signatorySnapshot,
+      };
+      await db().quotations.put(toSave);
     }
 
     toast.success("Document saved successfully");
@@ -543,6 +647,9 @@ export function DocumentListPage<T extends AnyDoc>({
                                   <HandCoins className="h-3.5 w-3.5 text-emerald-600" />
                                 </Button>
                               )}
+                              <Button size="icon" variant="ghost" title="Download Copies (Original / Driver / Transport)" onClick={() => setCopyModalDoc(r)}>
+                                <Download className="h-3.5 w-3.5 text-blue-600" />
+                              </Button>
                               <Button size="icon" variant="ghost" title="View / Print" onClick={() => setPreview(r)}>
                                 <Printer className="h-3.5 w-3.5" />
                               </Button>
@@ -610,30 +717,27 @@ export function DocumentListPage<T extends AnyDoc>({
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs">{tableFor === "customer" ? "Customer *" : "Supplier *"}</Label>
-                    <button
-                      type="button"
-                      onClick={() => tableFor === "customer" ? setOpenCustomerDrawer(true) : setOpenSupplierDrawer(true)}
-                      className="text-[11px] text-primary hover:underline flex items-center gap-1 font-medium"
-                    >
-                      <Plus className="h-3 w-3" /> Quick Add
-                    </button>
+                    {((editing as any).customerId || (editing as Purchase).supplierId) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const id = (editing as any).customerId ?? (editing as Purchase).supplierId;
+                          if (tableFor === "customer") setInsightCustomerId(id);
+                          else setInsightSupplierId(id);
+                        }}
+                        className="text-[11px] text-primary hover:underline flex items-center gap-1 font-medium"
+                      >
+                        <FileText className="h-3 w-3" /> View Financial History
+                      </button>
+                    )}
                   </div>
-                  <Select
+                  <PartySearchSelect
+                    type={tableFor === "customer" ? "customer" : "supplier"}
                     value={((editing as any).customerId ?? (editing as Purchase).supplierId) || ""}
-                    onValueChange={onPartySelect}
-                  >
-                    <SelectTrigger className="h-9 text-xs">
-                      <SelectValue placeholder={`Select ${tableFor}…`} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__new__" className="text-primary font-semibold">
-                        + Add New {tableFor === "customer" ? "Customer" : "Supplier"}...
-                      </SelectItem>
-                      {parties.map(p => (
-                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    parties={parties}
+                    onChange={(id: string) => onPartySelect(id)}
+                    onAddNew={() => (tableFor === "customer" ? setOpenCustomerDrawer(true) : setOpenSupplierDrawer(true))}
+                  />
                 </div>
 
                 {kind === "invoice" && (
@@ -704,6 +808,7 @@ export function DocumentListPage<T extends AnyDoc>({
                 mode={kind === "purchase" ? "purchase" : "sales"}
                 isIgst={kind === "invoice" ? (editing as unknown as Invoice).isIgst : false}
                 enableGst={enableGst}
+                customerId={kind === "invoice" || kind === "quotation" ? (editing as any).customerId : undefined}
               />
 
               {/* Additional Charges Section (Transportation, Freight, Installation) */}
@@ -872,6 +977,14 @@ export function DocumentListPage<T extends AnyDoc>({
             <DialogTitle className="flex items-center justify-between gap-2">
               <span>{preview?.number} · Document Preview</span>
               <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 text-blue-600 border-blue-200 hover:bg-blue-50"
+                  onClick={() => setCopyModalDoc(preview)}
+                >
+                  <Download className="h-4 w-4" /> Download / Print Copies
+                </Button>
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => printElement("print-doc")}>
                   <Printer className="h-4 w-4" /> Print
                 </Button>
@@ -924,7 +1037,7 @@ export function DocumentListPage<T extends AnyDoc>({
                         customSignatureDate: docCompany.customSignatureDate,
                       },
                       signatoryOverride: (preview as any).signatoryOverride,
-                      signatorySnapshot: (preview as any).signatorySnapshot || docCompany.signatorySnapshot,
+                      signatorySnapshot: (preview as any).signatorySnapshot,
                       party: {
                         name: party.name,
                         company: party.company,
@@ -1039,6 +1152,27 @@ export function DocumentListPage<T extends AnyDoc>({
             } as T);
           }
         }}
+      />
+
+      {/* Customer Financial Insight Drawer */}
+      <CustomerInsightDrawer
+        customerId={insightCustomerId}
+        open={Boolean(insightCustomerId)}
+        onOpenChange={(o) => !o && setInsightCustomerId(null)}
+      />
+
+      {/* Supplier Financial Insight Drawer */}
+      <SupplierInsightDrawer
+        supplierId={insightSupplierId}
+        open={Boolean(insightSupplierId)}
+        onOpenChange={(o) => !o && setInsightSupplierId(null)}
+      />
+
+      {/* Document Copy Selection Modal */}
+      <DocumentCopyModal
+        open={Boolean(copyModalDoc)}
+        onOpenChange={(o) => !o && setCopyModalDoc(null)}
+        docData={copyModalDoc ? getNormalizedDoc(copyModalDoc) : null}
       />
 
       <ConfirmDialog

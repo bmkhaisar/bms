@@ -105,14 +105,14 @@ export function SignatoryBlock({
 
       {/* 3. Signatory Name */}
       {resolved.showSignatoryName && (
-        <div className="mt-1.5 text-xs font-semibold text-foreground tracking-tight">
+        <div className="mt-1.5 max-w-[220px] text-xs font-semibold text-foreground tracking-tight break-words">
           {resolved.signatoryName || "Authorized Signatory"}
         </div>
       )}
 
       {/* 4. Designation */}
       {resolved.showDesignation && resolved.designation && (
-        <div className="text-[11px] text-muted-foreground font-medium">
+        <div className="max-w-[220px] text-[11px] text-muted-foreground font-medium break-words">
           {resolved.designation}
         </div>
       )}

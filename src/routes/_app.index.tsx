@@ -197,23 +197,38 @@ export function Dashboard() {
 
   return (
     <AppShell title="Dashboard">
-      <PageHeader
-        title={activeCompany ? activeCompany.name : "Company Overview"}
-        description={
-          activeFinancialYear
-            ? `Authoritative financial metrics for Financial Year ${activeFinancialYear.name}.`
-            : "Live snapshot of accounting ledgers, sales, purchases, and receivables."
-        }
-        actions={
-          <div className="flex items-center gap-2">
-            <Link to="/invoices">
-              <Button size="sm" className="gap-2">
-                <Plus className="h-4 w-4" /> New Invoice
-              </Button>
-            </Link>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          {activeCompany?.logoUrl ? (
+            <img
+              src={activeCompany.logoUrl}
+              alt={activeCompany.name}
+              className="h-11 w-11 rounded-lg border border-border/60 bg-white object-contain p-1 shadow-xs"
+            />
+          ) : (
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-base font-bold text-primary shadow-xs">
+              {activeCompany?.name ? activeCompany.name.slice(0, 2).toUpperCase() : "BH"}
+            </div>
+          )}
+          <div>
+            <h2 className="text-xl font-bold tracking-tight sm:text-2xl">
+              {activeCompany ? activeCompany.name : "Company Overview"}
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {activeFinancialYear
+                ? `Authoritative financial metrics for Financial Year ${activeFinancialYear.name}.`
+                : "Live snapshot of accounting ledgers, sales, purchases, and receivables."}
+            </p>
           </div>
-        }
-      />
+        </div>
+        <div className="flex items-center gap-2">
+          <Link to="/invoices">
+            <Button size="sm" className="gap-2">
+              <Plus className="h-4 w-4" /> New Invoice
+            </Button>
+          </Link>
+        </div>
+      </div>
 
       {/* KPI Cards Grid with Interactive Drill-Down Navigation */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">

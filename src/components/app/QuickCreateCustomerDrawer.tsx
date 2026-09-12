@@ -1,19 +1,19 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
-import { UserPlus } from "lucide-react";
+import { UserPlus, AlertTriangle, ShieldAlert, CheckCircle2, Loader2 } from "lucide-react";
 import { db, uid, type Customer } from "@/lib/db";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
-import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, set } from "firebase/database";
-import { cacheEntity } from "@/modules/sync/dexieCache";
+import { useLive } from "@/lib/useLive";
 import { createCustomerWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
+import { detectCustomerDuplicates, type DuplicateMatch } from "@/modules/sync/searchNormalization";
 
 interface QuickCreateCustomerProps {
   open: boolean;
@@ -30,7 +30,9 @@ export function QuickCreateCustomerDrawer({
 }: QuickCreateCustomerProps) {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
+  const existingCustomers = useLive<Customer>(() => db().customers.toArray());
   const [saving, setSaving] = useState(false);
+  const [forceCreate, setForceCreate] = useState(false);
 
   const [form, setForm] = useState({
     name: defaultName,
@@ -39,14 +41,38 @@ export function QuickCreateCustomerDrawer({
     email: "",
     gstin: "",
     address: "",
-    shippingAddress: "",
     city: "",
     state: activeCompany?.state || "",
     pincode: "",
-    customerType: "business" as "business" | "individual",
     taxRegistrationType: "regular" as "regular" | "unregistered" | "composition",
+    creditLimit: 0,
+    creditDays: 30,
     openingBalance: 0,
   });
+
+  useEffect(() => {
+    if (defaultName && open) {
+      setForm((prev) => ({ ...prev, name: defaultName }));
+      setForceCreate(false);
+    }
+  }, [defaultName, open]);
+
+  // Company-scoped duplicate detection (Correction 4)
+  const duplicateCheck: DuplicateMatch<Customer> = useMemo(() => {
+    if (!form.name && !form.gstin && !form.mobile && !form.email) {
+      return { isDuplicate: false, severity: "info" };
+    }
+    return detectCustomerDuplicates(
+      {
+        name: form.name,
+        gstin: form.gstin,
+        mobile: form.mobile,
+        email: form.email,
+      },
+      existingCustomers,
+      activeCompany?.id
+    );
+  }, [form.name, form.gstin, form.mobile, form.email, existingCustomers, activeCompany?.id]);
 
   async function handleSave() {
     const trimmedName = form.name.trim();
@@ -55,11 +81,14 @@ export function QuickCreateCustomerDrawer({
       return;
     }
 
+    if (duplicateCheck.isDuplicate && duplicateCheck.severity === "critical" && !forceCreate) {
+      toast.error("Exact GSTIN already exists. Click 'Use Existing' or verify details.");
+      return;
+    }
+
     setSaving(true);
     try {
       const customerId = uid();
-      let linkedLedgerId: string | undefined = undefined;
-
       const newCustomer: Customer = {
         id: customerId,
         name: trimmedName,
@@ -72,10 +101,13 @@ export function QuickCreateCustomerDrawer({
         state: form.state.trim() || undefined,
         pincode: form.pincode.trim() || undefined,
         openingBalance: Number(form.openingBalance) || 0,
+        creditLimit: Number(form.creditLimit) || 0,
+        creditDays: Number(form.creditDays) || 30,
+        taxRegistrationType: form.taxRegistrationType,
         createdAt: Date.now(),
       };
 
-      // 1. Atomic Customer + Accounts Receivable Ledger creation (Correction 3)
+      // Atomic Customer + Accounts Receivable Ledger creation
       if (activeCompany?.id && user?.uid) {
         const res = await createCustomerWithLedger({
           companyId: activeCompany.id,
@@ -88,7 +120,6 @@ export function QuickCreateCustomerDrawer({
         }
       }
 
-      // 2. Update local Dexie table for instant UI reaction
       await db().customers.put(newCustomer);
 
       toast.success(`Customer "${newCustomer.name}" created and selected`);
@@ -96,7 +127,7 @@ export function QuickCreateCustomerDrawer({
       onOpenChange(false);
     } catch (err) {
       console.error("Failed to quick-create customer:", err);
-      toast.error("Unable to create customer. Please check your connection.");
+      toast.error("Unable to create customer. Invoice draft preserved. Please retry.");
     } finally {
       setSaving(false);
     }
@@ -106,18 +137,75 @@ export function QuickCreateCustomerDrawer({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 text-base font-bold">
             <UserPlus className="h-5 w-5 text-primary" /> Quick Add Customer
           </DialogTitle>
         </DialogHeader>
-        <div className="grid gap-3 sm:grid-cols-2 text-xs">
+
+        {/* Duplicate Intelligence Warning Banner (Correction 4) */}
+        {duplicateCheck.isDuplicate && duplicateCheck.matchedItem && (
+          <Alert variant={duplicateCheck.severity === "critical" ? "destructive" : "default"} className="my-1 border-amber-500/50 bg-amber-500/10 text-xs">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            <div className="space-y-1">
+              <AlertTitle className="text-xs font-semibold">Possible Duplicate Found</AlertTitle>
+              <AlertDescription className="text-xs">
+                {duplicateCheck.message}
+              </AlertDescription>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-7 text-[11px] gap-1"
+                  onClick={() => {
+                    if (duplicateCheck.matchedItem) {
+                      onCustomerCreated(duplicateCheck.matchedItem);
+                      onOpenChange(false);
+                      toast.info(`Selected existing customer "${duplicateCheck.matchedItem.name}"`);
+                    }
+                  }}
+                >
+                  <CheckCircle2 className="h-3 w-3 text-emerald-600" /> Use Existing Customer
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-[11px]"
+                  onClick={() => setForceCreate(true)}
+                >
+                  Create Anyway
+                </Button>
+              </div>
+            </div>
+          </Alert>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-2 text-xs pt-1">
           <div className="space-y-1 sm:col-span-2">
-            <Label className="text-xs">Customer / Trade Name *</Label>
+            <Label className="text-xs">Customer Name *</Label>
             <Input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="e.g. Acme Corporation or Rajesh Sharma"
+              placeholder="e.g. Mars Engineering or Rajesh Sharma"
               autoFocus
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Company / Trading Name</Label>
+            <Input
+              value={form.company}
+              onChange={(e) => setForm({ ...form, company: e.target.value })}
+              placeholder="e.g. Mars Enterprises"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">GSTIN (Optional)</Label>
+            <Input
+              value={form.gstin}
+              onChange={(e) => setForm({ ...form, gstin: e.target.value.toUpperCase() })}
+              placeholder="27ABCDE1234F1Z5"
+              className="font-mono uppercase"
             />
           </div>
 
@@ -131,30 +219,12 @@ export function QuickCreateCustomerDrawer({
           </div>
 
           <div className="space-y-1">
-            <Label className="text-xs">Email</Label>
+            <Label className="text-xs">Email Address</Label>
             <Input
               type="email"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
-              placeholder="billing@customer.com"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-xs">GSTIN (Optional)</Label>
-            <Input
-              value={form.gstin}
-              onChange={(e) => setForm({ ...form, gstin: e.target.value.toUpperCase() })}
-              placeholder="29AAAAA0000A1Z5"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-xs">State</Label>
-            <Input
-              value={form.state}
-              onChange={(e) => setForm({ ...form, state: e.target.value })}
-              placeholder="e.g. Karnataka or Delhi"
+              placeholder="billing@mars.com"
             />
           </div>
 
@@ -164,7 +234,7 @@ export function QuickCreateCustomerDrawer({
               rows={2}
               value={form.address}
               onChange={(e) => setForm({ ...form, address: e.target.value })}
-              placeholder="Building, street, area"
+              placeholder="Full address, road, industrial area"
             />
           </div>
 
@@ -173,26 +243,52 @@ export function QuickCreateCustomerDrawer({
             <Input
               value={form.city}
               onChange={(e) => setForm({ ...form, city: e.target.value })}
-              placeholder="City"
+              placeholder="e.g. Mumbai"
             />
           </div>
 
           <div className="space-y-1">
-            <Label className="text-xs">Pincode</Label>
+            <Label className="text-xs">State</Label>
             <Input
-              value={form.pincode}
-              onChange={(e) => setForm({ ...form, pincode: e.target.value })}
-              placeholder="560001"
+              value={form.state}
+              onChange={(e) => setForm({ ...form, state: e.target.value })}
+              placeholder="e.g. Maharashtra"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Credit Limit (₹)</Label>
+            <Input
+              type="number"
+              value={form.creditLimit || ""}
+              onChange={(e) => setForm({ ...form, creditLimit: Number(e.target.value) || 0 })}
+              placeholder="0 (No limit)"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Credit Terms (Days)</Label>
+            <Input
+              type="number"
+              value={form.creditDays || ""}
+              onChange={(e) => setForm({ ...form, creditDays: Number(e.target.value) || 0 })}
+              placeholder="30"
             />
           </div>
         </div>
 
-        <DialogFooter className="mt-4">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+        <DialogFooter className="pt-3">
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? "Creating..." : "Save & Select Customer"}
+          <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
+            {saving ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving Customer…
+              </>
+            ) : (
+              "Save Customer & AR Ledger"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

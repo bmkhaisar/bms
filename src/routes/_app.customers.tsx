@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { ListToolbar, EmptyState, usePagination, Pager } from "@/components/app/ListHelpers";
-import { Pencil, Plus, Trash2, UserPlus, BookOpen } from "lucide-react";
+import { Pencil, Plus, Trash2, UserPlus, BookOpen, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { formatMoney } from "@/lib/format";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
@@ -21,6 +21,7 @@ import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database";
 import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
 import { createCustomerWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
+import { CustomerInsightDrawer } from "@/components/app/CustomerInsightDrawer";
 
 export const Route = createFileRoute("/_app/customers")({
   head: () => ({ meta: [{ title: "Customers — BMS NEXT" }] }),
@@ -52,6 +53,7 @@ export function CustomersPage() {
   const [editing, setEditing] = useState<Customer>(empty);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [selectedCustomerIdForDrawer, setSelectedCustomerIdForDrawer] = useState<string | null>(null);
 
   // 1. Initial cached retrieval + Realtime Firebase synchronization
   useEffect(() => {
@@ -259,7 +261,13 @@ export function CustomersPage() {
                 {pager.items.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell className="font-medium">
-                      {r.name}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCustomerIdForDrawer(r.id)}
+                        className="text-left font-semibold text-foreground hover:text-primary hover:underline"
+                      >
+                        {r.name}
+                      </button>
                       {r.company ? <div className="text-xs text-muted-foreground">{r.company}</div> : null}
                     </TableCell>
                     <TableCell>{r.mobile || "—"}</TableCell>
@@ -273,6 +281,14 @@ export function CustomersPage() {
                     </TableCell>
                     <TableCell className="text-right font-mono">{formatMoney(r.openingBalance || 0)}</TableCell>
                     <TableCell className="text-right">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        title="View Financial Insights & History"
+                        onClick={() => setSelectedCustomerIdForDrawer(r.id)}
+                      >
+                        <BarChart3 className="h-4 w-4 text-primary" />
+                      </Button>
                       <Button size="icon" variant="ghost" onClick={() => openEdit(r)}>
                         <Pencil className="h-4 w-4" />
                       </Button>
@@ -363,11 +379,21 @@ export function CustomersPage() {
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">State</Label>
+              <Label className="text-xs">Credit Limit (₹)</Label>
               <Input
-                value={editing.state ?? ""}
-                onChange={(e) => setEditing({ ...editing, state: e.target.value })}
-                placeholder="State"
+                type="number"
+                value={(editing as any).creditLimit || ""}
+                onChange={(e) => setEditing({ ...editing, creditLimit: Number(e.target.value) || 0 } as any)}
+                placeholder="0 (Unlimited)"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Credit Days</Label>
+              <Input
+                type="number"
+                value={(editing as any).creditDays || ""}
+                onChange={(e) => setEditing({ ...editing, creditDays: Number(e.target.value) || 0 } as any)}
+                placeholder="30"
               />
             </div>
           </div>
@@ -391,6 +417,11 @@ export function CustomersPage() {
           if (deleteId) remove(deleteId);
           setDeleteId(null);
         }}
+      />
+      <CustomerInsightDrawer
+        customerId={selectedCustomerIdForDrawer}
+        open={Boolean(selectedCustomerIdForDrawer)}
+        onOpenChange={(o) => !o && setSelectedCustomerIdForDrawer(null)}
       />
     </AppShell>
   );

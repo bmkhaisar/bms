@@ -13,6 +13,7 @@ import {
   createTaxSnapshot,
   validateGstInvoiceNumber,
 } from "@/modules/tax/taxEngine";
+import { recordInvoicePriceHistory, recordPurchasePriceHistory } from "@/modules/pricing/priceHistoryService";
 
 export interface PostingResult {
   success: boolean;
@@ -154,12 +155,14 @@ export async function postInvoiceTransaction(params: {
     }
 
     // 6. Attach frozen company snapshot, signatory snapshot, and immutable historical tax snapshot (Correction 11)
-    const companySnapshot = createCompanySnapshot(company);
-    const signatorySnapshot = createSignatorySnapshot(
-      company,
-      (invoice as any).signatoryOverride,
-      invoice.date
-    );
+    const companySnapshot = invoice.companySnapshot || createCompanySnapshot(company);
+    const signatorySnapshot =
+      invoice.signatorySnapshot ||
+      createSignatorySnapshot(
+        company,
+        (invoice as any).signatoryOverride,
+        invoice.date
+      );
     const taxSnapshot = createTaxSnapshot({
       taxTotals: recomputed,
       companyGstMode: normMode as any,
@@ -205,10 +208,38 @@ export async function postInvoiceTransaction(params: {
       uid,
       companyId,
       financialYearId,
-      entityType: "invoice",
+      entityType: "invoices",
       entityId: invoice.id,
       data: updatedInvoice,
     });
+
+    // 10. Record Price History and Product lastSalesRatePaise
+    try {
+      recordInvoicePriceHistory({
+        companyId,
+        customerId: invoice.customerId,
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.number,
+        date: invoice.date,
+        items: invoice.items.map((it) => ({
+          productId: it.productId,
+          rate: it.rate,
+          quantity: it.quantity,
+          unit: it.unit,
+        })),
+      });
+      for (const it of invoice.items) {
+        if (it.productId) {
+          const p = await db().products.get(it.productId);
+          if (p) {
+            p.lastSalesRatePaise = Math.round(it.rate * 100);
+            await db().products.put(p);
+          }
+        }
+      }
+    } catch (phErr) {
+      console.warn("Price history logging failed non-fatally:", phErr);
+    }
 
     return { success: true, voucherId, documentId: invoice.id };
   } catch (err: unknown) {
@@ -275,8 +306,8 @@ export async function postPurchaseTransaction(params: {
           financialYearId,
           voucherType: "journal",
           date: toCanonicalDate(purchase.date),
-          narration: `Purchase Bill ${purchase.number} posted`,
-          clientMutationId: `mut-pu-${purchase.id}-${Date.now()}`,
+          narration: `Purchase Bill ${purchase.number} from supplier`,
+          clientMutationId: `mut-pur-${purchase.id}-${Date.now()}`,
           lines,
         },
       });
@@ -287,12 +318,14 @@ export async function postPurchaseTransaction(params: {
     }
 
     // 2. Attach frozen company snapshot & signatory snapshot
-    const snapshot = createCompanySnapshot(company);
-    const signatorySnapshot = createSignatorySnapshot(
-      company,
-      (purchase as any).signatoryOverride,
-      purchase.date
-    );
+    const snapshot = purchase.companySnapshot || createCompanySnapshot(company);
+    const signatorySnapshot =
+      purchase.signatorySnapshot ||
+      createSignatorySnapshot(
+        company,
+        (purchase as any).signatoryOverride,
+        purchase.date
+      );
     const updatedPurchase: Purchase = {
       ...purchase,
       voucherId,
@@ -322,6 +355,34 @@ export async function postPurchaseTransaction(params: {
       data: updatedPurchase,
     });
 
+    // 6. Record Price History and Product lastPurchaseRatePaise
+    try {
+      recordPurchasePriceHistory({
+        companyId,
+        supplierId: purchase.supplierId,
+        purchaseId: purchase.id,
+        purchaseNumber: purchase.number,
+        date: purchase.date,
+        items: purchase.items.map((it) => ({
+          productId: it.productId,
+          rate: it.rate,
+          quantity: it.quantity,
+          unit: it.unit,
+        })),
+      });
+      for (const it of purchase.items) {
+        if (it.productId) {
+          const p = await db().products.get(it.productId);
+          if (p) {
+            p.lastPurchaseRatePaise = Math.round(it.rate * 100);
+            await db().products.put(p);
+          }
+        }
+      }
+    } catch (phErr) {
+      console.warn("Purchase price history logging failed non-fatally:", phErr);
+    }
+
     return { success: true, voucherId, documentId: purchase.id };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -339,12 +400,13 @@ export async function postReceiptTransaction(params: {
   companyId: string;
   financialYearId: string;
   receipt: Receipt;
+  company?: Partial<Company>;
   customerLedgerId: string;
   settlementLedgerId?: string;
   idToken?: string;
   uid: string;
 }): Promise<PostingResult> {
-  const { companyId, financialYearId, receipt, customerLedgerId, settlementLedgerId, idToken, uid } = params;
+  const { companyId, financialYearId, receipt, company, customerLedgerId, settlementLedgerId, idToken, uid } = params;
 
   try {
     const amountPaise = Math.round(receipt.amount * 100);
@@ -383,11 +445,19 @@ export async function postReceiptTransaction(params: {
       }
     }
 
+    // Attach frozen company snapshot & signatory snapshot
+    const companySnapshot = receipt.companySnapshot || (company ? createCompanySnapshot(company) : undefined);
+    const signatorySnapshot =
+      receipt.signatorySnapshot ||
+      (company ? createSignatorySnapshot(company, receipt.signatoryOverride, receipt.date) : undefined);
+
     const updatedReceipt: Receipt = {
       ...receipt,
       voucherId,
       postingStatus: "posted",
       settlementLedgerId: liquidityLedgerId,
+      companySnapshot,
+      signatorySnapshot,
     };
 
     await db().receipts.put(updatedReceipt);
@@ -423,12 +493,13 @@ export async function postPaymentTransaction(params: {
   companyId: string;
   financialYearId: string;
   payment: Payment;
+  company?: Partial<Company>;
   supplierLedgerId: string;
   settlementLedgerId?: string;
   idToken?: string;
   uid: string;
 }): Promise<PostingResult> {
-  const { companyId, financialYearId, payment, supplierLedgerId, settlementLedgerId, idToken, uid } = params;
+  const { companyId, financialYearId, payment, company, supplierLedgerId, settlementLedgerId, idToken, uid } = params;
 
   try {
     const amountPaise = Math.round(payment.amount * 100);
@@ -467,11 +538,19 @@ export async function postPaymentTransaction(params: {
       }
     }
 
+    // Attach frozen company snapshot & signatory snapshot
+    const companySnapshot = payment.companySnapshot || (company ? createCompanySnapshot(company) : undefined);
+    const signatorySnapshot =
+      payment.signatorySnapshot ||
+      (company ? createSignatorySnapshot(company, payment.signatoryOverride, payment.date) : undefined);
+
     const updatedPayment: Payment = {
       ...payment,
       voucherId,
       postingStatus: "posted",
       settlementLedgerId: liquidityLedgerId,
+      companySnapshot,
+      signatorySnapshot,
     };
 
     if (firebaseDb) {

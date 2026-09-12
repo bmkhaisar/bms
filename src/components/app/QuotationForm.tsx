@@ -23,6 +23,8 @@ import {
 import { toast } from "sonner";
 import { QuickCreateCustomerDrawer } from "./QuickCreateCustomerDrawer";
 import { QuickCreateProductModal } from "./QuickCreateProductModal";
+import { PartySearchSelect } from "./PartySearchSelect";
+import { CustomerInsightDrawer } from "./CustomerInsightDrawer";
 
 import {
   db, uid, type Quotation, type LineItem, type Customer, type Product, type ExtraCharge,
@@ -54,6 +56,7 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
   const [rowIds, setRowIds] = useState<string[]>(() => initial.items.map(() => uid()));
   const [quickCustomerOpen, setQuickCustomerOpen] = useState(false);
   const [quickProductOpen, setQuickProductOpen] = useState(false);
+  const [insightCustomerId, setInsightCustomerId] = useState<string | null>(null);
 
   useEffect(() => {
     setQ(initial);
@@ -233,38 +236,26 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs">Customer *</Label>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 px-1.5 text-[11px] font-medium text-primary hover:text-primary/80"
-                      onClick={() => setQuickCustomerOpen(true)}
-                    >
-                      + New Customer
-                    </Button>
+                    {q.customerId && (
+                      <button
+                        type="button"
+                        onClick={() => setInsightCustomerId(q.customerId)}
+                        className="text-[11px] text-primary hover:underline font-medium"
+                      >
+                        View Financial History
+                      </button>
+                    )}
                   </div>
-                  <Select
+                  <PartySearchSelect
+                    type="customer"
                     value={q.customerId || ""}
-                    onValueChange={(v) => {
-                      if (v === "__new__") {
-                        setQuickCustomerOpen(true);
-                        return;
-                      }
-                      setQ({ ...q, customerId: v });
+                    parties={customers}
+                    onChange={(id: string) => {
+                      const cust = customers.find(c => c.id === id);
+                      setQ({ ...q, customerId: id, customerSnapshot: cust || undefined });
                     }}
-                  >
-                    <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__new__" className="font-semibold text-primary">
-                        + Add New Customer
-                      </SelectItem>
-                      {customers.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    onAddNew={() => setQuickCustomerOpen(true)}
+                  />
                 </div>
                 <Field label="Date">
                   <Input type="date" value={toDateInput(q.date)} onChange={e => setQ({ ...q, date: fromDateInput(e.target.value) })} />
@@ -744,6 +735,11 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
             return { ...prev, items: next };
           });
         }}
+      />
+      <CustomerInsightDrawer
+        customerId={insightCustomerId}
+        open={Boolean(insightCustomerId)}
+        onOpenChange={(o) => !o && setInsightCustomerId(null)}
       />
     </div>
   );

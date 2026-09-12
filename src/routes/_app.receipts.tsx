@@ -33,6 +33,8 @@ import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useAccounting } from "@/modules/accounting/useAccounting";
 import { getNextDocumentNumber } from "@/lib/numberingClient";
 import { postReceiptTransaction, postPaymentTransaction } from "@/modules/accounting/services/documentPostingService";
+import { createCompanySnapshot } from "@/modules/company/types";
+import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 
 export const Route = createFileRoute("/_app/receipts")({
   head: () => ({ meta: [{ title: "Receipts & Payments — BMS NEXT" }] }),
@@ -148,13 +150,29 @@ export function ReceiptsAndPaymentsPage() {
           companyId: activeCompany.id,
           financialYearId: activeFinancialYear.id,
           receipt: editingReceipt,
+          company: activeCompany || undefined,
           customerLedgerId,
           settlementLedgerId: editingReceipt.settlementLedgerId,
           idToken,
           uid: user.uid,
         });
       } else {
-        await db().receipts.put(editingReceipt);
+        const frozenReceipt: Receipt = {
+          ...editingReceipt,
+          companySnapshot:
+            editingReceipt.companySnapshot ||
+            (activeCompany ? createCompanySnapshot(activeCompany) : undefined),
+          signatorySnapshot:
+            editingReceipt.signatorySnapshot ||
+            (activeCompany
+              ? createSignatorySnapshot(
+                  activeCompany,
+                  editingReceipt.signatoryOverride,
+                  editingReceipt.date
+                )
+              : undefined),
+        };
+        await db().receipts.put(frozenReceipt);
       }
 
       // Update linked invoice balance if applicable
@@ -203,6 +221,7 @@ export function ReceiptsAndPaymentsPage() {
           companyId: activeCompany.id,
           financialYearId: activeFinancialYear.id,
           payment: editingPayment,
+          company: activeCompany || undefined,
           supplierLedgerId,
           settlementLedgerId: editingPayment.settlementLedgerId,
           idToken,

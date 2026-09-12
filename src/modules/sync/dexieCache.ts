@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import type { OutboxMutation, CachedEntity } from "./types";
+import { normalizeSearchToken } from "./searchNormalization";
 
 export interface UserSessionState {
   key: "session_state";
@@ -233,13 +234,28 @@ export async function searchCachedEntitiesRecords(
       .equals(companyId);
   }
 
+  const normQ = normalizeSearchToken(query);
   const matches = await collection
     .filter((r) => {
       if (entityType && r.entityType !== entityType) return false;
-      if (r.nameLower && r.nameLower.includes(query)) return true;
+      if (r.nameLower && (r.nameLower.includes(query) || normalizeSearchToken(r.nameLower).includes(normQ))) return true;
       if (r.numberLower && r.numberLower.includes(query)) return true;
-      if (r.sku && r.sku.includes(query)) return true;
+      if (r.sku && (r.sku.includes(query) || normalizeSearchToken(r.sku).includes(normQ))) return true;
       if (r.gstin && r.gstin.toLowerCase().includes(query)) return true;
+      
+      const d = r.data as any;
+      if (d) {
+        if (d.company && normalizeSearchToken(d.company).includes(normQ)) return true;
+        if (d.mobile && String(d.mobile).includes(query)) return true;
+        if (d.phone && String(d.phone).includes(query)) return true;
+        if (d.email && String(d.email).toLowerCase().includes(query)) return true;
+        if (d.hsn && String(d.hsn).toLowerCase().includes(query)) return true;
+        if (Array.isArray(d.aliases)) {
+          for (const a of d.aliases) {
+            if (normalizeSearchToken(a).includes(normQ)) return true;
+          }
+        }
+      }
       return false;
     })
     .limit(max)

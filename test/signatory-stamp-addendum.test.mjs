@@ -8,7 +8,7 @@ const TYPED_SIGNATURE_STYLES = {
   style_1: {
     id: "style_1",
     label: "Flowing Script",
-    fontFamily: "'Brush Script MT', 'Dancing Script', 'Caveat', cursive",
+    fontFamily: "'Dancing Script', cursive",
     weight: 600,
     slant: "italic",
     letterSpacing: "0.05em",
@@ -16,7 +16,7 @@ const TYPED_SIGNATURE_STYLES = {
   style_2: {
     id: "style_2",
     label: "Executive Flourish",
-    fontFamily: "'Segoe Script', 'Great Vibes', 'Alex Brush', cursive",
+    fontFamily: "'Great Vibes', cursive",
     weight: 700,
     slant: "italic",
     letterSpacing: "0.02em",
@@ -24,7 +24,7 @@ const TYPED_SIGNATURE_STYLES = {
   style_3: {
     id: "style_3",
     label: "Modern Casual",
-    fontFamily: "'Lucida Handwriting', 'Pacifico', 'Kalam', cursive",
+    fontFamily: "'Caveat', cursive",
     weight: 500,
     slant: "normal",
     letterSpacing: "0.01em",

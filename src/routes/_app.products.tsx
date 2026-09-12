@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { ListToolbar, EmptyState, usePagination, Pager } from "@/components/app/ListHelpers";
-import { PackagePlus, Pencil, Plus, Trash2, Tag } from "lucide-react";
+import { PackagePlus, Pencil, Plus, Trash2, Tag, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { formatMoney } from "@/lib/format";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
@@ -22,6 +22,7 @@ import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database";
 import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
 import { QuickCreateCategoryModal } from "@/components/app/QuickCreateCategoryModal";
+import { ProductInsightDrawer } from "@/components/app/ProductInsightDrawer";
 
 export const Route = createFileRoute("/_app/products")({
   head: () => ({ meta: [{ title: "Products — BMS NEXT" }] }),
@@ -58,6 +59,7 @@ function ProductsPage() {
   const [editing, setEditing] = useState<Product>(empty);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [selectedProductIdForDrawer, setSelectedProductIdForDrawer] = useState<string | null>(null);
 
   // 1. Initial cached retrieval + Realtime Firebase synchronization
   useEffect(() => {
@@ -262,7 +264,13 @@ function ProductsPage() {
                   return (
                     <TableRow key={r.id}>
                       <TableCell className="font-medium">
-                        {r.name}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProductIdForDrawer(r.id)}
+                          className="text-left font-semibold text-foreground hover:text-primary hover:underline"
+                        >
+                          {r.name}
+                        </button>
                         {r.sku ? <div className="text-xs text-muted-foreground">{r.sku}</div> : null}
                       </TableCell>
                       <TableCell className="font-mono text-xs">{r.hsn || "—"}</TableCell>
@@ -277,6 +285,14 @@ function ProductsPage() {
                         {r.trackInventory === false ? "Non-stock" : `${r.currentStock} ${r.unit}`}
                       </TableCell>
                       <TableCell className="text-right">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="View Product Performance & Stock"
+                          onClick={() => setSelectedProductIdForDrawer(r.id)}
+                        >
+                          <BarChart3 className="h-4 w-4 text-primary" />
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"
@@ -476,6 +492,11 @@ function ProductsPage() {
           if (deleteId) await remove(deleteId);
           setDeleteId(null);
         }}
+      />
+      <ProductInsightDrawer
+        productId={selectedProductIdForDrawer}
+        open={Boolean(selectedProductIdForDrawer)}
+        onOpenChange={(o) => !o && setSelectedProductIdForDrawer(null)}
       />
     </AppShell>
   );
