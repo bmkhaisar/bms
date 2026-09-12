@@ -10,6 +10,7 @@ import type { Company } from "@/modules/company/types";
 import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 import {
   calculateDocumentTaxes,
+  calculateAdvanceTax,
   createTaxSnapshot,
   validateGstInvoiceNumber,
 } from "@/modules/tax/taxEngine";
@@ -103,6 +104,11 @@ export async function postInvoiceTransaction(params: {
     const salesLedgerId = `led_${companyId}_sales`;
     const gstLedgerId = `led_${companyId}_output_gst`;
 
+    // Check for prior advance tax already accounted for (PRD Addendum § 9: Avoid double GST)
+    const advanceTaxAdjustedPaise = invoice.advanceGstAdjustedPaise || Math.round((invoice.advanceTaxPreviouslyAccounted || 0) * 100);
+    const netTaxPaise = Math.max(0, taxPaise - advanceTaxAdjustedPaise);
+    const advanceAdjLedgerId = `led_${companyId}_advance_gst_adjustment`;
+
     const lines = [
       {
         ledgerId: customerLedgerId,
@@ -114,12 +120,21 @@ export async function postInvoiceTransaction(params: {
         debit: 0,
         credit: taxablePaise,
       },
-      ...(taxPaise > 0
+      ...(netTaxPaise > 0
         ? [
             {
               ledgerId: gstLedgerId,
               debit: 0,
-              credit: taxPaise,
+              credit: netTaxPaise,
+            },
+          ]
+        : []),
+      ...(advanceTaxAdjustedPaise > 0
+        ? [
+            {
+              ledgerId: advanceAdjLedgerId,
+              debit: 0,
+              credit: advanceTaxAdjustedPaise,
             },
           ]
         : []),
@@ -537,17 +552,56 @@ export async function postReceiptTransaction(params: {
     const amountPaise = Math.round(receipt.amount * 100);
     const liquidityLedgerId = settlementLedgerId || `led_${companyId}_cash`;
 
+    const normMode = ((company as any)?.taxRegistrationMode || (company as any)?.gstMode || "NORMAL_GST").toUpperCase();
+    const isAdvance = receipt.allocationType === "ADVANCE";
+    const supplyType = receipt.supplyType || (isAdvance ? "GOODS" : undefined);
+
+    let advanceTaxRes: ReturnType<typeof calculateAdvanceTax> | undefined;
+    if (isAdvance) {
+      advanceTaxRes = calculateAdvanceTax({
+        companyGstMode: normMode,
+        supplyType,
+        advanceAmount: receipt.amount,
+        taxInclusive: receipt.taxProfileSnapshot?.isTaxInclusive ?? true,
+        taxTreatment: receipt.taxProfileSnapshot?.taxTreatment as any,
+        gstRate: receipt.taxProfileSnapshot?.gstRate,
+        cessRate: receipt.taxProfileSnapshot?.cessRate,
+        placeOfSupply: receipt.placeOfSupplySnapshot || (receipt as any).placeOfSupply || company?.state,
+        companyStateCode: company?.state,
+        mixedBreakdown: receipt.mixedBreakdown ? {
+          goodsAmount: receipt.mixedBreakdown.goodsAmountPaise / 100,
+          serviceAmount: receipt.mixedBreakdown.serviceAmountPaise / 100,
+        } : undefined,
+      });
+    }
+
+    const gstLedgerId = `led_${companyId}_output_gst`;
     const lines = [
       {
         ledgerId: liquidityLedgerId,
         debit: amountPaise,
         credit: 0,
       },
-      {
-        ledgerId: customerLedgerId,
-        debit: 0,
-        credit: amountPaise,
-      },
+      ...(advanceTaxRes && advanceTaxRes.taxTreatment === "ADVANCE_GST" && advanceTaxRes.totalTaxPaise > 0
+        ? [
+            {
+              ledgerId: customerLedgerId,
+              debit: 0,
+              credit: advanceTaxRes.taxableAmountPaise,
+            },
+            {
+              ledgerId: gstLedgerId,
+              debit: 0,
+              credit: advanceTaxRes.totalTaxPaise,
+            },
+          ]
+        : [
+            {
+              ledgerId: customerLedgerId,
+              debit: 0,
+              credit: amountPaise,
+            },
+          ]),
     ];
 
     let voucherId: string | undefined = undefined;
@@ -560,7 +614,7 @@ export async function postReceiptTransaction(params: {
           voucherType: "receipt",
           date: toCanonicalDate(receipt.date),
           narration: receipt.allocationType === "ADVANCE"
-            ? `Customer Advance Receipt ${receipt.number} [Ref: ${receipt.reference || receipt.number}]`
+            ? `Customer Advance Receipt ${receipt.number} [Supply: ${advanceTaxRes?.supplyType || "GOODS"}, Tax: ${advanceTaxRes?.taxTreatment || "NO_ADVANCE_GST"}] [Ref: ${receipt.reference || receipt.number}]`
             : `Receipt ${receipt.number} against receivables`,
           clientMutationId: `mut-rec-${receipt.id}-${Date.now()}`,
           lines,
@@ -581,10 +635,23 @@ export async function postReceiptTransaction(params: {
     const updatedReceipt: Receipt = {
       ...receipt,
       voucherId,
+      receiptVoucherId: voucherId,
       postingStatus: "posted",
       settlementLedgerId: liquidityLedgerId,
       companySnapshot,
       signatorySnapshot,
+      supplyType: advanceTaxRes ? advanceTaxRes.supplyType : (receipt.supplyType || (isAdvance ? "GOODS" : undefined)),
+      taxTreatment: advanceTaxRes ? advanceTaxRes.taxTreatment : (receipt.taxTreatment || (isAdvance ? "NO_ADVANCE_GST" : undefined)),
+      advanceAmountPaise: advanceTaxRes ? advanceTaxRes.advanceAmountPaise : amountPaise,
+      taxableAmountPaise: advanceTaxRes ? advanceTaxRes.taxableAmountPaise : amountPaise,
+      cgstPaise: advanceTaxRes ? advanceTaxRes.cgstPaise : 0,
+      sgstPaise: advanceTaxRes ? advanceTaxRes.sgstPaise : 0,
+      igstPaise: advanceTaxRes ? advanceTaxRes.igstPaise : 0,
+      cessPaise: advanceTaxRes ? advanceTaxRes.cessPaise : 0,
+      totalTaxPaise: advanceTaxRes ? advanceTaxRes.totalTaxPaise : 0,
+      advanceAvailablePaise: isAdvance
+        ? (receipt.advanceAvailablePaise !== undefined ? receipt.advanceAvailablePaise : amountPaise)
+        : undefined,
     };
 
     await db().receipts.put(updatedReceipt);

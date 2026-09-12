@@ -8,22 +8,32 @@
 
 import {
   calculateDocumentTaxes,
+  calculateAdvanceTax,
   toPaise,
   toRupees,
   determineInterState,
   normalizeStateCode,
-} from "./taxEngine";
-import type { TaxTotals, TaxCalculationParams } from "./types";
+} from "./taxEngine.ts";
+import type {
+  TaxTotals,
+  TaxCalculationParams,
+  AdvanceSupplyType,
+  AdvanceTaxTreatment,
+  AdvanceTaxCalculationParams,
+  AdvanceTaxResult,
+} from "./types.ts";
 import type { LineItem, ExtraCharge, Invoice, CompanySettings } from "@/lib/db";
 
 export interface CanonicalLineItem {
   productId?: string;
-  name: string;
+  name?: string;
   hsn?: string;
   quantity: number;
   rate: number;
-  discountPct: number;
-  gstRate: number;
+  discountPct?: number;
+  discountPercent?: number;
+  gstRate?: number;
+  taxRate?: number;
   cessRate?: number;
   isTaxInclusive?: boolean;
   unit?: string;
@@ -73,9 +83,19 @@ export function calculateCanonicalTotals(
     items: (input.items || []).map((it) => {
       const rate = Number(it.rate) || 0;
       const quantity = Number(it.quantity) || 0;
-      const discountPct = Number(it.discountPct) || 0;
-      // Resolve GST rate with complete fallback tolerance
-      const gstRate = Number(it.gstRate) || 0;
+      const discountPct =
+        it.discountPct !== undefined
+          ? Number(it.discountPct)
+          : it.discountPercent !== undefined
+          ? Number(it.discountPercent)
+          : 0;
+      // Resolve GST rate with complete fallback tolerance (PRD Addendum § 25)
+      const gstRate =
+        it.gstRate !== undefined
+          ? Number(it.gstRate)
+          : it.taxRate !== undefined
+          ? Number(it.taxRate)
+          : 0;
       const cessRate = Number(it.cessRate) || 0;
 
       return {
@@ -231,3 +251,12 @@ export function validateDocumentTotals(
     authoritative,
   };
 }
+
+export {
+  calculateAdvanceTax,
+  type AdvanceSupplyType,
+  type AdvanceTaxTreatment,
+  type AdvanceTaxCalculationParams,
+  type AdvanceTaxResult,
+};
+

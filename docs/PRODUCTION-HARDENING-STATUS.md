@@ -4,7 +4,7 @@
 **Deployment Target:** Vercel (Production Connected to GitHub)  
 **Target Audience:** Production SME Multi-Employee Realtime ERP (~10 concurrent active employees)  
 **Status:** PRODUCTION HARDENED & VERIFIED — CLIENT WORKFLOW COMPLETE  
-**Automated Tests:** 251 Passed / 0 Failed (100% Pass Rate)  
+**Automated Tests:** 263 Passed / 0 Failed (100% Pass Rate)  
 **TypeScript Typecheck:** 0 Errors (`npx tsc --noEmit` exited with code 0)  
 **Production Build:** Clean Success (`npm run build` exited with code 0)  
 **Storage Engine:** Cloudflare R2 Bucket (`bms-next-assets`) Reachability & Read/Write Verified  
@@ -225,7 +225,23 @@ ADDRESS_REUSE = VERIFIED
 PERSISTENT_SESSION = VERIFIED
 MULTI_USER_REALTIME = VERIFIED
 PRODUCTION_BUILD = VERIFIED
+ADVANCE_GST_TREATMENT = VERIFIED
+ADVANCE_INVOICE_ADJUSTMENT = VERIFIED
+COUNTRY_ADDRESS_VALIDATION = VERIFIED
+PARTY_BOTH_AR_AP_ISOLATION = VERIFIED
 ```
 
+### 9.3 Client Production Workflow Fix Addendum (§§ 1–26)
 
-
+| # | Addendum Area | Implementation Pattern | Verification Evidence | Status |
+|---|---|---|---|:---:|
+| **1** | **Advance Tax Treatment** | `calculateAdvanceTax()` in `taxEngine.ts` implements authoritative GST logic based on registration mode, supply type (`GOODS`, `SERVICES`, `MIXED`, `UNSPECIFIED`), and place of supply. | `advance-gst-treatment.test.mjs` Tests 1–5 | **VERIFIED** |
+| **2** | **Advance Receipt — Goods** | Under `NORMAL_GST`, goods advance records Cash/Bank Dr, Customer Advance Cr with zero output GST. Sales revenue and output GST deferred until Invoice. | `advance-gst-treatment.test.mjs` Test 1 | **VERIFIED** |
+| **3** | **Advance Receipt — Services** | Taxable service advances back-calculate taxable value and CGST+SGST or IGST in integer paise. Snapshots frozen in Receipt Voucher. | `advance-gst-treatment.test.mjs` Tests 2, 3 | **VERIFIED** |
+| **4** | **Unspecified & Mixed Advances** | Unspecified advances store `PENDING_CLASSIFICATION` without guessing tax rates. Mixed advances split goods and services components item-wise. | `advance-gst-treatment.test.mjs` Tests 4, 5 | **VERIFIED** |
+| **5** | **Invoice Adjustment (No Double GST)** | Invoices deducting advances offset `advanceTaxPreviouslyAccounted`, preventing duplicate tax liability and maintaining audit links. | `advance-gst-treatment.test.mjs` Test 6 | **VERIFIED** |
+| **6** | **Advance Refund / Cancellation** | Auditable refund voucher reverses advance cash and proportionally reverses advance GST without deleting the original Receipt Voucher. | `advance-gst-treatment.test.mjs` Test 7 | **VERIFIED** |
+| **7** | **Registration Modes Handling** | Unregistered companies calculate 0 GST. Composition companies issue bills of supply and do not calculate advance GST. | `advance-gst-treatment.test.mjs` Test 8 | **VERIFIED** |
+| **8** | **Country-Aware Postal Code** | `countryValidation.ts` enforces 6-digit PIN for India and permits international formats / unavailable postal codes for foreign addresses (e.g. UAE). | `advance-gst-treatment.test.mjs` Test 9 | **VERIFIED** |
+| **9** | **Party Type BOTH Separation** | Accounts Receivable and Accounts Payable maintained as independent positions; no automatic netting; dedicated sales and purchase profile tabs. | `advance-gst-treatment.test.mjs` Tests 10, 11 | **VERIFIED** |
+| **10** | **Canonical Engine Preservation** | Normalized `gstRate` and `taxRate` resolution preserved across all calculations; strict ADVANCE party policy enforced. | `advance-gst-treatment.test.mjs` Test 12 | **VERIFIED** |

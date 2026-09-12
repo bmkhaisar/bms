@@ -248,7 +248,17 @@ export interface Invoice {
   extraChargesTotal?: number;
   amountPaid: number; balance: number; isIgst: boolean;
   advanceAllocatedPaise?: number;
-  advanceAllocations?: { receiptId: string; receiptNumber: string; amountPaise: number }[];
+  advanceAllocations?: {
+    receiptId: string;
+    receiptNumber: string;
+    amountPaise: number;
+    advanceTaxAdjustedPaise?: number;
+    supplyType?: string;
+    taxTreatment?: string;
+  }[];
+  advanceTaxPreviouslyAccounted?: number;
+  advanceGstAdjustedPaise?: number;
+  advanceGstAdjusted?: number;
   notes?: string; terms?: string;
   status: "draft" | "unpaid" | "partial" | "paid" | "posted" | "cancelled";
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
@@ -261,22 +271,64 @@ export interface Invoice {
 }
 
 export interface Receipt {
-  id: ID; number: string; date: number; customerId: ID; invoiceId?: ID;
+  id: ID; number: string; date: number; customerId: ID; partyId?: ID; invoiceId?: ID;
   amount: number; mode: "cash" | "bank" | "upi" | "cheque" | "other";
   paymentMethod?: string;
   chequeNumber?: string;
   chequeDate?: number | string;
   settlementLedgerId?: string;
   voucherId?: string;
-  postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
+  receiptVoucherId?: string;
+  postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed" | "refunded";
   companySnapshot?: any;
   signatoryOverride?: any;
   signatorySnapshot?: any;
-  reference?: string; notes?: string; createdAt: number;
+  reference?: string;
+  referenceNumber?: string;
+  notes?: string;
+  narration?: string;
+  createdAt: number;
   allocationType?: "ADVANCE" | "AGAINST_REF" | "ON_ACCOUNT";
   referenceType?: "ADVANCE" | "AGAINST_REF" | "ON_ACCOUNT";
-  allocatedInvoices?: { invoiceId: string; invoiceNumber: string; amountPaise: number }[];
+  allocatedInvoices?: {
+    invoiceId: string;
+    invoiceNumber: string;
+    amountPaise: number;
+    advanceTaxAdjustedPaise?: number;
+  }[];
   advanceAvailablePaise?: number;
+
+  // PRD Addendum § 5: Frozen Advance Tax & Audit Snapshot
+  supplyType?: "GOODS" | "SERVICES" | "MIXED" | "UNSPECIFIED";
+  taxTreatment?: "NO_ADVANCE_GST" | "ADVANCE_GST" | "PENDING_CLASSIFICATION" | "NO_GST";
+  taxProfileSnapshot?: {
+    gstRate: number;
+    cessRate?: number;
+    isTaxInclusive?: boolean;
+    hsn?: string;
+    taxTreatment?: string;
+  };
+  placeOfSupplySnapshot?: string;
+  advanceAmountPaise?: number;
+  taxableAmountPaise?: number;
+  cgstPaise?: number;
+  sgstPaise?: number;
+  igstPaise?: number;
+  cessPaise?: number;
+  totalTaxPaise?: number;
+  mixedBreakdown?: {
+    goodsAmountPaise: number;
+    serviceAmountPaise: number;
+    serviceTaxablePaise: number;
+    serviceTaxPaise: number;
+  };
+
+  // PRD Addendum § 10: Refund & Reversal Tracking
+  refundVoucherId?: string;
+  refundDate?: number;
+  refundAmountPaise?: number;
+  refundTaxReversedPaise?: number;
+  refundReason?: string;
 }
 
 export interface Payment {
@@ -364,6 +416,7 @@ class BizDB extends Dexie {
   invoices!: Table<Invoice, ID>;
   receipts!: Table<Receipt, ID>;
   purchases!: Table<Purchase, ID>;
+  payments!: Table<Payment, ID>;
   sizes!: Table<SizePreset, ID>;
   termsTemplates!: Table<TermsTemplate, ID>;
   generalInfoTemplates!: Table<GeneralInfoTemplate, ID>;
@@ -395,6 +448,9 @@ class BizDB extends Dexie {
     });
     this.version(3).stores({
       parties: "id, name, partyType, paymentPolicy, createdAt",
+    });
+    this.version(4).stores({
+      payments: "id, number, date, supplierId, createdAt",
     });
   }
 }

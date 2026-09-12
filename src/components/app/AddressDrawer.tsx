@@ -10,6 +10,7 @@ import { db, uid, type PartyAddress, type Party, type AddressSnapshot } from "@/
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, update } from "firebase/database";
+import { isIndia, getPostalCodeLabel, getPostalCodePlaceholder, validatePostalCode } from "@/lib/countryValidation";
 
 interface AddressDrawerProps {
   open: boolean;
@@ -69,8 +70,9 @@ export function AddressDrawer({
       toast.error("State is required");
       return;
     }
-    if (!form.pincode.trim()) {
-      toast.error("Pincode is mandatory per client requirements");
+    const postalRes = validatePostalCode(form.pincode, form.country, { required: isIndia(form.country) });
+    if (!postalRes.valid) {
+      toast.error(postalRes.error || "Invalid postal code");
       return;
     }
 
@@ -202,11 +204,11 @@ export function AddressDrawer({
               />
             </div>
             <div>
-              <Label className="text-xs">Pincode * (Mandatory)</Label>
+              <Label className="text-xs">{getPostalCodeLabel(form.country)} {isIndia(form.country) ? "*" : ""}</Label>
               <Input
                 value={form.pincode}
                 onChange={(e) => setForm((p) => ({ ...p, pincode: e.target.value }))}
-                placeholder="6-digit Pincode"
+                placeholder={getPostalCodePlaceholder(form.country)}
                 className="mt-1 h-8"
               />
             </div>

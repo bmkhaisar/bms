@@ -62,6 +62,21 @@ export interface NormalizedDocument {
   signatoryOverride?: Partial<SignatoryConfig>;
   signatorySnapshot?: Partial<SignatorySnapshot>;
   copyLabel?: DocumentCopyType;
+  receiptDetails?: {
+    receiptVoucherNumber?: string;
+    natureOfSupply?: string;
+    placeOfSupply?: string;
+    taxableAmount?: number;
+    cgst?: number;
+    sgst?: number;
+    igst?: number;
+    totalTax?: number;
+    totalReceived?: number;
+    paymentMethod?: string;
+    settlementLedgerName?: string;
+    referenceNumber?: string;
+    narration?: string;
+  };
 }
 
 /**
@@ -182,7 +197,9 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   const metaX = pageW - margin;
   let metaY = margin + 5;
 
-  const docTitle = isTaxDoc
+  const docTitle = docData.kind === "receipt"
+    ? (docData.title || "RECEIPT VOUCHER").toUpperCase()
+    : isTaxDoc
     ? docData.title.toUpperCase()
     : docData.kind === "invoice"
     ? "COMMERCIAL INVOICE"
@@ -315,9 +332,27 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   let tableRows: any[][];
   let colStyles: Record<number, any>;
 
+  const effectiveItems = (docData.items && docData.items.length > 0)
+    ? docData.items
+    : docData.kind === "receipt"
+    ? [
+        {
+          name: docData.receiptDetails?.natureOfSupply
+            ? `Advance for ${docData.receiptDetails.natureOfSupply}`
+            : "Customer Advance Receipt",
+          quantity: 1,
+          rate: docData.receiptDetails?.taxableAmount ?? (docData.subtotal || docData.grandTotal),
+          total: docData.receiptDetails?.taxableAmount ?? (docData.subtotal || docData.grandTotal),
+          gstRate: (docData.gstTotal > 0 && docData.subtotal > 0)
+            ? Math.round((docData.gstTotal / docData.subtotal) * 100)
+            : 0,
+        } as LineItem,
+      ]
+    : [];
+
   if (isTaxDoc) {
     tableHeaders = ["#", "Item Description", "HSN/SAC", "Qty", "Unit", "Rate", "Discount", "GST", "Amount"];
-    tableRows = docData.items.map((item, idx) => {
+    tableRows = effectiveItems.map((item, idx) => {
       let desc = item.productName || item.name;
       if (item.description && item.description !== desc) desc += `\n${item.description}`;
       if (item.size) desc += `\nSize: ${item.size}`;
@@ -352,7 +387,7 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   } else {
     // Clean Commercial / Non-GST Table without empty GST columns
     tableHeaders = ["#", "Item Description", "Qty", "Unit", "Rate", "Discount", "Amount"];
-    tableRows = docData.items.map((item, idx) => {
+    tableRows = effectiveItems.map((item, idx) => {
       let desc = item.productName || item.name;
       if (item.description && item.description !== desc) desc += `\n${item.description}`;
       if (item.size) desc += `\nSize: ${item.size}`;
@@ -502,27 +537,44 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   y += 6;
 
   // 7. Settlement & Banking Details
-  if (comp.bankName || comp.upiId) {
+  if (docData.receiptDetails || comp.bankName || comp.upiId) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
     doc.setTextColor(107, 114, 128);
-    doc.text("PAYMENT / BANK SETTLEMENT", margin, y);
+    doc.text(docData.kind === "receipt" ? "RECEIPT VOUCHER SETTLEMENT & AUDIT" : "PAYMENT / BANK SETTLEMENT", margin, y);
     y += 4;
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(75, 85, 99);
-    if (comp.bankName) {
+    if (docData.receiptDetails) {
+      if (docData.receiptDetails.natureOfSupply) {
+        doc.text(`Nature of Supply: ${docData.receiptDetails.natureOfSupply} · Place of Supply: ${docData.receiptDetails.placeOfSupply || "—"}`, margin, y);
+        y += 3.5;
+      }
       doc.text(
-        `Bank: ${comp.bankName} · A/C: ${comp.bankAccountNo || "—"} · IFSC: ${comp.bankIfsc || "—"}`,
+        `Payment Method: ${docData.receiptDetails.paymentMethod || docData.paymentMode || "Cash"} · Ledger: ${docData.receiptDetails.settlementLedgerName || "Cash/Bank Account"} · Ref: ${docData.receiptDetails.referenceNumber || "—"}`,
         margin,
         y
       );
       y += 3.5;
-    }
-    if (comp.upiId) {
-      doc.text(`UPI VPA: ${comp.upiId}`, margin, y);
-      y += 3.5;
+      if (docData.receiptDetails.narration) {
+        doc.text(`Narration: ${docData.receiptDetails.narration}`, margin, y);
+        y += 3.5;
+      }
+    } else {
+      if (comp.bankName) {
+        doc.text(
+          `Bank: ${comp.bankName} · A/C: ${comp.bankAccountNo || "—"} · IFSC: ${comp.bankIfsc || "—"}`,
+          margin,
+          y
+        );
+        y += 3.5;
+      }
+      if (comp.upiId) {
+        doc.text(`UPI VPA: ${comp.upiId}`, margin, y);
+        y += 3.5;
+      }
     }
     y += 3;
   }

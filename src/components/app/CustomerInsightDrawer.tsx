@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { formatMoney, formatDate } from "@/lib/format";
 import { computeCustomerSummary, type CustomerFinancialSummary } from "@/modules/summary/summaryService";
-import { db, type Customer, type Invoice } from "@/lib/db";
+import { getPartyDualFinancialPosition, type PartyDualFinancialPosition } from "@/modules/accounting/services/partyAdvanceService";
+import { db, type Customer, type Invoice, type Party } from "@/lib/db";
 import {
   TrendingUp,
   CreditCard,
@@ -16,6 +17,9 @@ import {
   ExternalLink,
   ShieldAlert,
   ArrowRight,
+  Split,
+  Building2,
+  ShoppingCart,
 } from "lucide-react";
 
 interface Props {
@@ -27,6 +31,7 @@ interface Props {
 
 export function CustomerInsightDrawer({ customerId, open, onOpenChange, onSelectInvoice }: Props) {
   const [summary, setSummary] = useState<CustomerFinancialSummary | null>(null);
+  const [dualPosition, setDualPosition] = useState<PartyDualFinancialPosition | null>(null);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -34,6 +39,7 @@ export function CustomerInsightDrawer({ customerId, open, onOpenChange, onSelect
     if (!customerId || !open) {
       setSummary(null);
       setCustomer(null);
+      setDualPosition(null);
       return;
     }
 
@@ -41,13 +47,15 @@ export function CustomerInsightDrawer({ customerId, open, onOpenChange, onSelect
     setLoading(true);
 
     Promise.all([
-      db().customers.get(customerId),
+      db().parties.get(customerId).then((p) => p || db().customers.get(customerId)),
       computeCustomerSummary(customerId),
+      getPartyDualFinancialPosition(customerId),
     ])
-      .then(([c, s]) => {
+      .then(([c, s, d]) => {
         if (active) {
-          setCustomer(c || null);
+          setCustomer((c as Customer) || null);
           setSummary(s);
+          setDualPosition(d);
         }
       })
       .catch((err) => console.error("Failed to load customer insight:", err))
@@ -91,52 +99,142 @@ export function CustomerInsightDrawer({ customerId, open, onOpenChange, onSelect
           </div>
         ) : summary ? (
           <div className="py-4 space-y-4 text-xs">
-            {/* KPI Cards Grid */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <Card className="p-3 bg-muted/30 border-border/60">
-                <div className="text-[10px] uppercase font-semibold text-muted-foreground">Total Invoiced</div>
-                <div className="text-sm font-bold text-foreground font-mono mt-0.5">
-                  {formatMoney(summary.totalInvoiced)}
+            {/* PRD Addendum § 16, 17, 18: Party Type BOTH — AR/AP Must Remain Separate */}
+            {dualPosition && (dualPosition.partyType === "BOTH" || customer?.partyType === "BOTH") ? (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs">
+                  <div className="flex items-center gap-2 font-semibold text-primary">
+                    <Split className="h-4 w-4" /> Party Type: BOTH (Customer + Supplier)
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed">
+                    Accounts Receivable and Accounts Payable are strictly isolated. Balances are never automatically netted.
+                  </p>
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">
-                  {summary.invoiceCount} posted invoice{summary.invoiceCount === 1 ? "" : "s"}
-                </div>
-              </Card>
 
-              <Card className="p-3 bg-muted/30 border-border/60">
-                <div className="text-[10px] uppercase font-semibold text-muted-foreground">Total Paid</div>
-                <div className="text-sm font-bold text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
-                  {formatMoney(summary.totalPaid)}
+                {/* SALES SIDE (AR POSITION) */}
+                <div className="rounded-xl border border-emerald-500/20 bg-card p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 uppercase text-[11px] tracking-wider">
+                      <Building2 className="h-3.5 w-3.5" /> Sales Side (Accounts Receivable)
+                    </span>
+                    <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-500/30">
+                      Customer Position
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 font-mono">
+                    <div className="bg-muted/40 p-2 rounded">
+                      <span className="text-[10px] text-muted-foreground block">Total Invoiced</span>
+                      <span className="font-bold text-foreground">
+                        {formatMoney(dualPosition.salesSide.totalInvoicedRupees)}
+                      </span>
+                    </div>
+                    <div className="bg-muted/40 p-2 rounded">
+                      <span className="text-[10px] text-muted-foreground block">Receipts</span>
+                      <span className="font-bold text-foreground">
+                        {formatMoney(dualPosition.salesSide.receiptsRupees)}
+                      </span>
+                    </div>
+                    <div className="bg-amber-500/10 border border-amber-500/20 p-2 rounded">
+                      <span className="text-[10px] text-amber-600 dark:text-amber-400 block font-semibold">Receivable Due</span>
+                      <span className="font-bold text-amber-600 dark:text-amber-400">
+                        {formatMoney(dualPosition.salesSide.receivableOutstandingRupees)}
+                      </span>
+                    </div>
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 p-2 rounded">
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 block font-semibold">Customer Advance</span>
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                        {formatMoney(dualPosition.salesSide.advanceReceivedRupees)}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">
-                  Last: {summary.lastPaymentDate ? formatDate(summary.lastPaymentDate) : "—"}
-                </div>
-              </Card>
 
-              <Card className={`p-3 border-border/60 ${summary.outstanding > 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-muted/30"}`}>
-                <div className="text-[10px] uppercase font-semibold text-amber-600 dark:text-amber-400">
-                  Outstanding Due
+                {/* PURCHASE SIDE (AP POSITION) */}
+                <div className="rounded-xl border border-blue-500/20 bg-card p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-blue-700 dark:text-blue-400 flex items-center gap-1.5 uppercase text-[11px] tracking-wider">
+                      <ShoppingCart className="h-3.5 w-3.5" /> Purchase Side (Accounts Payable)
+                    </span>
+                    <Badge variant="outline" className="text-[10px] text-blue-600 border-blue-500/30">
+                      Supplier Position
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 font-mono">
+                    <div className="bg-muted/40 p-2 rounded">
+                      <span className="text-[10px] text-muted-foreground block">Total Purchased</span>
+                      <span className="font-bold text-foreground">
+                        {formatMoney(dualPosition.purchaseSide.totalPurchasedRupees)}
+                      </span>
+                    </div>
+                    <div className="bg-muted/40 p-2 rounded">
+                      <span className="text-[10px] text-muted-foreground block">Payments</span>
+                      <span className="font-bold text-foreground">
+                        {formatMoney(dualPosition.purchaseSide.paymentsRupees)}
+                      </span>
+                    </div>
+                    <div className="bg-rose-500/10 border border-rose-500/20 p-2 rounded">
+                      <span className="text-[10px] text-rose-600 dark:text-rose-400 block font-semibold">Payable Due</span>
+                      <span className="font-bold text-rose-600 dark:text-rose-400">
+                        {formatMoney(dualPosition.purchaseSide.payableOutstandingRupees)}
+                      </span>
+                    </div>
+                    <div className="bg-blue-500/10 border border-blue-500/20 p-2 rounded">
+                      <span className="text-[10px] text-blue-600 dark:text-blue-400 block font-semibold">Supplier Advance</span>
+                      <span className="font-bold text-blue-600 dark:text-blue-400">
+                        {formatMoney(dualPosition.purchaseSide.supplierAdvanceRupees)}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-sm font-bold text-amber-600 dark:text-amber-400 font-mono mt-0.5">
-                  {formatMoney(summary.outstanding)}
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">
-                  {summary.creditLimit > 0 ? `Limit: ${formatMoney(summary.creditLimit)}` : "No limit set"}
-                </div>
-              </Card>
+              </div>
+            ) : (
+              /* Standard KPI Cards Grid for Single Customers */
+              <div className="grid grid-cols-2 gap-2.5">
+                <Card className="p-3 bg-muted/30 border-border/60">
+                  <div className="text-[10px] uppercase font-semibold text-muted-foreground">Total Invoiced</div>
+                  <div className="text-sm font-bold text-foreground font-mono mt-0.5">
+                    {formatMoney(summary.totalInvoiced)}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    {summary.invoiceCount} posted invoice{summary.invoiceCount === 1 ? "" : "s"}
+                  </div>
+                </Card>
 
-              <Card className={`p-3 border-border/60 ${summary.overdue > 0 ? "bg-rose-500/10 border-rose-500/30" : "bg-muted/30"}`}>
-                <div className="text-[10px] uppercase font-semibold text-rose-600 dark:text-rose-400">
-                  Overdue Amount
-                </div>
-                <div className="text-sm font-bold text-rose-600 dark:text-rose-400 font-mono mt-0.5">
-                  {formatMoney(summary.overdue)}
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">
-                  {summary.creditDays > 0 ? `Terms: ${summary.creditDays} days` : "Standard terms"}
-                </div>
-              </Card>
-            </div>
+                <Card className="p-3 bg-muted/30 border-border/60">
+                  <div className="text-[10px] uppercase font-semibold text-muted-foreground">Total Paid</div>
+                  <div className="text-sm font-bold text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
+                    {formatMoney(summary.totalPaid)}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    Last: {summary.lastPaymentDate ? formatDate(summary.lastPaymentDate) : "—"}
+                  </div>
+                </Card>
+
+                <Card className={`p-3 border-border/60 ${summary.outstanding > 0 ? "bg-amber-500/10 border-amber-500/30" : "bg-muted/30"}`}>
+                  <div className="text-[10px] uppercase font-semibold text-amber-600 dark:text-amber-400">
+                    Outstanding Due
+                  </div>
+                  <div className="text-sm font-bold text-amber-600 dark:text-amber-400 font-mono mt-0.5">
+                    {formatMoney(summary.outstanding)}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    {summary.creditLimit > 0 ? `Limit: ${formatMoney(summary.creditLimit)}` : "No limit set"}
+                  </div>
+                </Card>
+
+                <Card className={`p-3 border-border/60 ${summary.overdue > 0 ? "bg-rose-500/10 border-rose-500/30" : "bg-muted/30"}`}>
+                  <div className="text-[10px] uppercase font-semibold text-rose-600 dark:text-rose-400">
+                    Overdue Amount
+                  </div>
+                  <div className="text-sm font-bold text-rose-600 dark:text-rose-400 font-mono mt-0.5">
+                    {formatMoney(summary.overdue)}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    {summary.creditDays > 0 ? `Terms: ${summary.creditDays} days` : "Standard terms"}
+                  </div>
+                </Card>
+              </div>
+            )}
 
             {/* Additional Metrics */}
             <div className="rounded-xl border border-border/50 bg-card/60 p-3 space-y-2">

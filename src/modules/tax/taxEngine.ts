@@ -7,6 +7,10 @@ import type {
   TaxChargeInput,
   TaxSnapshot,
   GstRegistrationMode,
+  AdvanceSupplyType,
+  AdvanceTaxTreatment,
+  AdvanceTaxCalculationParams,
+  AdvanceTaxResult,
 } from "./types";
 
 /**
@@ -553,3 +557,228 @@ export function createTaxSnapshot(params: {
     snapshotTimestamp: Date.now(),
   };
 }
+
+/**
+ * Authoritative Server-Side Advance Receipt Tax Engine (PRD Addendum §§ 1-4, 7, 8, 11)
+ * 
+ * Computes GST liability on customer advance receipts deterministically:
+ * - NORMAL_GST + GOODS -> NO_ADVANCE_GST, ₹0 tax (Notification 66/2017-CT)
+ * - NORMAL_GST + SERVICES -> ADVANCE_GST, back-calculates taxable & CGST/SGST or IGST in integer paise
+ * - NORMAL_GST + MIXED -> isolates goods (no tax) from services (taxable)
+ * - NORMAL_GST + UNSPECIFIED -> PENDING_CLASSIFICATION, ₹0 tax, explicit review banner
+ * - COMPOSITION / UNREGISTERED -> NO_GST, ₹0 tax
+ */
+export function calculateAdvanceTax(params: AdvanceTaxCalculationParams): AdvanceTaxResult {
+  const normMode = (params.companyGstMode || "NORMAL_GST").toUpperCase();
+  const supplyType: AdvanceSupplyType = params.supplyType || "GOODS";
+  const advanceAmount = Number(params.advanceAmount) || 0;
+  const advanceAmountPaise = toPaise(advanceAmount);
+
+  // Default empty result structure
+  const baseResult = {
+    advanceAmount,
+    advanceAmountPaise,
+    taxableAdvance: advanceAmount,
+    taxableAmountPaise: advanceAmountPaise,
+    cgst: 0,
+    sgst: 0,
+    igst: 0,
+    cess: 0,
+    totalTax: 0,
+    cgstPaise: 0,
+    sgstPaise: 0,
+    igstPaise: 0,
+    cessPaise: 0,
+    totalTaxPaise: 0,
+    isInterState: false,
+    supplyType,
+  };
+
+  // 1. UNREGISTERED Mode: No statutory GST registration, no output tax collected or accounted
+  if (normMode === "UNREGISTERED") {
+    return {
+      ...baseResult,
+      taxTreatment: "NO_GST",
+    };
+  }
+
+  // 2. COMPOSITION Mode: Composition levy dealers cannot collect GST from buyers on receipts or invoices
+  if (normMode === "COMPOSITION") {
+    return {
+      ...baseResult,
+      taxTreatment: "NO_GST",
+    };
+  }
+
+  // 3. NORMAL_GST Mode: Check Supply Type
+  if (supplyType === "GOODS") {
+    // Under Notification 66/2017 - Central Tax, advances on supply of GOODS do NOT attract GST at receipt time.
+    // The eventual Tax Invoice creates the sales and tax transaction.
+    return {
+      ...baseResult,
+      taxTreatment: "NO_ADVANCE_GST",
+    };
+  }
+
+  if (supplyType === "UNSPECIFIED") {
+    // Business received money before exact products/services are known.
+    // Must NOT guess GST or silently invent a tax rate.
+    return {
+      ...baseResult,
+      taxTreatment: "PENDING_CLASSIFICATION",
+      reviewMessage: "Tax treatment requires review when the advance is allocated.",
+    };
+  }
+
+  const isInterState = determineInterState({
+    companyState: params.companyStateCode,
+    partyState: params.partyStateCode,
+    placeOfSupply: params.placeOfSupply,
+    override: params.isInterState,
+  });
+
+  if (supplyType === "SERVICES") {
+    const isTaxable = params.taxTreatment !== "exempt" &&
+      params.taxTreatment !== "nil_rated" &&
+      params.taxTreatment !== "non_gst" &&
+      (params.gstRate === undefined || params.gstRate > 0);
+
+    if (!isTaxable) {
+      return {
+        ...baseResult,
+        isInterState,
+        taxTreatment: "NO_ADVANCE_GST",
+      };
+    }
+
+    const gstRate = params.gstRate !== undefined ? Number(params.gstRate) : 18;
+    const cessRate = Number(params.cessRate) || 0;
+    const totalRate = gstRate + cessRate;
+    const isInclusive = params.taxInclusive !== false; // default true for received amounts
+
+    let taxablePaise = 0;
+    let totalTaxPaise = 0;
+    let cessPaise = 0;
+    let gstPaise = 0;
+
+    if (isInclusive && totalRate > 0) {
+      // Tax-Inclusive Back-Calculation Formula:
+      // Taxable = round((GrossPaise * 100) / (100 + TotalRate))
+      // TotalTax = GrossPaise - Taxable
+      taxablePaise = Math.round((advanceAmountPaise * 100) / (100 + totalRate));
+      totalTaxPaise = advanceAmountPaise - taxablePaise;
+      cessPaise = cessRate > 0 ? Math.round((taxablePaise * cessRate) / 100) : 0;
+      gstPaise = Math.max(0, totalTaxPaise - cessPaise);
+    } else {
+      // Tax-Exclusive Formula:
+      taxablePaise = advanceAmountPaise;
+      gstPaise = Math.round((taxablePaise * gstRate) / 100);
+      cessPaise = cessRate > 0 ? Math.round((taxablePaise * cessRate) / 100) : 0;
+      totalTaxPaise = gstPaise + cessPaise;
+    }
+
+    let cgstPaise = 0;
+    let sgstPaise = 0;
+    let igstPaise = 0;
+
+    if (isInterState) {
+      igstPaise = gstPaise;
+    } else {
+      cgstPaise = Math.round(gstPaise / 2);
+      sgstPaise = gstPaise - cgstPaise; // guarantee exact penny balance
+    }
+
+    return {
+      advanceAmount: isInclusive ? advanceAmount : toRupees(taxablePaise + totalTaxPaise),
+      taxableAdvance: toRupees(taxablePaise),
+      cgst: toRupees(cgstPaise),
+      sgst: toRupees(sgstPaise),
+      igst: toRupees(igstPaise),
+      cess: toRupees(cessPaise),
+      totalTax: toRupees(totalTaxPaise),
+      taxTreatment: "ADVANCE_GST",
+      advanceAmountPaise: isInclusive ? advanceAmountPaise : taxablePaise + totalTaxPaise,
+      taxableAmountPaise: taxablePaise,
+      cgstPaise,
+      sgstPaise,
+      igstPaise,
+      cessPaise,
+      totalTaxPaise,
+      isInterState,
+      supplyType: "SERVICES",
+    };
+  }
+
+  // 4. MIXED GOODS + SERVICES (PRD § 8)
+  // Split advance into goods and service components; apply different tax treatments
+  const goodsAmount = params.mixedBreakdown ? Number(params.mixedBreakdown.goodsAmount) || 0 : 0;
+  const serviceAmount = params.mixedBreakdown
+    ? Number(params.mixedBreakdown.serviceAmount) || 0
+    : Math.max(0, advanceAmount - goodsAmount);
+
+  const goodsPaise = toPaise(goodsAmount);
+  const servicePaise = toPaise(serviceAmount);
+  const totalMixedPaise = goodsPaise + servicePaise > 0 ? goodsPaise + servicePaise : advanceAmountPaise;
+
+  const serviceGstRate = params.mixedBreakdown?.serviceGstRate ?? params.gstRate ?? 18;
+  const serviceCessRate = params.mixedBreakdown?.serviceCessRate ?? params.cessRate ?? 0;
+  const serviceTotalRate = serviceGstRate + serviceCessRate;
+  const serviceInclusive = params.mixedBreakdown?.serviceIsTaxInclusive ?? params.taxInclusive ?? true;
+
+  let serviceTaxablePaise = 0;
+  let serviceTotalTaxPaise = 0;
+  let serviceCessPaise = 0;
+  let serviceGstPaise = 0;
+
+  if (serviceInclusive && serviceTotalRate > 0) {
+    serviceTaxablePaise = Math.round((servicePaise * 100) / (100 + serviceTotalRate));
+    serviceTotalTaxPaise = servicePaise - serviceTaxablePaise;
+    serviceCessPaise = serviceCessRate > 0 ? Math.round((serviceTaxablePaise * serviceCessRate) / 100) : 0;
+    serviceGstPaise = Math.max(0, serviceTotalTaxPaise - serviceCessPaise);
+  } else {
+    serviceTaxablePaise = servicePaise;
+    serviceGstPaise = Math.round((serviceTaxablePaise * serviceGstRate) / 100);
+    serviceCessPaise = serviceCessRate > 0 ? Math.round((serviceTaxablePaise * serviceCessRate) / 100) : 0;
+    serviceTotalTaxPaise = serviceGstPaise + serviceCessPaise;
+  }
+
+  let cgstPaise = 0;
+  let sgstPaise = 0;
+  let igstPaise = 0;
+
+  if (isInterState) {
+    igstPaise = serviceGstPaise;
+  } else {
+    cgstPaise = Math.round(serviceGstPaise / 2);
+    sgstPaise = serviceGstPaise - cgstPaise;
+  }
+
+  const combinedTaxablePaise = goodsPaise + serviceTaxablePaise;
+
+  return {
+    advanceAmount: toRupees(totalMixedPaise),
+    taxableAdvance: toRupees(combinedTaxablePaise),
+    cgst: toRupees(cgstPaise),
+    sgst: toRupees(sgstPaise),
+    igst: toRupees(igstPaise),
+    cess: toRupees(serviceCessPaise),
+    totalTax: toRupees(serviceTotalTaxPaise),
+    taxTreatment: serviceTotalTaxPaise > 0 ? "ADVANCE_GST" : "NO_ADVANCE_GST",
+    advanceAmountPaise: totalMixedPaise,
+    taxableAmountPaise: combinedTaxablePaise,
+    cgstPaise,
+    sgstPaise,
+    igstPaise,
+    cessPaise: serviceCessPaise,
+    totalTaxPaise: serviceTotalTaxPaise,
+    isInterState,
+    supplyType: "MIXED",
+    mixedSummary: {
+      goodsAmountPaise: goodsPaise,
+      serviceAmountPaise: servicePaise,
+      serviceTaxablePaise,
+      serviceTaxPaise: serviceTotalTaxPaise,
+    },
+  };
+}
+

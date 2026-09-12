@@ -26,6 +26,7 @@ import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity }
 import { createPartyWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 import { CustomerInsightDrawer } from "@/components/app/CustomerInsightDrawer";
 import { AddressDrawer } from "@/components/app/AddressDrawer";
+import { isIndia, getPostalCodeLabel, getPostalCodePlaceholder, validatePostalCode } from "@/lib/countryValidation";
 
 export const Route = createFileRoute("/_app/parties")({
   head: () => ({ meta: [{ title: "Party Master — BMS NEXT" }] }),
@@ -212,6 +213,11 @@ export function PartiesPage() {
     }
     if (!editing.country?.trim()) {
       toast.error("Country is mandatory per client requirements");
+      return;
+    }
+    const postalVal = validatePostalCode(editing.pincode, editing.country, { required: false });
+    if (!postalVal.valid) {
+      toast.error(postalVal.error || "Invalid postal code");
       return;
     }
 
@@ -584,11 +590,11 @@ export function PartiesPage() {
               </div>
 
               <div>
-                <Label className="text-xs">Pincode * (Mandatory PRD § 5)</Label>
+                <Label className="text-xs">{getPostalCodeLabel(editing.country)} {isIndia(editing.country) ? "(6 digits)" : ""}</Label>
                 <Input
                   value={editing.pincode || ""}
                   onChange={(e) => setEditing((p) => ({ ...p, pincode: e.target.value }))}
-                  placeholder="6-digit Pincode"
+                  placeholder={getPostalCodePlaceholder(editing.country)}
                   className="mt-1 h-8"
                 />
               </div>

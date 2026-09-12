@@ -61,6 +61,7 @@ function ReportsPage() {
           <TabsTrigger value="purchases">Purchases</TabsTrigger>
           <TabsTrigger value="outstanding">Credit Outstanding & Aging</TabsTrigger>
           <TabsTrigger value="advances">Customer Advances</TabsTrigger>
+          <TabsTrigger value="supplier-advances">Supplier Advances</TabsTrigger>
           <TabsTrigger value="stock">Stock</TabsTrigger>
           <TabsTrigger value="profit">Profit</TabsTrigger>
           <TabsTrigger value="gst">GST</TabsTrigger>
@@ -69,6 +70,7 @@ function ReportsPage() {
         <TabsContent value="purchases"><PurchaseReport from={from} to={to} /></TabsContent>
         <TabsContent value="outstanding"><OutstandingReport /></TabsContent>
         <TabsContent value="advances"><CustomerAdvanceRegisterReport /></TabsContent>
+        <TabsContent value="supplier-advances"><SupplierAdvanceRegisterReport /></TabsContent>
         <TabsContent value="stock"><StockReport /></TabsContent>
         <TabsContent value="profit"><ProfitReport from={from} to={to} /></TabsContent>
         <TabsContent value="gst"><GstReport from={from} to={to} /></TabsContent>
@@ -304,7 +306,10 @@ function CustomerAdvanceRegisterReport() {
       const advanceReceipts = custReceipts.filter(
         (r) => r.allocationType === "ADVANCE" || !r.invoiceId
       );
-      const totalAdvanceReceived = advanceReceipts.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      const totalAdvanceReceived = advanceReceipts.reduce(
+        (s, r) => s + Math.max(0, (Number(r.amount) || 0) - ((r.refundAmountPaise || 0) / 100)),
+        0
+      );
 
       const custInvoices = invoices.filter(
         (i) => i.customerId === c.id && i.status !== "cancelled"
@@ -412,6 +417,107 @@ function CustomerAdvanceRegisterReport() {
                   </TableCell>
                   <TableCell className="text-xs">{r.lastReceiptDate ? formatDate(r.lastReceiptDate) : "—"}</TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">{r.reference}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </Card>
+  );
+}
+
+function SupplierAdvanceRegisterReport() {
+  const purchases = useLive<Purchase>(() => db().purchases.toArray());
+  const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
+
+  // Supplier advances derived from payments/purchases (strictly isolated from Customer AR)
+  const rows = useMemo(() => {
+    return suppliers.map((s) => {
+      const suppPurchases = purchases.filter(
+        (p) => p.supplierId === s.id && p.postingStatus !== "failed" && p.postingStatus !== "reversed"
+      );
+      const totalPurchased = suppPurchases.reduce((sum, p) => sum + (p.grandTotal || 0), 0);
+      const totalPaid = suppPurchases.reduce((sum, p) => sum + (p.amountPaid || 0), 0);
+      const payableDue = suppPurchases.reduce((sum, p) => sum + Math.max(0, p.balance || 0), 0);
+      const supplierAdvance = Math.max(0, totalPaid - totalPurchased);
+
+      return {
+        supplier: s,
+        totalPurchased,
+        totalPaid,
+        payableDue,
+        supplierAdvance,
+      };
+    }).filter((r) => r.totalPurchased > 0 || r.totalPaid > 0 || r.supplierAdvance > 0);
+  }, [suppliers, purchases]);
+
+  const totalPurchased = rows.reduce((sum, r) => sum + r.totalPurchased, 0);
+  const totalPaid = rows.reduce((sum, r) => sum + r.totalPaid, 0);
+  const totalAdvance = rows.reduce((sum, r) => sum + r.supplierAdvance, 0);
+
+  return (
+    <Card className="card-soft mt-4 p-4 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-base flex items-center gap-2">
+            <HandCoins className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            Supplier Advance Register
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Vendor prepayments and unapplied supplier advances (strictly isolated from Accounts Receivable)
+          </p>
+        </div>
+        <ExportBtn name="supplier-advance-register.json" data={rows} />
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl border bg-card p-3">
+          <div className="text-xs text-muted-foreground">Total Vendor Purchases</div>
+          <div className="font-mono text-lg font-bold text-foreground mt-1">{formatMoney(totalPurchased)}</div>
+        </div>
+        <div className="rounded-xl border bg-card p-3">
+          <div className="text-xs text-muted-foreground">Total Paid to Vendors</div>
+          <div className="font-mono text-lg font-bold text-muted-foreground mt-1">{formatMoney(totalPaid)}</div>
+        </div>
+        <div className="rounded-xl border border-blue-500/20 bg-blue-50/40 dark:bg-blue-950/20 p-3">
+          <div className="text-xs text-blue-700 dark:text-blue-400 font-medium">Net Supplier Prepayments</div>
+          <div className="font-mono text-lg font-bold text-blue-600 dark:text-blue-400 mt-1">{formatMoney(totalAdvance)}</div>
+        </div>
+      </div>
+
+      <div className="rounded-md border overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Vendor / Supplier</TableHead>
+              <TableHead className="text-right">Total Bills</TableHead>
+              <TableHead className="text-right">Total Paid</TableHead>
+              <TableHead className="text-right">Payable Outstanding</TableHead>
+              <TableHead className="text-right">Supplier Advance</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} className="py-8 text-center text-xs text-muted-foreground">
+                  No vendor prepayments recorded yet.
+                </TableCell>
+              </TableRow>
+            ) : (
+              rows.map((r) => (
+                <TableRow key={r.supplier.id}>
+                  <TableCell className="font-medium">
+                    <Link to="/parties" className="text-primary hover:underline">
+                      {r.supplier.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-right font-mono">{formatMoney(r.totalPurchased)}</TableCell>
+                  <TableCell className="text-right font-mono text-muted-foreground">{formatMoney(r.totalPaid)}</TableCell>
+                  <TableCell className="text-right font-mono text-rose-600 dark:text-rose-400 font-semibold">{formatMoney(r.payableDue)}</TableCell>
+                  <TableCell className="text-right font-mono font-bold text-blue-600 dark:text-blue-400">
+                    {formatMoney(r.supplierAdvance)}
+                  </TableCell>
                 </TableRow>
               ))
             )}

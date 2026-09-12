@@ -221,3 +221,61 @@ export interface TaxSnapshot {
   }>;
   snapshotTimestamp: number;
 }
+
+export type AdvanceSupplyType = "GOODS" | "SERVICES" | "MIXED" | "UNSPECIFIED";
+
+export type AdvanceTaxTreatment =
+  | "NO_ADVANCE_GST"
+  | "ADVANCE_GST"
+  | "PENDING_CLASSIFICATION"
+  | "NO_GST";
+
+export interface AdvanceTaxCalculationParams {
+  companyGstMode?: string;
+  supplyType?: AdvanceSupplyType;
+  advanceAmount: number;
+  taxInclusive?: boolean;
+  taxProfile?: string;
+  taxTreatment?: TaxTreatment;
+  gstRate?: number;
+  cessRate?: number;
+  placeOfSupply?: string;
+  companyStateCode?: string;
+  partyStateCode?: string;
+  isInterState?: boolean;
+  mixedBreakdown?: {
+    goodsAmount: number;
+    serviceAmount: number;
+    serviceGstRate?: number;
+    serviceCessRate?: number;
+    serviceIsTaxInclusive?: boolean;
+  };
+}
+
+export interface AdvanceTaxResult {
+  advanceAmount: number;
+  taxableAdvance: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  cess: number;
+  totalTax: number;
+  taxTreatment: AdvanceTaxTreatment;
+  advanceAmountPaise: number;
+  taxableAmountPaise: number;
+  cgstPaise: number;
+  sgstPaise: number;
+  igstPaise: number;
+  cessPaise: number;
+  totalTaxPaise: number;
+  isInterState: boolean;
+  supplyType: AdvanceSupplyType;
+  reviewMessage?: string;
+  mixedSummary?: {
+    goodsAmountPaise: number;
+    serviceAmountPaise: number;
+    serviceTaxablePaise: number;
+    serviceTaxPaise: number;
+  };
+}
+

@@ -14,7 +14,7 @@ import {
   getCompany,
 } from "@/lib/db";
 import { useLive } from "@/lib/useLive";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,13 +26,16 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { toast } from "sonner";
 import { formatMoney, formatDate, toDateInput, fromDateInput } from "@/lib/format";
-import { HandCoins, ArrowDownLeft, ArrowUpRight, Plus, Trash2, BookOpen, Loader2 } from "lucide-react";
+import { HandCoins, ArrowDownLeft, ArrowUpRight, Plus, Trash2, BookOpen, Loader2, Printer, RotateCcw, AlertTriangle, ShieldCheck } from "lucide-react";
 import { ListToolbar, usePagination, Pager, EmptyState } from "@/components/app/ListHelpers";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useAccounting } from "@/modules/accounting/useAccounting";
 import { getNextDocumentNumber } from "@/lib/numberingClient";
 import { postReceiptTransaction, postPaymentTransaction } from "@/modules/accounting/services/documentPostingService";
+import { processAdvanceRefund } from "@/modules/accounting/services/partyAdvanceService";
+import { calculateAdvanceTax } from "@/modules/tax/taxEngine";
+import { downloadDocumentPDF, type NormalizedDocument } from "@/lib/documentRenderer";
 import { createCompanySnapshot } from "@/modules/company/types";
 import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 
@@ -68,6 +71,13 @@ export function ReceiptsAndPaymentsPage() {
   const [deleteReceiptId, setDeleteReceiptId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // Advance Refund state
+  const [refundReceipt, setRefundReceipt] = useState<Receipt | null>(null);
+  const [refundAmount, setRefundAmount] = useState<number>(0);
+  const [refundReason, setRefundReason] = useState<string>("");
+  const [refundLedgerId, setRefundLedgerId] = useState<string>("");
+  const [refunding, setRefunding] = useState<boolean>(false);
+
   const filteredReceipts = receipts.filter(
     (r) =>
       !q ||
@@ -75,6 +85,133 @@ export function ReceiptsAndPaymentsPage() {
       (customers.find((c) => c.id === r.customerId)?.name.toLowerCase().includes(q.toLowerCase()) ?? false)
   );
   const receiptsPager = usePagination(filteredReceipts, 12);
+
+  // Live Advance Tax Preview for the modal
+  const advanceTaxPreview = useMemo(() => {
+    if (!editingReceipt || editingReceipt.allocationType !== "ADVANCE" || !editingReceipt.amount) {
+      return null;
+    }
+    const cust = customers.find((c) => c.id === editingReceipt.customerId);
+    const supplyType = editingReceipt.supplyType || "GOODS";
+    const gstRate = editingReceipt.taxProfileSnapshot?.gstRate ?? 18;
+    const isTaxInclusive = editingReceipt.taxProfileSnapshot?.isTaxInclusive ?? true;
+    const pos = editingReceipt.placeOfSupplySnapshot || cust?.stateCode || activeCompany?.stateCode || "27";
+    const companyState = activeCompany?.stateCode || "27";
+
+    return calculateAdvanceTax({
+      advanceAmount: editingReceipt.amount,
+      supplyType,
+      taxInclusive: isTaxInclusive,
+      gstRate,
+      companyGstMode: activeCompany?.taxRegistrationMode || "NORMAL_GST",
+      placeOfSupply: pos,
+      companyStateCode: companyState,
+      mixedBreakdown: editingReceipt.mixedBreakdown
+        ? {
+            goodsAmount: (editingReceipt.mixedBreakdown.goodsAmountPaise || 0) / 100,
+            serviceAmount: (editingReceipt.mixedBreakdown.serviceAmountPaise || 0) / 100,
+            serviceGstRate: gstRate,
+            serviceIsTaxInclusive: isTaxInclusive,
+          }
+        : undefined,
+    });
+  }, [editingReceipt, customers, activeCompany]);
+
+  function printReceiptVoucher(r: Receipt) {
+    const customer = customers.find((c) => c.id === r.customerId);
+    const comp = activeCompany || r.companySnapshot;
+    const isAdvance = r.allocationType === "ADVANCE" || !r.invoiceId;
+    const docData: NormalizedDocument = {
+      kind: "receipt",
+      title: isAdvance ? "ADVANCE RECEIPT VOUCHER" : "RECEIPT VOUCHER",
+      number: r.number,
+      date: r.date,
+      company: comp ? createCompanySnapshot(comp) : {},
+      party: {
+        name: customer?.name || "Customer",
+        company: customer?.company,
+        gstin: customer?.gstin,
+        pan: customer?.pan,
+        phone: customer?.mobile,
+        email: customer?.email,
+        address: customer?.address,
+        state: customer?.state,
+      },
+      items: [],
+      subtotal: r.taxableAmountPaise ? r.taxableAmountPaise / 100 : r.amount,
+      discountTotal: 0,
+      cgstTotal: r.cgstPaise ? r.cgstPaise / 100 : 0,
+      sgstTotal: r.sgstPaise ? r.sgstPaise / 100 : 0,
+      igstTotal: r.igstPaise ? r.igstPaise / 100 : 0,
+      cessTotal: r.cessPaise ? r.cessPaise / 100 : 0,
+      gstTotal: r.totalTaxPaise ? r.totalTaxPaise / 100 : 0,
+      roundOff: 0,
+      grandTotal: r.amount,
+      amountPaid: r.amount,
+      balance: 0,
+      notes: r.notes || r.narration,
+      paymentMode: r.paymentMethod || r.mode,
+      signatorySnapshot: r.signatorySnapshot,
+      signatoryOverride: r.signatoryOverride,
+      receiptDetails: {
+        receiptVoucherNumber: r.receiptVoucherId || r.number,
+        natureOfSupply: r.supplyType,
+        placeOfSupply: r.placeOfSupplySnapshot || customer?.stateCode || comp?.stateCode,
+        taxableAmount: r.taxableAmountPaise ? r.taxableAmountPaise / 100 : undefined,
+        cgst: r.cgstPaise ? r.cgstPaise / 100 : undefined,
+        sgst: r.sgstPaise ? r.sgstPaise / 100 : undefined,
+        igst: r.igstPaise ? r.igstPaise / 100 : undefined,
+        totalTax: r.totalTaxPaise ? r.totalTaxPaise / 100 : undefined,
+        totalReceived: r.amount,
+        paymentMethod: r.paymentMethod || r.mode,
+        settlementLedgerName: r.settlementLedgerId,
+        referenceNumber: r.reference || r.referenceNumber,
+        narration: r.narration || (isAdvance ? `Customer Advance Received (${r.supplyType || "GOODS"})` : undefined),
+      },
+    };
+    downloadDocumentPDF(docData, `Receipt-Voucher-${r.number}.pdf`);
+  }
+
+  function openRefundDialog(r: Receipt) {
+    setRefundReceipt(r);
+    const avail = r.advanceAvailablePaise !== undefined ? r.advanceAvailablePaise / 100 : Math.max(0, r.amount - ((r.refundAmountPaise || 0) / 100));
+    setRefundAmount(avail);
+    setRefundReason("Cancelled order / No supply fulfilled");
+    setRefundLedgerId(r.settlementLedgerId || cashLedgers[0]?.id || "");
+  }
+
+  async function handleConfirmRefund() {
+    if (!refundReceipt || !activeCompany?.id || !activeFinancialYear?.id || !user) return;
+    if (refundAmount <= 0) {
+      toast.error("Refund amount must be greater than zero");
+      return;
+    }
+    setRefunding(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await processAdvanceRefund({
+        receiptId: refundReceipt.id,
+        companyId: activeCompany.id,
+        financialYearId: activeFinancialYear.id,
+        refundAmount: refundAmount,
+        reason: refundReason,
+        settlementLedgerId: refundLedgerId,
+        idToken,
+        uid: user.uid,
+      });
+      if (!res.success) {
+        toast.error(res.error || "Failed to process advance refund");
+      } else {
+        toast.success("Advance refunded & ledger reversal posted");
+        setRefundReceipt(null);
+      }
+    } catch (err: unknown) {
+      console.error("Refund error:", err);
+      toast.error("Failed to process refund");
+    } finally {
+      setRefunding(false);
+    }
+  }
 
   async function openNewReceipt() {
     let idToken: string | undefined;
@@ -97,6 +234,9 @@ export function ReceiptsAndPaymentsPage() {
       mode: "cash",
       paymentMethod: "cash",
       settlementLedgerId: defaultCash,
+      allocationType: "ON_ACCOUNT",
+      supplyType: "GOODS",
+      taxTreatment: "NO_ADVANCE_GST",
       createdAt: Date.now(),
     });
     setOpenReceipt(true);
@@ -141,6 +281,50 @@ export function ReceiptsAndPaymentsPage() {
 
     setSaving(true);
     try {
+      if (editingReceipt.allocationType === "ADVANCE") {
+        const cust = customers.find((c) => c.id === editingReceipt.customerId);
+        const supplyType = editingReceipt.supplyType || "GOODS";
+        const gstRate = editingReceipt.taxProfileSnapshot?.gstRate ?? 18;
+        const isTaxInclusive = editingReceipt.taxProfileSnapshot?.isTaxInclusive ?? true;
+        const pos = editingReceipt.placeOfSupplySnapshot || cust?.stateCode || activeCompany?.stateCode || "27";
+        const companyState = activeCompany?.stateCode || "27";
+
+        const calc = calculateAdvanceTax({
+          advanceAmount: editingReceipt.amount,
+          supplyType,
+          taxInclusive: isTaxInclusive,
+          gstRate,
+          companyGstMode: activeCompany?.taxRegistrationMode || "NORMAL_GST",
+          placeOfSupply: pos,
+          companyStateCode: companyState,
+          mixedBreakdown: editingReceipt.mixedBreakdown
+            ? {
+                goodsAmount: (editingReceipt.mixedBreakdown.goodsAmountPaise || 0) / 100,
+                serviceAmount: (editingReceipt.mixedBreakdown.serviceAmountPaise || 0) / 100,
+                serviceGstRate: gstRate,
+                serviceIsTaxInclusive: isTaxInclusive,
+              }
+            : undefined,
+        });
+
+        editingReceipt.supplyType = supplyType;
+        editingReceipt.taxTreatment = calc.taxTreatment;
+        editingReceipt.advanceAmountPaise = calc.advanceAmountPaise;
+        editingReceipt.taxableAmountPaise = calc.taxableAmountPaise;
+        editingReceipt.cgstPaise = calc.cgstPaise;
+        editingReceipt.sgstPaise = calc.sgstPaise;
+        editingReceipt.igstPaise = calc.igstPaise;
+        editingReceipt.cessPaise = calc.cessPaise;
+        editingReceipt.totalTaxPaise = calc.totalTaxPaise;
+        editingReceipt.advanceAvailablePaise = calc.advanceAmountPaise;
+        editingReceipt.placeOfSupplySnapshot = pos;
+        editingReceipt.taxProfileSnapshot = {
+          gstRate,
+          isTaxInclusive,
+          taxTreatment: calc.taxTreatment,
+        };
+      }
+
       if (activeCompany?.id && activeFinancialYear?.id && user) {
         const idToken = await user.getIdToken();
         const customer = customers.find((c) => c.id === editingReceipt.customerId);
@@ -304,42 +488,97 @@ export function ReceiptsAndPaymentsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Number</TableHead>
+                      <TableHead>Receipt #</TableHead>
                       <TableHead>Date</TableHead>
                       <TableHead>Customer</TableHead>
-                      <TableHead>Invoice</TableHead>
-                      <TableHead>Settlement Mode</TableHead>
-                      <TableHead>Voucher Link</TableHead>
+                      <TableHead>Nature of Supply</TableHead>
+                      <TableHead>Advance / Tax Status</TableHead>
+                      <TableHead>Settlement</TableHead>
                       <TableHead className="text-right">Amount</TableHead>
-                      <TableHead className="w-20 text-right">Actions</TableHead>
+                      <TableHead className="w-28 text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {receiptsPager.items.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell className="font-mono font-medium">{r.number}</TableCell>
-                        <TableCell>{formatDate(r.date)}</TableCell>
-                        <TableCell>{customers.find((c) => c.id === r.customerId)?.name ?? "—"}</TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {invoices.find((i) => i.id === r.invoiceId)?.number ?? "On account"}
-                        </TableCell>
-                        <TableCell className="uppercase text-xs font-semibold">{r.mode}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-mono">
-                            <BookOpen className="h-3.5 w-3.5 text-primary" />
-                            <span>{r.voucherId ? "Posted" : "Local"}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400">
-                          {formatMoney(r.amount)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button size="icon" variant="ghost" onClick={() => setDeleteReceiptId(r.id)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {receiptsPager.items.map((r) => {
+                      const isAdvance = r.allocationType === "ADVANCE" || (!r.invoiceId && !r.allocatedInvoices?.length);
+                      const isRefunded = r.postingStatus === "refunded" || (r.refundAmountPaise && r.refundAmountPaise >= Math.round(r.amount * 100));
+                      return (
+                        <TableRow key={r.id}>
+                          <TableCell className="font-mono font-medium">{r.number}</TableCell>
+                          <TableCell>{formatDate(r.date)}</TableCell>
+                          <TableCell>{customers.find((c) => c.id === r.customerId)?.name ?? "—"}</TableCell>
+                          <TableCell>
+                            {isAdvance ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-primary/10 text-primary">
+                                {r.supplyType || "GOODS"} ADVANCE
+                              </span>
+                            ) : (
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {invoices.find((i) => i.id === r.invoiceId)?.number ?? "On account"}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {isAdvance ? (
+                              r.taxTreatment === "ADVANCE_GST" ? (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                                  GST ₹{((r.totalTaxPaise || 0) / 100).toFixed(2)}
+                                </span>
+                              ) : r.taxTreatment === "PENDING_CLASSIFICATION" ? (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-yellow-500/10 text-yellow-700 dark:text-yellow-400">
+                                  Pending Review
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-500/10 text-slate-600 dark:text-slate-400">
+                                  No Advance GST
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Settled</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="uppercase text-xs font-semibold">{r.mode}</TableCell>
+                          <TableCell className="text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                            {formatMoney(r.amount)}
+                            {r.refundAmountPaise ? (
+                              <div className="text-[10px] text-rose-500">
+                                Ref: -{formatMoney(r.refundAmountPaise / 100)}
+                              </div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                title="Print / Download Receipt Voucher"
+                                onClick={() => printReceiptVoucher(r)}
+                              >
+                                <Printer className="h-4 w-4 text-primary" />
+                              </Button>
+                              {isAdvance && !isRefunded && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  title="Refund Advance"
+                                  onClick={() => openRefundDialog(r)}
+                                >
+                                  <RotateCcw className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                                </Button>
+                              )}
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                title="Delete Receipt"
+                                onClick={() => setDeleteReceiptId(r.id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
@@ -488,6 +727,243 @@ export function ReceiptsAndPaymentsPage() {
                   placeholder="0.00"
                 />
               </div>
+
+              {/* PRD Addendum § 12: User-Friendly Advance Form */}
+              {editingReceipt.allocationType === "ADVANCE" && (
+                <div className="sm:col-span-2 space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-foreground">Advance For *</Label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={(editingReceipt.supplyType || "GOODS") === "GOODS" ? "default" : "outline"}
+                        className="text-xs justify-start h-8"
+                        onClick={() => setEditingReceipt({ ...editingReceipt, supplyType: "GOODS" })}
+                      >
+                        Goods
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={editingReceipt.supplyType === "SERVICES" ? "default" : "outline"}
+                        className="text-xs justify-start h-8"
+                        onClick={() => setEditingReceipt({ ...editingReceipt, supplyType: "SERVICES" })}
+                      >
+                        Services
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={editingReceipt.supplyType === "MIXED" ? "default" : "outline"}
+                        className="text-xs justify-start h-8"
+                        onClick={() => setEditingReceipt({ ...editingReceipt, supplyType: "MIXED" })}
+                      >
+                        Goods + Services
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={editingReceipt.supplyType === "UNSPECIFIED" ? "default" : "outline"}
+                        className="text-xs justify-start h-8"
+                        onClick={() => setEditingReceipt({ ...editingReceipt, supplyType: "UNSPECIFIED" })}
+                      >
+                        Not decided yet
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* GOODS FLOW (PRD Addendum § 2) */}
+                  {(editingReceipt.supplyType || "GOODS") === "GOODS" && (
+                    <div className="text-xs text-muted-foreground bg-card/70 p-2.5 rounded-lg border border-border/50">
+                      <p className="font-semibold text-foreground">Goods Advance (No Advance Output GST)</p>
+                      <p className="mt-0.5 text-[11px]">
+                        Cash/Bank Dr | Customer Advance Cr. Under GST Notification 66/2017-CT, advances on goods do not generate Output GST. Sales Revenue & GST will be recognized on the eventual Tax Invoice.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* SERVICES FLOW (PRD Addendum § 3, § 4) */}
+                  {editingReceipt.supplyType === "SERVICES" && (
+                    <div className="space-y-3 bg-card/80 p-3 rounded-lg border border-border/60">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-[11px]">GST Rate (%)</Label>
+                          <Select
+                            value={String(editingReceipt.taxProfileSnapshot?.gstRate ?? 18)}
+                            onValueChange={(val) =>
+                              setEditingReceipt({
+                                ...editingReceipt,
+                                taxProfileSnapshot: {
+                                  ...(editingReceipt.taxProfileSnapshot || {}),
+                                  gstRate: Number(val),
+                                  isTaxInclusive: editingReceipt.taxProfileSnapshot?.isTaxInclusive ?? true,
+                                },
+                              })
+                            }
+                          >
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="18">18% (Standard Services)</SelectItem>
+                              <SelectItem value="12">12%</SelectItem>
+                              <SelectItem value="5">5%</SelectItem>
+                              <SelectItem value="28">28%</SelectItem>
+                              <SelectItem value="0">0% (Exempt)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label className="text-[11px]">Tax Calculation</Label>
+                          <Select
+                            value={editingReceipt.taxProfileSnapshot?.isTaxInclusive !== false ? "inclusive" : "exclusive"}
+                            onValueChange={(val) =>
+                              setEditingReceipt({
+                                ...editingReceipt,
+                                taxProfileSnapshot: {
+                                  ...(editingReceipt.taxProfileSnapshot || { gstRate: 18 }),
+                                  isTaxInclusive: val === "inclusive",
+                                },
+                              })
+                            }
+                          >
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="inclusive">Tax Inclusive (Gross)</SelectItem>
+                              <SelectItem value="exclusive">Tax Exclusive (Base)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label className="text-[11px]">Place of Supply (State)</Label>
+                          <Input
+                            className="h-8 text-xs"
+                            placeholder="State Code (e.g. 27)"
+                            value={
+                              editingReceipt.placeOfSupplySnapshot ||
+                              customers.find((c) => c.id === editingReceipt.customerId)?.stateCode ||
+                              activeCompany?.stateCode ||
+                              ""
+                            }
+                            onChange={(e) =>
+                              setEditingReceipt({
+                                ...editingReceipt,
+                                placeOfSupplySnapshot: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      {/* Authoritative Calculation Preview */}
+                      {advanceTaxPreview && (
+                        <div className="grid grid-cols-3 gap-2 p-2.5 rounded bg-muted/40 text-xs font-mono border border-border/40">
+                          <div>
+                            <span className="text-[10px] text-muted-foreground block">Taxable Advance</span>
+                            <span className="font-bold text-foreground">
+                              {formatMoney(advanceTaxPreview.taxableAdvance)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-muted-foreground block">
+                              {advanceTaxPreview.igstPaise > 0 ? "IGST (Inter-State)" : "CGST + SGST (Intra)"}
+                            </span>
+                            <span className="font-bold text-amber-600 dark:text-amber-400">
+                              {formatMoney(advanceTaxPreview.totalTaxPaise / 100)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-muted-foreground block">Total Advance</span>
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                              {formatMoney(advanceTaxPreview.advanceAmountPaise / 100)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* MIXED GOODS + SERVICES (PRD Addendum § 8) */}
+                  {editingReceipt.supplyType === "MIXED" && (
+                    <div className="space-y-3 bg-card/80 p-3 rounded-lg border border-border/60">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-[11px]">Goods Advance (₹ - No Tax)</Label>
+                          <Input
+                            type="number"
+                            className="h-8 text-xs font-mono"
+                            placeholder="0.00"
+                            value={(editingReceipt.mixedBreakdown?.goodsAmountPaise || 0) / 100 || ""}
+                            onChange={(e) => {
+                              const goodsRs = Number(e.target.value) || 0;
+                              const totalRs = editingReceipt.amount || 0;
+                              const servRs = Math.max(0, totalRs - goodsRs);
+                              setEditingReceipt({
+                                ...editingReceipt,
+                                mixedBreakdown: {
+                                  goodsAmountPaise: Math.round(goodsRs * 100),
+                                  serviceAmountPaise: Math.round(servRs * 100),
+                                  serviceTaxablePaise: 0,
+                                  serviceTaxPaise: 0,
+                                },
+                              });
+                            }}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px]">Service Advance (₹ - Taxable)</Label>
+                          <Input
+                            type="number"
+                            className="h-8 text-xs font-mono"
+                            placeholder="0.00"
+                            value={(editingReceipt.mixedBreakdown?.serviceAmountPaise || 0) / 100 || ""}
+                            onChange={(e) => {
+                              const servRs = Number(e.target.value) || 0;
+                              const goodsRs = Math.max(0, (editingReceipt.amount || 0) - servRs);
+                              setEditingReceipt({
+                                ...editingReceipt,
+                                mixedBreakdown: {
+                                  goodsAmountPaise: Math.round(goodsRs * 100),
+                                  serviceAmountPaise: Math.round(servRs * 100),
+                                  serviceTaxablePaise: 0,
+                                  serviceTaxPaise: 0,
+                                },
+                              });
+                            }}
+                          />
+                        </div>
+                      </div>
+                      {advanceTaxPreview && (
+                        <div className="text-[11px] font-mono p-2 rounded bg-muted/40 flex justify-between">
+                          <span>Goods (No GST): {formatMoney((editingReceipt.mixedBreakdown?.goodsAmountPaise || 0) / 100)}</span>
+                          <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                            Service GST: {formatMoney(advanceTaxPreview.totalTaxPaise / 100)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* NOT DECIDED YET (PRD Addendum § 7) */}
+                  {editingReceipt.supplyType === "UNSPECIFIED" && (
+                    <div className="flex items-start gap-2.5 text-xs bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-lg text-amber-800 dark:text-amber-300">
+                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                      <div>
+                        <p className="font-semibold">Tax treatment will need review when this advance is allocated.</p>
+                        <p className="text-[11px] opacity-90 mt-0.5">
+                          Advance is recorded with taxTreatment = PENDING_CLASSIFICATION. No tax rate is assumed or guessed until the final supply is identified.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <Label className="text-xs">Payment Method</Label>
                 <Select
@@ -778,6 +1254,124 @@ export function ReceiptsAndPaymentsPage() {
           setDeleteReceiptId(null);
         }}
       />
+
+      {/* PRD Addendum § 10: Advance Cancellation / Refund Dialog */}
+      <Dialog
+        open={Boolean(refundReceipt)}
+        onOpenChange={(o) => {
+          if (!o) setRefundReceipt(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <RotateCcw className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+              Process Advance Refund
+            </DialogTitle>
+          </DialogHeader>
+          {refundReceipt && (
+            <div className="space-y-3.5 py-2 text-xs">
+              <div className="rounded-lg border bg-muted/30 p-3 space-y-1 font-mono">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Receipt Voucher:</span>
+                  <span className="font-semibold">{refundReceipt.number}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Customer:</span>
+                  <span className="font-semibold">
+                    {customers.find((c) => c.id === refundReceipt.customerId)?.name || "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Supply Type:</span>
+                  <span className="font-semibold text-primary">{refundReceipt.supplyType || "GOODS"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Original Advance:</span>
+                  <span className="font-semibold">{formatMoney(refundReceipt.amount)}</span>
+                </div>
+                {refundReceipt.taxTreatment === "ADVANCE_GST" && (
+                  <div className="flex justify-between text-amber-600 dark:text-amber-400">
+                    <span>GST Accounted:</span>
+                    <span className="font-semibold">{formatMoney((refundReceipt.totalTaxPaise || 0) / 100)}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Refund Amount (₹) *</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={refundAmount || ""}
+                  onChange={(e) => setRefundAmount(Number(e.target.value) || 0)}
+                  placeholder="0.00"
+                  className="font-mono text-sm"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Max refundable:{" "}
+                  {formatMoney(
+                    refundReceipt.advanceAvailablePaise !== undefined
+                      ? refundReceipt.advanceAvailablePaise / 100
+                      : Math.max(0, refundReceipt.amount - ((refundReceipt.refundAmountPaise || 0) / 100))
+                  )}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Reason for Refund *</Label>
+                <Input
+                  value={refundReason}
+                  onChange={(e) => setRefundReason(e.target.value)}
+                  placeholder="e.g. Order cancelled / Supply not feasible"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Refund From Account (Cash / Bank) *</Label>
+                <Select
+                  value={refundLedgerId}
+                  onValueChange={(v) => setRefundLedgerId(v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select liquidity ledger" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {cashLedgers.map((l) => (
+                      <SelectItem key={l.id} value={l.id}>{l.name} (Cash)</SelectItem>
+                    ))}
+                    {bankLedgers.map((l) => (
+                      <SelectItem key={l.id} value={l.id}>{l.name} (Bank)</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-2.5 text-[11px] text-amber-800 dark:text-amber-300">
+                Refund creates an authoritative reversal voucher. If advance GST was recognized, Output GST will be proportionally reversed. The receipt voucher is never deleted.
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRefundReceipt(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmRefund}
+              disabled={refunding || refundAmount <= 0}
+              className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {refunding ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Processing Refund…
+                </>
+              ) : (
+                "Post Advance Refund"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 }
