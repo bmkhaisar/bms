@@ -1,0 +1,14 @@
+User-agent: *
+Allow: /
+Disallow: /customers
+Disallow: /suppliers
+Disallow: /products
+Disallow: /categories
+Disallow: /quotations
+Disallow: /invoices
+Disallow: /receipts
+Disallow: /purchases
+Disallow: /ledger
+Disallow: /reports
+Disallow: /settings
+Disallow: /backup

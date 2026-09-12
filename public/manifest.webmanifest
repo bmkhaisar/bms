@@ -1,0 +1,15 @@
+{
+  "name": "BMS NEXT — Business Management System",
+  "short_name": "BMS NEXT",
+  "description": "Connected cloud business management software for quotations, GST invoices, receipts, purchases, ledgers and reports. Built by MMA.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#1e40af",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

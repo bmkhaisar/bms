@@ -1,0 +1,201 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { AppShell, PageHeader } from "@/components/app/AppShell";
+import { db, type Invoice, type Purchase, type Product, type Customer, type Supplier } from "@/lib/db";
+import { useLive } from "@/lib/useLive";
+import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Download, Printer } from "lucide-react";
+import { formatDate, formatMoney, toDateInput, fromDateInput } from "@/lib/format";
+
+export const Route = createFileRoute("/_app/reports")({
+  head: () => ({ meta: [{ title: "Reports — Business Management" }] }),
+  component: ReportsPage,
+});
+
+function ReportsPage() {
+  const [from, setFrom] = useState<number | undefined>(undefined);
+  const [to, setTo] = useState<number | undefined>(undefined);
+  return (
+    <AppShell title="Reports">
+      <PageHeader title="Business Reports" description="Filter by date range, print or export as JSON." />
+      <Card className="card-soft mb-4 flex flex-wrap items-end gap-3 p-4">
+        <div className="space-y-1.5"><Label className="text-xs">From</Label><Input type="date" value={from ? toDateInput(from) : ""} onChange={e => setFrom(e.target.value ? fromDateInput(e.target.value) : undefined)} /></div>
+        <div className="space-y-1.5"><Label className="text-xs">To</Label><Input type="date" value={to ? toDateInput(to) : ""} onChange={e => setTo(e.target.value ? fromDateInput(e.target.value) : undefined)} /></div>
+        <Button variant="outline" onClick={() => { setFrom(undefined); setTo(undefined); }}>Clear</Button>
+        <Button variant="outline" className="gap-2" onClick={() => window.print()}><Printer className="h-4 w-4" /> Print</Button>
+      </Card>
+      <Tabs defaultValue="sales">
+        <TabsList className="flex-wrap">
+          <TabsTrigger value="sales">Sales</TabsTrigger>
+          <TabsTrigger value="purchases">Purchases</TabsTrigger>
+          <TabsTrigger value="outstanding">Outstanding</TabsTrigger>
+          <TabsTrigger value="stock">Stock</TabsTrigger>
+          <TabsTrigger value="profit">Profit</TabsTrigger>
+          <TabsTrigger value="gst">GST</TabsTrigger>
+        </TabsList>
+        <TabsContent value="sales"><SalesReport from={from} to={to} /></TabsContent>
+        <TabsContent value="purchases"><PurchaseReport from={from} to={to} /></TabsContent>
+        <TabsContent value="outstanding"><OutstandingReport /></TabsContent>
+        <TabsContent value="stock"><StockReport /></TabsContent>
+        <TabsContent value="profit"><ProfitReport from={from} to={to} /></TabsContent>
+        <TabsContent value="gst"><GstReport from={from} to={to} /></TabsContent>
+      </Tabs>
+    </AppShell>
+  );
+}
+
+function useRange<T extends { date: number }>(rows: T[], from?: number, to?: number) {
+  return useMemo(() => rows.filter(r => (!from || r.date >= from) && (!to || r.date <= to)), [rows, from, to]);
+}
+
+function ExportBtn({ name, data }: { name: string; data: unknown }) {
+  return <Button size="sm" variant="outline" className="gap-2" onClick={() => {
+    const b = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(b);
+    const a = document.createElement("a"); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
+  }}><Download className="h-4 w-4" /> Export JSON</Button>;
+}
+
+function SalesReport({ from, to }: { from?: number; to?: number }) {
+  const invoices = useLive<Invoice>(() => db().invoices.toArray());
+  const customers = useLive<Customer>(() => db().customers.toArray());
+  const rows = useRange(invoices, from, to);
+  const total = rows.reduce((s, i) => s + i.grandTotal, 0);
+  return (
+    <Card className="card-soft mt-4 p-4">
+      <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">Sales Report</h3><ExportBtn name="sales.json" data={rows} /></div>
+      <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Invoice</TableHead><TableHead>Customer</TableHead><TableHead className="text-right">Taxable</TableHead><TableHead className="text-right">GST</TableHead><TableHead className="text-right">Total</TableHead></TableRow></TableHeader>
+        <TableBody>
+          {rows.map(i => (<TableRow key={i.id}><TableCell>{formatDate(i.date)}</TableCell><TableCell className="font-mono text-xs">{i.number}</TableCell><TableCell>{customers.find(c => c.id === i.customerId)?.name ?? "—"}</TableCell><TableCell className="text-right font-mono">{formatMoney(i.subtotal - i.discountTotal)}</TableCell><TableCell className="text-right font-mono">{formatMoney(i.gstTotal)}</TableCell><TableCell className="text-right font-mono">{formatMoney(i.grandTotal)}</TableCell></TableRow>))}
+          {rows.length === 0 && <TableRow><TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">No sales in this period.</TableCell></TableRow>}
+        </TableBody>
+      </Table>
+      <div className="mt-3 flex justify-end text-sm">Total Sales: <b className="ml-2 font-mono">{formatMoney(total)}</b></div>
+    </Card>
+  );
+}
+
+function PurchaseReport({ from, to }: { from?: number; to?: number }) {
+  const purchases = useLive<Purchase>(() => db().purchases.toArray());
+  const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
+  const rows = useRange(purchases, from, to);
+  const total = rows.reduce((s, i) => s + i.grandTotal, 0);
+  return (
+    <Card className="card-soft mt-4 p-4">
+      <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">Purchase Report</h3><ExportBtn name="purchases.json" data={rows} /></div>
+      <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Bill</TableHead><TableHead>Supplier</TableHead><TableHead className="text-right">Total</TableHead></TableRow></TableHeader>
+        <TableBody>
+          {rows.map(i => (<TableRow key={i.id}><TableCell>{formatDate(i.date)}</TableCell><TableCell className="font-mono text-xs">{i.number}</TableCell><TableCell>{suppliers.find(c => c.id === i.supplierId)?.name ?? "—"}</TableCell><TableCell className="text-right font-mono">{formatMoney(i.grandTotal)}</TableCell></TableRow>))}
+          {rows.length === 0 && <TableRow><TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">No purchases.</TableCell></TableRow>}
+        </TableBody>
+      </Table>
+      <div className="mt-3 flex justify-end text-sm">Total Purchases: <b className="ml-2 font-mono">{formatMoney(total)}</b></div>
+    </Card>
+  );
+}
+
+function OutstandingReport() {
+  const invoices = useLive<Invoice>(() => db().invoices.toArray());
+  const purchases = useLive<Purchase>(() => db().purchases.toArray());
+  const customers = useLive<Customer>(() => db().customers.toArray());
+  const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
+  const recv = invoices.filter(i => i.balance > 0.01);
+  const pay = purchases.filter(p => p.balance > 0.01);
+  return (
+    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <Card className="card-soft p-4">
+        <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">Receivables</h3><ExportBtn name="receivables.json" data={recv} /></div>
+        <Table><TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>Customer</TableHead><TableHead className="text-right">Balance</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {recv.map(i => <TableRow key={i.id}><TableCell className="font-mono text-xs">{i.number}</TableCell><TableCell>{customers.find(c => c.id === i.customerId)?.name}</TableCell><TableCell className="text-right font-mono">{formatMoney(i.balance)}</TableCell></TableRow>)}
+            {recv.length === 0 && <TableRow><TableCell colSpan={3} className="py-6 text-center text-sm text-muted-foreground">Nothing outstanding.</TableCell></TableRow>}
+          </TableBody>
+        </Table>
+      </Card>
+      <Card className="card-soft p-4">
+        <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">Payables</h3><ExportBtn name="payables.json" data={pay} /></div>
+        <Table><TableHeader><TableRow><TableHead>Bill</TableHead><TableHead>Supplier</TableHead><TableHead className="text-right">Balance</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {pay.map(i => <TableRow key={i.id}><TableCell className="font-mono text-xs">{i.number}</TableCell><TableCell>{suppliers.find(c => c.id === i.supplierId)?.name}</TableCell><TableCell className="text-right font-mono">{formatMoney(i.balance)}</TableCell></TableRow>)}
+            {pay.length === 0 && <TableRow><TableCell colSpan={3} className="py-6 text-center text-sm text-muted-foreground">Nothing owed.</TableCell></TableRow>}
+          </TableBody>
+        </Table>
+      </Card>
+    </div>
+  );
+}
+
+function StockReport() {
+  const products = useLive<Product>(() => db().products.orderBy("name").toArray());
+  const value = products.reduce((s, p) => s + p.currentStock * p.purchasePrice, 0);
+  return (
+    <Card className="card-soft mt-4 p-4">
+      <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">Stock Report</h3><ExportBtn name="stock.json" data={products} /></div>
+      <Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>HSN</TableHead><TableHead className="text-right">Stock</TableHead><TableHead className="text-right">Cost</TableHead><TableHead className="text-right">Value</TableHead></TableRow></TableHeader>
+        <TableBody>
+          {products.map(p => (<TableRow key={p.id}><TableCell>{p.name}</TableCell><TableCell className="font-mono text-xs">{p.hsn}</TableCell><TableCell className={`text-right font-mono ${p.currentStock <= p.reorderLevel ? "text-amber-600 font-semibold" : ""}`}>{p.currentStock} {p.unit}</TableCell><TableCell className="text-right font-mono">{formatMoney(p.purchasePrice)}</TableCell><TableCell className="text-right font-mono">{formatMoney(p.currentStock * p.purchasePrice)}</TableCell></TableRow>))}
+        </TableBody>
+      </Table>
+      <div className="mt-3 flex justify-end text-sm">Total Stock Value: <b className="ml-2 font-mono">{formatMoney(value)}</b></div>
+    </Card>
+  );
+}
+
+function ProfitReport({ from, to }: { from?: number; to?: number }) {
+  const invoices = useLive<Invoice>(() => db().invoices.toArray());
+  const purchases = useLive<Purchase>(() => db().purchases.toArray());
+  const products = useLive<Product>(() => db().products.toArray());
+  const invRange = useRange(invoices, from, to);
+  const purRange = useRange(purchases, from, to);
+
+  const revenue = invRange.reduce((s, i) => s + (i.subtotal - i.discountTotal), 0);
+  const cost = invRange.reduce((s, i) => s + i.items.reduce((ss, it) => ss + (products.find(p => p.id === it.productId)?.purchasePrice ?? 0) * it.quantity, 0), 0);
+  const gross = revenue - cost;
+  const purchaseTotal = purRange.reduce((s, p) => s + p.grandTotal, 0);
+
+  return (
+    <Card className="card-soft mt-4 p-4">
+      <h3 className="mb-3 font-semibold">Profit Summary</h3>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Stat label="Revenue (net)" v={formatMoney(revenue)} />
+        <Stat label="Cost of Sales" v={formatMoney(cost)} />
+        <Stat label="Gross Profit" v={formatMoney(gross)} accent />
+        <Stat label="Purchases" v={formatMoney(purchaseTotal)} />
+      </div>
+    </Card>
+  );
+}
+
+function GstReport({ from, to }: { from?: number; to?: number }) {
+  const invoices = useLive<Invoice>(() => db().invoices.toArray());
+  const rows = useRange(invoices, from, to);
+  const taxable = rows.reduce((s, i) => s + i.subtotal - i.discountTotal, 0);
+  const cgst = rows.reduce((s, i) => s + i.cgstTotal, 0);
+  const sgst = rows.reduce((s, i) => s + i.sgstTotal, 0);
+  const igst = rows.reduce((s, i) => s + i.igstTotal, 0);
+  return (
+    <Card className="card-soft mt-4 p-4">
+      <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">GST Report (Output Tax)</h3><ExportBtn name="gst.json" data={rows} /></div>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Stat label="Taxable" v={formatMoney(taxable)} />
+        <Stat label="CGST" v={formatMoney(cgst)} />
+        <Stat label="SGST" v={formatMoney(sgst)} />
+        <Stat label="IGST" v={formatMoney(igst)} />
+      </div>
+    </Card>
+  );
+}
+
+function Stat({ label, v, accent }: { label: string; v: string; accent?: boolean }) {
+  return (
+    <div className={`rounded-md border p-3 ${accent ? "bg-primary/10" : "bg-muted/30"}`}>
+      <div className="text-xs uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="mt-1 text-lg font-semibold font-mono">{v}</div>
+    </div>
+  );
+}
