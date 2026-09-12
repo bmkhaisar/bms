@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { formatMoney } from "@/lib/format";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
-import { firebaseDb } from "@/config/firebase";
+import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database";
 import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
 import { ensureSupplierLedger } from "@/modules/accounting/services/partyLedgerSyncService";
@@ -174,7 +174,7 @@ export function SuppliersPage() {
       // 1. Save to Firebase RTDB
       if (activeCompany?.id && firebaseDb) {
         const suppRef = ref(firebaseDb, `companyData/${activeCompany.id}/suppliers/${supplierToSave.id}`);
-        await set(suppRef, supplierToSave);
+        await set(suppRef, sanitizeForFirebase(supplierToSave));
       }
 
       // 2. Cache in local Dexie bms_cache_v1

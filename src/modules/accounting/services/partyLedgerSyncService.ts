@@ -1,5 +1,5 @@
 import { ref, get, set, update } from "firebase/database";
-import { firebaseDb } from "@/config/firebase";
+import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import type { Ledger } from "../types";
 import { cacheEntity, getCachedEntities } from "@/modules/sync/dexieCache";
 
@@ -94,7 +94,7 @@ export async function ensureCustomerLedger(params: {
       updatedAt: Date.now(),
     };
 
-    await set(existingLedgerRef, newLedger);
+    await set(existingLedgerRef, sanitizeForFirebase(newLedger));
 
     // Save in local Dexie cache
     await cacheEntity({
@@ -171,7 +171,7 @@ export async function ensureSupplierLedger(params: {
       updatedAt: Date.now(),
     };
 
-    await set(existingLedgerRef, newLedger);
+    await set(existingLedgerRef, sanitizeForFirebase(newLedger));
 
     // Save in local Dexie cache
     await cacheEntity({

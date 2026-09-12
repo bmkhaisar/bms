@@ -41,3 +41,26 @@ export function getClientDatabase(): Database {
   }
   return firebaseDb;
 }
+
+/**
+ * Recursively strips undefined properties from any object or nested array/object
+ * so Firebase Realtime Database set() / update() never throws "contains undefined in property".
+ */
+export function sanitizeForFirebase<T>(data: T): T {
+  if (data === undefined) {
+    return null as unknown as T;
+  }
+  if (data === null || typeof data !== "object") {
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return data.map((item) => sanitizeForFirebase(item)) as unknown as T;
+  }
+  const clean: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) {
+      clean[key] = sanitizeForFirebase(value);
+    }
+  }
+  return clean as T;
+}

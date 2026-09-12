@@ -2,7 +2,7 @@ import { postVoucherServerFn } from "@/functions/postVoucherFn";
 import { reverseVoucherServerFn } from "@/functions/reverseVoucherFn";
 import type { Invoice, Purchase, Receipt, Payment, LineItem } from "@/lib/db";
 import { db } from "@/lib/db";
-import { firebaseDb } from "@/config/firebase";
+import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, set, update } from "firebase/database";
 import { cacheEntity } from "@/modules/sync/dexieCache";
 import { createCompanySnapshot } from "@/modules/company/types";
@@ -112,7 +112,7 @@ export async function postInvoiceTransaction(params: {
     // 4. Save to Firebase RTDB if available
     if (firebaseDb) {
       const invRef = ref(firebaseDb, `companyData/${companyId}/invoices/${invoice.id}`);
-      await set(invRef, updatedInvoice);
+      await set(invRef, sanitizeForFirebase(updatedInvoice));
     }
 
     // 5. Cache in bms_cache_v1
@@ -218,7 +218,7 @@ export async function postPurchaseTransaction(params: {
     // 4. Save to Firebase RTDB
     if (firebaseDb) {
       const puRef = ref(firebaseDb, `companyData/${companyId}/purchases/${purchase.id}`);
-      await set(puRef, updatedPurchase);
+      await set(puRef, sanitizeForFirebase(updatedPurchase));
     }
 
     // 5. Cache in bms_cache_v1
@@ -303,7 +303,7 @@ export async function postReceiptTransaction(params: {
 
     if (firebaseDb) {
       const recRef = ref(firebaseDb, `companyData/${companyId}/receipts/${receipt.id}`);
-      await set(recRef, updatedReceipt);
+      await set(recRef, sanitizeForFirebase(updatedReceipt));
     }
 
     await cacheEntity({
@@ -385,7 +385,7 @@ export async function postPaymentTransaction(params: {
 
     if (firebaseDb) {
       const payRef = ref(firebaseDb, `companyData/${companyId}/payments/${payment.id}`);
-      await set(payRef, updatedPayment);
+      await set(payRef, sanitizeForFirebase(updatedPayment));
     }
 
     await cacheEntity({
