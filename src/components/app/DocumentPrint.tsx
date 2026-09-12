@@ -1,5 +1,6 @@
 import type { CompanySettings, Invoice, Quotation, Purchase, Receipt, Customer, Supplier } from "@/lib/db";
 import { formatDate, formatMoney, numberToWordsIndian } from "@/lib/format";
+import { SignatoryBlock } from "@/components/app/SignatoryBlock";
 
 export type DocumentKind = "invoice" | "quotation" | "purchase" | "receipt";
 
@@ -152,10 +153,13 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
           {company.terms && (<><div className="font-semibold">Terms & Conditions</div><div className="whitespace-pre-line">{company.terms}</div></>)}
           {company.declaration && (<div className="mt-2"><span className="font-semibold">Declaration: </span>{company.declaration}</div>)}
         </div>
-        <div className="text-right">
-          <div className="mt-6">For <span className="font-semibold">{company.name}</span></div>
-          {company.signature && <img src={company.signature} alt="Signature" className="ml-auto mt-1 h-14 object-contain" />}
-          <div className="mt-6 border-t pt-1">{company.authorizedSignatory || "Authorized Signatory"}</div>
+        <div className="flex justify-end">
+          <SignatoryBlock
+            company={company as any}
+            signatoryOverride={(doc as any).signatoryOverride}
+            signatorySnapshot={(doc as any).signatorySnapshot}
+            documentDate={(doc as any).date}
+          />
         </div>
       </footer>
     </div>

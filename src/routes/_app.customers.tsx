@@ -20,7 +20,7 @@ import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database";
 import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
-import { ensureCustomerLedger } from "@/modules/accounting/services/partyLedgerSyncService";
+import { createCustomerWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 
 export const Route = createFileRoute("/_app/customers")({
   head: () => ({ meta: [{ title: "Customers — BMS NEXT" }] }),
@@ -160,13 +160,20 @@ export function CustomersPage() {
     try {
       let linkedLedgerId: string | undefined = undefined;
 
-      // Ensure Accounts Receivable subledger is created/linked in Chart of Accounts
+      // 1. Atomic Customer + Accounts Receivable Ledger creation (Correction 3)
       if (activeCompany?.id && user?.uid) {
-        linkedLedgerId = await ensureCustomerLedger({
+        const res = await createCustomerWithLedger({
           companyId: activeCompany.id,
-          customer: editing,
+          customer: {
+            ...editing,
+            name: editing.name.trim(),
+          },
           uid: user.uid,
+          idempotencyKey: `mut_cust_${editing.id}`,
         });
+        if (res.success && res.ledgerId) {
+          linkedLedgerId = res.ledgerId;
+        }
       }
 
       const customerToSave: Customer = {
@@ -175,24 +182,7 @@ export function CustomersPage() {
         ledgerId: linkedLedgerId,
       };
 
-      // 1. Save to Firebase RTDB
-      if (activeCompany?.id && firebaseDb) {
-        const custRef = ref(firebaseDb, `companyData/${activeCompany.id}/customers/${customerToSave.id}`);
-        await set(custRef, sanitizeForFirebase(customerToSave));
-      }
-
-      // 2. Cache in local Dexie bms_cache_v1
-      if (activeCompany?.id && user?.uid) {
-        await cacheEntity({
-          uid: user.uid,
-          companyId: activeCompany.id,
-          entityType: "customer",
-          entityId: customerToSave.id,
-          data: customerToSave,
-        });
-      }
-
-      // 3. Keep local legacy Dexie database updated
+      // 2. Keep local legacy Dexie database updated for immediate UI reaction
       await db().customers.put(customerToSave);
 
       toast.success("Customer saved & linked to Accounts Receivable");

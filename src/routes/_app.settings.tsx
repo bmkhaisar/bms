@@ -6,14 +6,25 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
-import { ImagePlus, Save, ShieldAlert, Building2 } from "lucide-react";
+import { ImagePlus, Save, ShieldAlert, Building2, FileSignature, Stamp, AlertCircle } from "lucide-react";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb } from "@/config/firebase";
 import { ref, update } from "firebase/database";
 import { cacheEntity, getCachedEntity } from "@/modules/sync/dexieCache";
-import type { Company } from "@/modules/company/types";
+import type { Company, TypedSignatureStyle } from "@/modules/company/types";
+import { TYPED_SIGNATURE_STYLES } from "@/modules/company/signatoryHelper";
+import { SignatoryBlock } from "@/components/app/SignatoryBlock";
 
 export const Route = createFileRoute("/_app/settings")({
   head: () => ({ meta: [{ title: "Company Settings — BMS NEXT" }] }),
@@ -72,7 +83,7 @@ export function SettingsPage() {
     if (!canEdit) return;
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "image/*";
+    input.accept = "image/png,image/jpeg,image/webp";
     input.onchange = () => {
       const file = input.files?.[0];
       if (!file) return;
@@ -84,7 +95,21 @@ export function SettingsPage() {
 
       const reader = new FileReader();
       reader.onload = () => {
-        setForm((prev) => ({ ...prev, [key]: reader.result as string }));
+        const result = reader.result as string;
+        setForm((prev) => {
+          const next = { ...prev, [key]: result };
+          if (key === "signatureUrl") {
+            next.signatureMode = "uploaded";
+            next.showSignature = true;
+          } else if (key === "stampUrl") {
+            next.stampMode = "uploaded";
+            next.showStamp = true;
+          }
+          return next;
+        });
+        toast.success(
+          `${key === "logoUrl" ? "Company Logo" : key === "signatureUrl" ? "Signature" : "Company Stamp"} loaded. Click Save Changes to persist.`
+        );
       };
       reader.readAsDataURL(file);
     };
@@ -132,6 +157,19 @@ export function SettingsPage() {
       bankIfsc: form.bankIfsc?.trim().toUpperCase() || "",
       upiId: form.upiId?.trim() || "",
       authorizedSignatory: form.authorizedSignatory?.trim() || "",
+      designation: form.designation?.trim() || "",
+      signatureMode: form.signatureMode || (form.signatureUrl ? "uploaded" : "none"),
+      typedSignatureStyle: form.typedSignatureStyle || "style_1",
+      signatureUrl: form.signatureUrl || "",
+      stampUrl: form.stampUrl || "",
+      stampMode: form.stampMode || (form.stampUrl ? "uploaded" : "none"),
+      showSignature: form.showSignature ?? (form.signatureMode === "typed" || !!form.signatureUrl),
+      showStamp: form.showStamp ?? !!form.stampUrl,
+      showSignatoryName: form.showSignatoryName ?? true,
+      showDesignation: form.showDesignation ?? true,
+      showSignatureDate: form.showSignatureDate ?? true,
+      signatureDateMode: form.signatureDateMode || "document_date",
+      customSignatureDate: form.customSignatureDate || "",
       terms: form.terms?.trim() || "",
       invoicePrefix: form.invoicePrefix?.trim() || "INV",
       quotationPrefix: form.quotationPrefix?.trim() || "QT",
@@ -139,7 +177,6 @@ export function SettingsPage() {
       receiptPrefix: form.receiptPrefix?.trim() || "REC",
       paymentPrefix: form.paymentPrefix?.trim() || "PAY",
       logoUrl: form.logoUrl || "",
-      signatureUrl: form.signatureUrl || "",
       updatedAt: Date.now(),
     };
 
@@ -156,6 +193,34 @@ export function SettingsPage() {
       if (firebaseDb) {
         const compRef = ref(firebaseDb, `companies/${activeCompany.id}`);
         await update(compRef, updatedData);
+
+        // Record audit entry for branding & signatory changes without storing binary blobs
+        const auditId = `aud_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const auditRef = ref(firebaseDb, `companyData/${activeCompany.id}/auditLogs/${auditId}`);
+        await update(auditRef, {
+          id: auditId,
+          companyId: activeCompany.id,
+          actorUid: user.uid,
+          action: "company.branding_signatory.updated",
+          entityType: "company_settings",
+          entityId: activeCompany.id,
+          timestamp: Date.now(),
+          details: {
+            authorizedSignatory: updatedData.authorizedSignatory,
+            designation: updatedData.designation,
+            signatureMode: updatedData.signatureMode,
+            typedSignatureStyle: updatedData.typedSignatureStyle,
+            hasSignatureUrl: !!updatedData.signatureUrl,
+            hasStampUrl: !!updatedData.stampUrl,
+            stampMode: updatedData.stampMode,
+            showSignature: updatedData.showSignature,
+            showStamp: updatedData.showStamp,
+            showSignatoryName: updatedData.showSignatoryName,
+            showDesignation: updatedData.showDesignation,
+            showSignatureDate: updatedData.showSignatureDate,
+            signatureDateMode: updatedData.signatureDateMode,
+          },
+        });
       }
 
       // 2. Cache in local Dexie bms_cache_v1
@@ -354,102 +419,52 @@ export function SettingsPage() {
           </CardContent>
         </Card>
 
-        {/* Branding & Signatures */}
+        {/* Branding & Document Series */}
         <div className="space-y-6">
           <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
             <CardHeader>
-              <CardTitle className="text-base font-semibold">Branding</CardTitle>
+              <CardTitle className="text-base font-semibold">Company Logo</CardTitle>
               <CardDescription className="text-xs">
-                Your legal identity for documents. If no logo is uploaded, a professional typographic header is rendered.
+                Official logo rendered on invoices and quotations. Transparent PNG or WebP recommended.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div>
-                <Label className="text-xs font-medium">Company Logo</Label>
-                <div className="mt-1.5 flex items-center gap-3">
-                  {form.logoUrl ? (
-                    <img
-                      src={form.logoUrl}
-                      alt="Company Logo"
-                      className="h-16 w-16 rounded-xl border border-border/60 object-contain bg-white p-1"
-                    />
-                  ) : (
-                    <div className="grid h-16 w-16 place-items-center rounded-xl border border-dashed border-border/80 text-xs text-muted-foreground">
-                      No Logo
-                    </div>
-                  )}
-                  {canEdit && (
-                    <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-4">
+                {form.logoUrl ? (
+                  <img
+                    src={form.logoUrl}
+                    alt="Company Logo"
+                    className="h-16 w-20 rounded-xl border border-border/60 object-contain bg-white p-1.5 shadow-xs"
+                  />
+                ) : (
+                  <div className="grid h-16 w-20 place-items-center rounded-xl border border-dashed border-border/80 text-xs text-muted-foreground">
+                    No Logo
+                  </div>
+                )}
+                {canEdit && (
+                  <div className="flex flex-col gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-2 text-xs"
+                      onClick={() => handleImageUpload("logoUrl")}
+                    >
+                      <ImagePlus className="h-3.5 w-3.5" />
+                      {form.logoUrl ? "Replace Logo" : "Upload Logo"}
+                    </Button>
+                    {form.logoUrl && (
                       <Button
                         size="sm"
-                        variant="outline"
-                        className="gap-2 text-xs"
-                        onClick={() => handleImageUpload("logoUrl")}
+                        variant="ghost"
+                        className="text-xs text-destructive hover:text-destructive h-7"
+                        onClick={() => setForm({ ...form, logoUrl: "" })}
                       >
-                        <ImagePlus className="h-3.5 w-3.5" /> Upload Logo
+                        Remove
                       </Button>
-                      {form.logoUrl && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-xs text-destructive hover:text-destructive"
-                          onClick={() => setForm({ ...form, logoUrl: undefined })}
-                        >
-                          Remove
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                )}
               </div>
-
-              <div>
-                <Label className="text-xs font-medium">Authorized Signature</Label>
-                <div className="mt-1.5 flex items-center gap-3">
-                  {form.signatureUrl ? (
-                    <img
-                      src={form.signatureUrl}
-                      alt="Signature"
-                      className="h-16 w-24 rounded-xl border border-border/60 object-contain bg-white p-1"
-                    />
-                  ) : (
-                    <div className="grid h-16 w-24 place-items-center rounded-xl border border-dashed border-border/80 text-xs text-muted-foreground">
-                      None
-                    </div>
-                  )}
-                  {canEdit && (
-                    <div className="flex flex-col gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="gap-2 text-xs"
-                        onClick={() => handleImageUpload("signatureUrl")}
-                      >
-                        <ImagePlus className="h-3.5 w-3.5" /> Upload Signature
-                      </Button>
-                      {form.signatureUrl && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-xs text-destructive hover:text-destructive"
-                          onClick={() => setForm({ ...form, signatureUrl: undefined })}
-                        >
-                          Remove
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <Field label="Authorized Signatory Name">
-                <Input
-                  value={form.authorizedSignatory ?? ""}
-                  disabled={!canEdit}
-                  onChange={(e) => setForm({ ...form, authorizedSignatory: e.target.value })}
-                  placeholder="Director / Partner"
-                />
-              </Field>
             </CardContent>
           </Card>
 
@@ -493,6 +508,380 @@ export function SettingsPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Authorized Signatory, Stamp & Document Appearance */}
+        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm lg:col-span-3">
+          <CardHeader className="border-b border-border/40 pb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <FileSignature className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="text-base font-semibold">Authorized Signatory & Stamp</CardTitle>
+                <CardDescription className="text-xs">
+                  Configure the official signatory block, cursive typed signature, uploaded company seal, and per-document visibility options.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-6">
+            <div className="grid gap-8 lg:grid-cols-12 items-start">
+              {/* Left Column: Signatory Configuration */}
+              <div className="lg:col-span-7 space-y-6">
+                {/* 1. Name & Designation */}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Authorized Signatory Name">
+                    <Input
+                      value={form.authorizedSignatory ?? ""}
+                      disabled={!canEdit}
+                      onChange={(e) => setForm({ ...form, authorizedSignatory: e.target.value })}
+                      placeholder="e.g. Mohammed Maaz"
+                    />
+                  </Field>
+
+                  <Field label="Designation / Role">
+                    <Input
+                      value={form.designation ?? ""}
+                      disabled={!canEdit}
+                      onChange={(e) => setForm({ ...form, designation: e.target.value })}
+                      placeholder="e.g. Director, Partner, Proprietor"
+                    />
+                  </Field>
+                </div>
+
+                {/* 2. Signature Mode */}
+                <div className="space-y-3 rounded-xl border border-border/50 bg-muted/20 p-4">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Signature Mode
+                  </Label>
+                  <RadioGroup
+                    value={form.signatureMode || (form.signatureUrl ? "uploaded" : "none")}
+                    disabled={!canEdit}
+                    onValueChange={(val: any) =>
+                      setForm({
+                        ...form,
+                        signatureMode: val,
+                        showSignature: val !== "none",
+                      })
+                    }
+                    className="grid grid-cols-3 gap-3"
+                  >
+                    <label
+                      htmlFor="sig-mode-none"
+                      className={`flex flex-col items-center justify-center rounded-lg border p-3 text-center cursor-pointer transition-colors ${
+                        (form.signatureMode || "none") === "none"
+                          ? "border-primary bg-primary/5 text-primary font-medium"
+                          : "border-border/60 hover:bg-muted/50"
+                      }`}
+                    >
+                      <RadioGroupItem value="none" id="sig-mode-none" className="sr-only" />
+                      <span className="text-xs">None</span>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">Plain text / blank</span>
+                    </label>
+
+                    <label
+                      htmlFor="sig-mode-typed"
+                      className={`flex flex-col items-center justify-center rounded-lg border p-3 text-center cursor-pointer transition-colors ${
+                        form.signatureMode === "typed"
+                          ? "border-primary bg-primary/5 text-primary font-medium"
+                          : "border-border/60 hover:bg-muted/50"
+                      }`}
+                    >
+                      <RadioGroupItem value="typed" id="sig-mode-typed" className="sr-only" />
+                      <span className="text-xs">Typed Signature</span>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">Cursive font style</span>
+                    </label>
+
+                    <label
+                      htmlFor="sig-mode-uploaded"
+                      className={`flex flex-col items-center justify-center rounded-lg border p-3 text-center cursor-pointer transition-colors ${
+                        form.signatureMode === "uploaded"
+                          ? "border-primary bg-primary/5 text-primary font-medium"
+                          : "border-border/60 hover:bg-muted/50"
+                      }`}
+                    >
+                      <RadioGroupItem value="uploaded" id="sig-mode-uploaded" className="sr-only" />
+                      <span className="text-xs">Upload Signature</span>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">Scanned PNG / WebP</span>
+                    </label>
+                  </RadioGroup>
+
+                  {/* 2a. Typed Signature Style Selector */}
+                  {form.signatureMode === "typed" && (
+                    <div className="mt-4 space-y-2.5 pt-2 border-t border-border/40">
+                      <Label className="text-xs font-medium text-foreground">
+                        Signature Style
+                      </Label>
+                      <div className="grid grid-cols-3 gap-2.5">
+                        {(["style_1", "style_2", "style_3"] as const).map((sKey) => {
+                          const sDef = TYPED_SIGNATURE_STYLES[sKey];
+                          const isSelected = (form.typedSignatureStyle || "style_1") === sKey;
+                          const displayName = form.authorizedSignatory?.trim() || "Maaz";
+                          return (
+                            <button
+                              key={sKey}
+                              type="button"
+                              disabled={!canEdit}
+                              onClick={() => setForm({ ...form, typedSignatureStyle: sKey })}
+                              className={`flex flex-col items-center justify-center rounded-lg border p-2.5 text-center transition-all ${
+                                isSelected
+                                  ? "border-primary bg-background shadow-xs ring-1 ring-primary"
+                                  : "border-border/60 bg-background/60 hover:bg-background"
+                              }`}
+                            >
+                              <span
+                                style={{
+                                  fontFamily: sDef.fontFamily,
+                                  fontStyle: sDef.slant as any,
+                                  fontWeight: sDef.weight,
+                                  letterSpacing: sDef.letterSpacing,
+                                }}
+                                className="text-base text-slate-800 dark:text-slate-100 max-w-full overflow-hidden text-ellipsis whitespace-nowrap"
+                              >
+                                {displayName}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground mt-1">
+                                {sDef.label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 2b. Uploaded Signature Control */}
+                  {form.signatureMode === "uploaded" && (
+                    <div className="mt-4 flex items-center gap-4 pt-2 border-t border-border/40">
+                      {form.signatureUrl ? (
+                        <img
+                          src={form.signatureUrl}
+                          alt="Signature Preview"
+                          className="h-14 w-28 rounded-lg border border-border/60 object-contain bg-white p-1"
+                        />
+                      ) : (
+                        <div className="grid h-14 w-28 place-items-center rounded-lg border border-dashed border-border/80 text-[11px] text-muted-foreground">
+                          No File Chosen
+                        </div>
+                      )}
+                      {canEdit && (
+                        <div className="flex flex-col gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-2 text-xs"
+                            onClick={() => handleImageUpload("signatureUrl")}
+                          >
+                            <ImagePlus className="h-3.5 w-3.5" />
+                            {form.signatureUrl ? "Replace Signature" : "Upload Signature"}
+                          </Button>
+                          {form.signatureUrl && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-xs text-destructive hover:text-destructive h-6"
+                              onClick={() => setForm({ ...form, signatureUrl: "" })}
+                            >
+                              Remove
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. Company Stamp */}
+                <div className="space-y-3 rounded-xl border border-border/50 bg-muted/20 p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Company Stamp
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Official rubber seal or digital company stamp. Composed alongside or behind signature.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 pt-1">
+                    {form.stampUrl ? (
+                      <img
+                        src={form.stampUrl}
+                        alt="Company Stamp Preview"
+                        className="h-16 w-16 rounded-lg border border-border/60 object-contain bg-white p-1"
+                      />
+                    ) : (
+                      <div className="grid h-16 w-16 place-items-center rounded-lg border border-dashed border-border/80 text-[11px] text-muted-foreground">
+                        No Stamp
+                      </div>
+                    )}
+                    {canEdit && (
+                      <div className="flex flex-col gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-2 text-xs"
+                          onClick={() => handleImageUpload("stampUrl")}
+                        >
+                          <Stamp className="h-3.5 w-3.5" />
+                          {form.stampUrl ? "Replace Stamp" : "Upload Stamp"}
+                        </Button>
+                        {form.stampUrl && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-xs text-destructive hover:text-destructive h-6"
+                            onClick={() => setForm({ ...form, stampUrl: "" })}
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 4. Document Options & Toggles */}
+                <div className="space-y-3 rounded-xl border border-border/50 bg-muted/20 p-4">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Document Options (PDF Visibility)
+                  </Label>
+                  <div className="grid gap-3 sm:grid-cols-2 pt-1">
+                    <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/60 p-2.5">
+                      <span className="text-xs font-medium">Show Signature</span>
+                      <Switch
+                        checked={form.showSignature ?? (form.signatureMode === "typed" || !!form.signatureUrl)}
+                        disabled={!canEdit}
+                        onCheckedChange={(val) => setForm({ ...form, showSignature: val })}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/60 p-2.5">
+                      <span className="text-xs font-medium">Show Stamp</span>
+                      <Switch
+                        checked={form.showStamp ?? !!form.stampUrl}
+                        disabled={!canEdit}
+                        onCheckedChange={(val) => setForm({ ...form, showStamp: val })}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/60 p-2.5">
+                      <span className="text-xs font-medium">Show Signatory Name</span>
+                      <Switch
+                        checked={form.showSignatoryName ?? true}
+                        disabled={!canEdit}
+                        onCheckedChange={(val) => setForm({ ...form, showSignatoryName: val })}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/60 p-2.5">
+                      <span className="text-xs font-medium">Show Designation</span>
+                      <Switch
+                        checked={form.showDesignation ?? true}
+                        disabled={!canEdit}
+                        onCheckedChange={(val) => setForm({ ...form, showDesignation: val })}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/60 p-2.5 sm:col-span-2">
+                      <span className="text-xs font-medium">Show Signature Date</span>
+                      <Switch
+                        checked={form.showSignatureDate ?? true}
+                        disabled={!canEdit}
+                        onCheckedChange={(val) => setForm({ ...form, showSignatureDate: val })}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5. Signature Date Configuration */}
+                <div className="space-y-3 rounded-xl border border-border/50 bg-muted/20 p-4">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Signature Date
+                  </Label>
+                  <div className="grid gap-3 sm:grid-cols-2 pt-1">
+                    <Field label="Date Mode">
+                      <Select
+                        value={form.signatureDateMode || "document_date"}
+                        disabled={!canEdit}
+                        onValueChange={(val: any) => setForm({ ...form, signatureDateMode: val })}
+                      >
+                        <SelectTrigger className="h-9 text-xs">
+                          <SelectValue placeholder="Select date mode" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="document_date" className="text-xs">
+                            Use Document Date (Default)
+                          </SelectItem>
+                          <SelectItem value="today" className="text-xs">
+                            Use Today's Date
+                          </SelectItem>
+                          <SelectItem value="custom" className="text-xs">
+                            Custom Date
+                          </SelectItem>
+                          <SelectItem value="hidden" className="text-xs">
+                            Hide Date
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+
+                    {form.signatureDateMode === "custom" && (
+                      <Field label="Custom Date">
+                        <Input
+                          type="date"
+                          value={form.customSignatureDate ?? ""}
+                          disabled={!canEdit}
+                          onChange={(e) => setForm({ ...form, customSignatureDate: e.target.value })}
+                          className="h-9 text-xs"
+                        />
+                      </Field>
+                    )}
+                  </div>
+
+                  {form.signatureDateMode === "custom" && form.customSignatureDate && (
+                    <div className="flex items-center gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 p-2.5 text-xs text-amber-700 dark:text-amber-300">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>Signature date differs from document date. (Subtle audit notice)</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Live Interactive Signatory Preview */}
+              <div className="lg:col-span-5 space-y-3 sticky top-6">
+                <div className="rounded-xl border border-border/70 bg-gradient-to-br from-background/90 to-muted/30 p-5 shadow-sm">
+                  <div className="flex items-center justify-between pb-3 border-b border-border/40">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+                      Live Signatory Preview
+                    </span>
+                    <span className="text-[10px] text-muted-foreground bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+                      Realtime
+                    </span>
+                  </div>
+
+                  <div className="pt-6 pb-2">
+                    <SignatoryBlock
+                      company={form}
+                      isSettingsPreview={false}
+                      documentDate={
+                        form.signatureDateMode === "custom" && form.customSignatureDate
+                          ? form.customSignatureDate
+                          : "2026-09-12"
+                      }
+                    />
+                  </div>
+
+                  <div className="mt-6 pt-3 border-t border-border/40 text-[11px] text-muted-foreground leading-relaxed">
+                    <span className="font-semibold text-foreground">Immutable Snapshot Guarantee:</span> When an invoice or quotation is issued or posted, the signatory configuration and asset references are frozen. Future changes to company settings will never alter previously issued historical documents.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Banking & UPI */}
         <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm lg:col-span-2">

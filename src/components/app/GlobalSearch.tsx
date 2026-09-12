@@ -26,7 +26,13 @@ import {
   Receipt as ReceiptIcon,
   HandCoins,
   ShoppingCart,
+  Search,
+  Zap,
 } from "lucide-react";
+import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { searchCachedEntitiesRecords } from "@/modules/sync/dexieCache";
+import type { CachedEntity } from "@/modules/sync/types";
+import { useState, useEffect } from "react";
 
 export function GlobalSearch({
   open,
@@ -36,6 +42,10 @@ export function GlobalSearch({
   onOpenChange: (o: boolean) => void;
 }) {
   const nav = useNavigate();
+  const { activeCompany } = useActiveCompany();
+  const [query, setQuery] = useState("");
+  const [cachedMatches, setCachedMatches] = useState<CachedEntity[]>([]);
+
   const customers = useLive<Customer>(() => db().customers.limit(100).toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.limit(100).toArray());
   const products = useLive<Product>(() => db().products.limit(200).toArray());
@@ -52,6 +62,20 @@ export function GlobalSearch({
     db().purchases.orderBy("createdAt").reverse().limit(50).toArray()
   );
 
+  useEffect(() => {
+    if (!activeCompany?.id || !query.trim() || query.trim().length < 2) {
+      setCachedMatches([]);
+      return;
+    }
+    let active = true;
+    searchCachedEntitiesRecords(activeCompany.id, query.trim(), 25).then((matches) => {
+      if (active) setCachedMatches(matches);
+    });
+    return () => {
+      active = false;
+    };
+  }, [activeCompany?.id, query]);
+
   function go(url: string) {
     onOpenChange(false);
     if (typeof window !== "undefined") {
@@ -63,9 +87,54 @@ export function GlobalSearch({
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
-      <CommandInput placeholder="Search customers, invoices (INV/...), products, quotations..." />
+      <CommandInput
+        placeholder="Search customers, invoices, products, quotations across high-speed cache..."
+        value={query}
+        onValueChange={setQuery}
+      />
       <CommandList>
         <CommandEmpty>No matching records found.</CommandEmpty>
+
+        {cachedMatches.length > 0 && (
+          <CommandGroup heading="Instant Cache Index (v3)">
+            {cachedMatches.map((m) => {
+              const entity = m.data as any;
+              let link = "/";
+              let label = entity?.name || entity?.number || m.entityId;
+              let subtext = "";
+              if (m.entityType === "invoices") {
+                link = `/invoices?q=${encodeURIComponent(entity?.number || "")}&id=${m.entityId}`;
+                subtext = `Invoice · ${entity?.customerSnapshot?.name || ""} · ₹${entity?.grandTotal || 0}`;
+              } else if (m.entityType === "quotations") {
+                link = `/quotations?q=${encodeURIComponent(entity?.number || "")}&id=${m.entityId}`;
+                subtext = `Quotation · ₹${entity?.grandTotal || 0}`;
+              } else if (m.entityType === "customers") {
+                link = `/customers?q=${encodeURIComponent(entity?.name || "")}&id=${m.entityId}`;
+                subtext = `Customer · ${entity?.phone || entity?.mobile || ""}`;
+              } else if (m.entityType === "suppliers") {
+                link = `/suppliers?q=${encodeURIComponent(entity?.name || "")}&id=${m.entityId}`;
+                subtext = `Supplier · ${entity?.phone || entity?.mobile || ""}`;
+              } else if (m.entityType === "products") {
+                link = `/products?q=${encodeURIComponent(entity?.name || "")}&id=${m.entityId}`;
+                subtext = `Product · ₹${entity?.sellingPrice || 0}`;
+              }
+              return (
+                <CommandItem
+                  key={`cached-${m.entityType}-${m.entityId}`}
+                  value={`fast ${m.entityType} ${label} ${subtext}`}
+                  onSelect={() => go(link)}
+                >
+                  <Zap className="mr-2 h-4 w-4 text-amber-500" />
+                  <span className="font-medium">{label}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">{subtext}</span>
+                  <span className="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-[10px] uppercase font-semibold text-muted-foreground">
+                    {m.entityType}
+                  </span>
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        )}
 
         {invoices.length > 0 && (
           <CommandGroup heading="Invoices">

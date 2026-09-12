@@ -495,6 +495,18 @@ export async function transferCompanyOwnership(input: TransferOwnershipInput) {
   }
 }
 
+export interface CompanyMembershipInfo {
+  uid?: string;
+  role?: string;
+  roleId?: string;
+  status?: string;
+  branchIds?: Record<string, boolean>;
+  customPermissions?: string[];
+  createdAt?: number;
+  updatedAt?: number;
+  [key: string]: any;
+}
+
 /**
  * Lists all memberships for a specific company.
  */
@@ -505,7 +517,7 @@ export async function listCompanyMemberships(idToken: string, companyId: string)
       success: false,
       error: authResult.error || "Unauthorized",
       code: authResult.code || "UNAUTHORIZED",
-      memberships: [],
+      memberships: [] as CompanyMembershipInfo[],
     };
   }
 
@@ -516,7 +528,7 @@ export async function listCompanyMemberships(idToken: string, companyId: string)
     const memSnap = await db.ref(`memberships/${companyId}`).once("value");
     const memVal = memSnap.val() || {};
 
-    const list = Object.values(memVal);
+    const list = Object.values(memVal) as CompanyMembershipInfo[];
     return {
       success: true,
       memberships: list,
@@ -527,7 +539,7 @@ export async function listCompanyMemberships(idToken: string, companyId: string)
       success: false,
       error: msg,
       code: "INTERNAL_ERROR",
-      memberships: [],
+      memberships: [] as CompanyMembershipInfo[],
     };
   }
 }

@@ -20,7 +20,7 @@ import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database";
 import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
-import { ensureSupplierLedger } from "@/modules/accounting/services/partyLedgerSyncService";
+import { createSupplierWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 
 export const Route = createFileRoute("/_app/suppliers")({
   head: () => ({ meta: [{ title: "Suppliers — BMS NEXT" }] }),
@@ -156,13 +156,20 @@ export function SuppliersPage() {
     try {
       let linkedLedgerId: string | undefined = undefined;
 
-      // Ensure Accounts Payable subledger is created/linked in Chart of Accounts
+      // 1. Atomic Supplier + Accounts Payable Ledger creation (Correction 3)
       if (activeCompany?.id && user?.uid) {
-        linkedLedgerId = await ensureSupplierLedger({
+        const res = await createSupplierWithLedger({
           companyId: activeCompany.id,
-          supplier: editing,
+          supplier: {
+            ...editing,
+            name: editing.name.trim(),
+          },
           uid: user.uid,
+          idempotencyKey: `mut_supp_${editing.id}`,
         });
+        if (res.success && res.ledgerId) {
+          linkedLedgerId = res.ledgerId;
+        }
       }
 
       const supplierToSave: Supplier = {
@@ -171,24 +178,7 @@ export function SuppliersPage() {
         ledgerId: linkedLedgerId,
       };
 
-      // 1. Save to Firebase RTDB
-      if (activeCompany?.id && firebaseDb) {
-        const suppRef = ref(firebaseDb, `companyData/${activeCompany.id}/suppliers/${supplierToSave.id}`);
-        await set(suppRef, sanitizeForFirebase(supplierToSave));
-      }
-
-      // 2. Cache in local Dexie bms_cache_v1
-      if (activeCompany?.id && user?.uid) {
-        await cacheEntity({
-          uid: user.uid,
-          companyId: activeCompany.id,
-          entityType: "supplier",
-          entityId: supplierToSave.id,
-          data: supplierToSave,
-        });
-      }
-
-      // 3. Keep local legacy Dexie database updated
+      // 2. Keep local legacy Dexie database updated for immediate UI reaction
       await db().suppliers.put(supplierToSave);
 
       toast.success("Supplier saved & linked to Accounts Payable");

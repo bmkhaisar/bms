@@ -37,14 +37,14 @@ export interface CompanySettings {
 }
 
 export interface Customer {
-  id: ID; name: string; company?: string; mobile?: string; email?: string;
-  gstin?: string; address?: string; city?: string; state?: string; pincode?: string;
-  openingBalance: number; createdAt: number;
+  id: ID; name: string; company?: string; mobile?: string; phone?: string; email?: string;
+  gstin?: string; pan?: string; address?: string; billingAddress?: string; city?: string; state?: string; pincode?: string;
+  openingBalance: number; ledgerId?: string; createdAt: number;
 }
 
 export interface Supplier {
-  id: ID; name: string; company?: string; mobile?: string; email?: string;
-  gstin?: string; address?: string; openingBalance: number; createdAt: number;
+  id: ID; name: string; company?: string; mobile?: string; phone?: string; email?: string;
+  gstin?: string; pan?: string; address?: string; billingAddress?: string; openingBalance: number; ledgerId?: string; createdAt: number;
 }
 
 export interface Category { id: ID; name: string; createdAt: number; }
@@ -62,13 +62,20 @@ export interface Product {
 
 export interface LineItem {
   productId: ID; name: string; hsn?: string; quantity: number; unit: string;
-  rate: number; discountPct: number; gstRate: number;
+  rate: number; discountPct: number; discountPercent?: number; gstRate: number; taxRate?: number; cessRate?: number;
   taxable: number; gstAmount: number; total: number;
+  isTaxInclusive?: boolean;
   size?: string;
   description?: string;
 }
 
-export interface ExtraCharge { label: string; amount: number; }
+export interface ExtraCharge {
+  label?: string;
+  name?: string;
+  amount: number;
+  isTaxable?: boolean;
+  taxRate?: number;
+}
 
 export interface Quotation {
   id: ID; number: string; date: number;
@@ -81,6 +88,7 @@ export interface Quotation {
   customerId: ID; customerSnapshot?: Partial<Customer>;
   items: LineItem[];
   subtotal: number; discountTotal: number; gstTotal: number;
+  cgstTotal?: number; sgstTotal?: number; igstTotal?: number; isIgst?: boolean;
   extraCharges?: ExtraCharge[];
   extraChargesTotal?: number;
   roundOff: number; grandTotal: number;
@@ -95,6 +103,8 @@ export interface Quotation {
   bankSnapshot?: BankAccount;
   templateId?: ID;
   convertedInvoiceId?: ID;
+  signatoryOverride?: any;
+  signatorySnapshot?: any;
   // References
   generalInfoTemplateId?: ID;
   techSpecTemplateId?: ID;
@@ -106,16 +116,22 @@ export interface Invoice {
   id: ID; number: string; date: number; dueDate?: number;
   customerId: ID; customerSnapshot?: Partial<Customer>;
   companySnapshot?: any;
+  taxSnapshot?: any;
+  signatoryOverride?: any;
+  signatorySnapshot?: any;
+  placeOfSupply?: string;
   billingAddress?: string; shippingAddress?: string;
   items: LineItem[];
   subtotal: number; discountTotal: number;
+  taxableAmount?: number;
   cgstTotal: number; sgstTotal: number; igstTotal: number;
+  cessTotal?: number;
   gstTotal: number; roundOff: number; grandTotal: number;
   extraCharges?: ExtraCharge[];
   extraChargesTotal?: number;
   amountPaid: number; balance: number; isIgst: boolean;
   notes?: string; terms?: string;
-  status: "unpaid" | "partial" | "paid";
+  status: "draft" | "unpaid" | "partial" | "paid" | "posted";
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
   voucherId?: string;
   convertedFromQuotationId?: ID;
@@ -128,18 +144,28 @@ export interface Invoice {
 export interface Receipt {
   id: ID; number: string; date: number; customerId: ID; invoiceId?: ID;
   amount: number; mode: "cash" | "bank" | "upi" | "cheque" | "other";
+  paymentMethod?: string;
+  chequeNumber?: string;
+  chequeDate?: number | string;
   settlementLedgerId?: string;
   voucherId?: string;
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
+  signatoryOverride?: any;
+  signatorySnapshot?: any;
   reference?: string; notes?: string; createdAt: number;
 }
 
 export interface Payment {
   id: ID; number: string; date: number; supplierId: ID; purchaseId?: ID;
   amount: number; mode: "cash" | "bank" | "upi" | "cheque" | "other";
+  paymentMethod?: string;
+  chequeNumber?: string;
+  chequeDate?: number | string;
   settlementLedgerId?: string;
   voucherId?: string;
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
+  signatoryOverride?: any;
+  signatorySnapshot?: any;
   reference?: string; notes?: string; createdAt: number;
 }
 
@@ -147,8 +173,12 @@ export interface Purchase {
   id: ID; number: string; date: number; supplierId: ID;
   supplierSnapshot?: Partial<Supplier>;
   companySnapshot?: any;
+  signatoryOverride?: any;
+  signatorySnapshot?: any;
   items: LineItem[];
-  subtotal: number; discountTotal: number; gstTotal: number;
+  subtotal: number; discountTotal: number;
+  cgstTotal?: number; sgstTotal?: number; igstTotal?: number;
+  gstTotal: number;
   roundOff: number; grandTotal: number;
   extraCharges?: ExtraCharge[];
   extraChargesTotal?: number;

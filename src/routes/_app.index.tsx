@@ -132,6 +132,7 @@ export function Dashboard() {
       icon: TrendingUp,
       tint: "text-emerald-600 dark:text-emerald-400",
       subtext: activeFinancialYear ? activeFinancialYear.name : "All Time",
+      href: "/invoices",
     },
     {
       label: "Total Purchases",
@@ -139,6 +140,7 @@ export function Dashboard() {
       icon: ShoppingBag,
       tint: "text-sky-600 dark:text-sky-400",
       subtext: "Raw materials & COGS",
+      href: "/purchases",
     },
     {
       label: "Gross Profit",
@@ -146,6 +148,7 @@ export function Dashboard() {
       icon: ArrowUpRight,
       tint: "text-emerald-600 dark:text-emerald-400",
       subtext: "Sales minus direct COGS",
+      href: "/reports",
     },
     {
       label: "Net Profit",
@@ -153,6 +156,7 @@ export function Dashboard() {
       icon: Wallet,
       tint: "text-emerald-600 dark:text-emerald-400",
       subtext: "After operating expenses",
+      href: "/reports",
     },
     {
       label: "Accounts Receivable",
@@ -160,6 +164,7 @@ export function Dashboard() {
       icon: ArrowUpRight,
       tint: "text-amber-600 dark:text-amber-400",
       subtext: "Pending customer dues",
+      href: "/invoices",
     },
     {
       label: "Accounts Payable",
@@ -167,6 +172,7 @@ export function Dashboard() {
       icon: ArrowDownRight,
       tint: "text-rose-600 dark:text-rose-400",
       subtext: "Vendor liabilities",
+      href: "/purchases",
     },
     {
       label: "Cash & Bank",
@@ -174,6 +180,7 @@ export function Dashboard() {
       icon: Landmark,
       tint: "text-sky-600 dark:text-sky-400",
       subtext: `Cash: ${formatMoney(metrics.cashInHand)}`,
+      href: "/ledgers",
     },
     {
       label: "Inventory Value",
@@ -181,6 +188,7 @@ export function Dashboard() {
       icon: Boxes,
       tint: "text-indigo-600 dark:text-indigo-400",
       subtext: `${metrics.lowStockCount} items at low stock`,
+      href: "/products",
     },
   ];
 
@@ -207,7 +215,7 @@ export function Dashboard() {
         }
       />
 
-      {/* KPI Cards Grid */}
+      {/* KPI Cards Grid with Interactive Drill-Down Navigation */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {kpiCards.map((k, idx) => (
           <motion.div
@@ -216,24 +224,108 @@ export function Dashboard() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: idx * 0.02 }}
           >
-            <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm transition-all hover:shadow-md">
-              <CardContent className="flex items-center justify-between p-4">
-                <div>
-                  <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                    {k.label}
+            <Link to={k.href} className="block transition-transform hover:-translate-y-0.5">
+              <Card className="cursor-pointer rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm transition-all hover:shadow-md hover:border-primary/40">
+                <CardContent className="flex items-center justify-between p-4">
+                  <div>
+                    <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                      {k.label}
+                    </div>
+                    <div className="mt-1 text-lg font-bold sm:text-xl font-mono text-foreground">
+                      {k.value}
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-muted-foreground">{k.subtext}</div>
                   </div>
-                  <div className="mt-1 text-lg font-bold sm:text-xl font-mono text-foreground">
-                    {k.value}
+                  <div className="rounded-xl bg-muted/30 p-2">
+                    <k.icon className={`h-5 w-5 ${k.tint}`} />
                   </div>
-                  <div className="mt-0.5 text-[10px] text-muted-foreground">{k.subtext}</div>
-                </div>
-                <div className="rounded-xl bg-muted/30 p-2">
-                  <k.icon className={`h-5 w-5 ${k.tint}`} />
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </Link>
           </motion.div>
         ))}
+      </div>
+
+      {/* Dedicated GST & Statutory Tax Position (PRD #22, #42, #44) */}
+      <div className="mt-4">
+        <Card className="rounded-2xl border border-border/70 bg-gradient-to-r from-card/90 via-card/75 to-card/90 backdrop-blur shadow-sm p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <ReceiptText className="h-5 w-5 text-indigo-500" />
+                <h3 className="text-base font-semibold tracking-tight text-foreground">
+                  GST & Tax Position
+                </h3>
+                <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
+                  Statutory Tax Amounts Only
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Reconciled output tax liabilities, input tax credits (ITC), and net payable position. (Excludes gross commercial turnover).
+              </p>
+            </div>
+            <Link to="/reports">
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs hover:bg-muted">
+                View GST Register &rarr;
+              </Button>
+            </Link>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            {/* Output GST */}
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3.5">
+              <div className="text-[11px] font-medium uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                Output GST (Sales Tax Collected)
+              </div>
+              <div className="mt-1 text-xl font-bold font-mono text-emerald-800 dark:text-emerald-300">
+                {formatMoney(metrics.outputGst)}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                <span>CGST: {formatMoney(metrics.cgstOutput)}</span>
+                <span>•</span>
+                <span>SGST: {formatMoney(metrics.sgstOutput)}</span>
+                {metrics.igstOutput > 0 && (
+                  <>
+                    <span>•</span>
+                    <span>IGST: {formatMoney(metrics.igstOutput)}</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Input GST */}
+            <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-3.5">
+              <div className="text-[11px] font-medium uppercase tracking-wider text-sky-700 dark:text-sky-400">
+                Input GST (Purchase ITC Paid)
+              </div>
+              <div className="mt-1 text-xl font-bold font-mono text-sky-800 dark:text-sky-300">
+                {formatMoney(metrics.inputGst)}
+              </div>
+              <div className="mt-1 text-[10px] text-muted-foreground">
+                Eligible input tax credit from verified bills
+              </div>
+            </div>
+
+            {/* Net GST Position */}
+            <div
+              className={`rounded-xl border p-3.5 ${
+                metrics.netGst >= 0
+                  ? "border-amber-500/20 bg-amber-500/5"
+                  : "border-emerald-500/20 bg-emerald-500/5"
+              }`}
+            >
+              <div className="text-[11px] font-medium uppercase tracking-wider text-foreground">
+                {metrics.netGst >= 0 ? "Net GST Payable to Govt" : "Net ITC Credit Balance"}
+              </div>
+              <div className="mt-1 text-xl font-bold font-mono text-foreground">
+                {formatMoney(Math.abs(metrics.netGst))}
+              </div>
+              <div className="mt-1 text-[10px] text-muted-foreground">
+                {metrics.netGst >= 0 ? "Output GST exceeds Input ITC" : "Accumulated credit forward"}
+              </div>
+            </div>
+          </div>
+        </Card>
       </div>
 
       {/* Charts Section */}

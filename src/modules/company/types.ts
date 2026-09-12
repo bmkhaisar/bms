@@ -32,11 +32,23 @@ export const companySchema = z.object({
   upiQrUrl: z.string().optional(),
   terms: z.string().optional(),
   authorizedSignatory: z.string().optional(),
+  designation: z.string().optional(),
+  signatureMode: z.enum(["none", "typed", "uploaded"]).optional(),
+  typedSignatureStyle: z.enum(["style_1", "style_2", "style_3"]).optional(),
+  stampMode: z.enum(["none", "uploaded"]).optional(),
+  showSignature: z.boolean().optional(),
+  showStamp: z.boolean().optional(),
+  showSignatoryName: z.boolean().optional(),
+  showDesignation: z.boolean().optional(),
+  showSignatureDate: z.boolean().optional(),
+  signatureDateMode: z.enum(["document_date", "today", "custom", "hidden"]).optional(),
+  customSignatureDate: z.union([z.string(), z.number()]).optional(),
   invoicePrefix: z.string().optional(),
   quotationPrefix: z.string().optional(),
   purchasePrefix: z.string().optional(),
   receiptPrefix: z.string().optional(),
   paymentPrefix: z.string().optional(),
+  taxRegistrationMode: z.enum(["NORMAL_GST", "COMPOSITION", "UNREGISTERED"]).optional(),
   currentFinancialYearId: z.string().optional(),
   createdAt: z.number(),
   createdBy: z.string(),
@@ -45,12 +57,41 @@ export const companySchema = z.object({
 
 export type Company = z.infer<typeof companySchema>;
 
+export type SignatureMode = "none" | "typed" | "uploaded";
+export type TypedSignatureStyle = "style_1" | "style_2" | "style_3";
+export type SignatureDateMode = "document_date" | "today" | "custom" | "hidden";
+
+export interface SignatoryConfig {
+  authorizedSignatory?: string;
+  designation?: string;
+  signatureMode?: SignatureMode;
+  typedSignatureStyle?: TypedSignatureStyle;
+  signatureUrl?: string;
+  stampUrl?: string;
+  stampMode?: "none" | "uploaded";
+  showSignature?: boolean;
+  showStamp?: boolean;
+  showSignatoryName?: boolean;
+  showDesignation?: boolean;
+  showSignatureDate?: boolean;
+  signatureDateMode?: SignatureDateMode;
+  customSignatureDate?: string | number;
+}
+
+export interface SignatorySnapshot extends SignatoryConfig {
+  companyName: string;
+  resolvedDateText?: string;
+  snapshotAt: number;
+}
+
 export interface CompanySnapshot {
   companyId: string;
   name: string;
   legalName?: string;
   tradingName?: string;
   logoUrl?: string;
+  logo?: string;
+  taxRegistrationMode?: string;
   address: string;
   city: string;
   state: string;
@@ -71,20 +112,54 @@ export interface CompanySnapshot {
   upiId?: string;
   terms?: string;
   authorizedSignatory?: string;
+  designation?: string;
+  signatureMode?: SignatureMode;
+  typedSignatureStyle?: TypedSignatureStyle;
   signatureUrl?: string;
   stampUrl?: string;
+  stampMode?: "none" | "uploaded";
+  showSignature?: boolean;
+  showStamp?: boolean;
+  showSignatoryName?: boolean;
+  showDesignation?: boolean;
+  showSignatureDate?: boolean;
+  signatureDateMode?: SignatureDateMode;
+  customSignatureDate?: string | number;
+  signatorySnapshot?: SignatorySnapshot;
   currency?: string;
   currencySymbol?: string;
   snapshotAt: number;
 }
 
-export function createCompanySnapshot(company: Partial<Company>): CompanySnapshot {
+export function createCompanySnapshot(company: Partial<Company> & { logo?: string }): CompanySnapshot {
+  const compName = company.legalName || company.name || "";
+  const signatorySnapshot: SignatorySnapshot = {
+    companyName: compName,
+    authorizedSignatory: company.authorizedSignatory,
+    designation: company.designation,
+    signatureMode: company.signatureMode || (company.signatureUrl ? "uploaded" : "none"),
+    typedSignatureStyle: company.typedSignatureStyle || "style_1",
+    signatureUrl: company.signatureUrl,
+    stampUrl: company.stampUrl,
+    stampMode: company.stampMode || (company.stampUrl ? "uploaded" : "none"),
+    showSignature: company.showSignature ?? (!!company.signatureUrl || company.signatureMode === "typed"),
+    showStamp: company.showStamp ?? !!company.stampUrl,
+    showSignatoryName: company.showSignatoryName ?? true,
+    showDesignation: company.showDesignation ?? true,
+    showSignatureDate: company.showSignatureDate ?? true,
+    signatureDateMode: company.signatureDateMode || "document_date",
+    customSignatureDate: company.customSignatureDate,
+    snapshotAt: Date.now(),
+  };
+
   return {
     companyId: company.id || "",
     name: company.name || "",
-    legalName: company.legalName || company.name || "",
+    legalName: compName,
     tradingName: company.tradingName,
     logoUrl: company.logoUrl,
+    logo: company.logoUrl || company.logo,
+    taxRegistrationMode: company.taxRegistrationMode,
     address: company.address || "",
     city: company.city || "",
     state: company.state || "",
@@ -105,8 +180,20 @@ export function createCompanySnapshot(company: Partial<Company>): CompanySnapsho
     upiId: company.upiId,
     terms: company.terms,
     authorizedSignatory: company.authorizedSignatory,
+    designation: company.designation,
+    signatureMode: company.signatureMode,
+    typedSignatureStyle: company.typedSignatureStyle,
     signatureUrl: company.signatureUrl,
     stampUrl: company.stampUrl,
+    stampMode: company.stampMode,
+    showSignature: company.showSignature,
+    showStamp: company.showStamp,
+    showSignatoryName: company.showSignatoryName,
+    showDesignation: company.showDesignation,
+    showSignatureDate: company.showSignatureDate,
+    signatureDateMode: company.signatureDateMode,
+    customSignatureDate: company.customSignatureDate,
+    signatorySnapshot,
     currency: company.currency || "INR",
     currencySymbol: company.currencySymbol || "₹",
     snapshotAt: Date.now(),

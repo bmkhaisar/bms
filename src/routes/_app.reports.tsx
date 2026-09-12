@@ -1,8 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell, PageHeader } from "@/components/app/AppShell";
 import { db, type Invoice, type Purchase, type Product, type Customer, type Supplier } from "@/lib/db";
 import { useLive } from "@/lib/useLive";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,32 @@ export const Route = createFileRoute("/_app/reports")({
 function ReportsPage() {
   const [from, setFrom] = useState<number | undefined>(undefined);
   const [to, setTo] = useState<number | undefined>(undefined);
+  const [tab, setTab] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      return p.get("tab") || "sales";
+    }
+    return "sales";
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    const queryTab = p.get("tab");
+    if (queryTab && queryTab !== tab) {
+      setTab(queryTab);
+    }
+  }, []);
+
+  const handleTabChange = (nextTab: string) => {
+    setTab(nextTab);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", nextTab);
+      window.history.replaceState(null, "", url.toString());
+    }
+  };
+
   return (
     <AppShell title="Reports">
       <PageHeader title="Business Reports" description="Filter by date range, print or export as JSON." />
@@ -29,7 +55,7 @@ function ReportsPage() {
         <Button variant="outline" onClick={() => { setFrom(undefined); setTo(undefined); }}>Clear</Button>
         <Button variant="outline" className="gap-2" onClick={() => window.print()}><Printer className="h-4 w-4" /> Print</Button>
       </Card>
-      <Tabs defaultValue="sales">
+      <Tabs value={tab} onValueChange={handleTabChange}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="sales">Sales</TabsTrigger>
           <TabsTrigger value="purchases">Purchases</TabsTrigger>
@@ -173,21 +199,186 @@ function ProfitReport({ from, to }: { from?: number; to?: number }) {
 
 function GstReport({ from, to }: { from?: number; to?: number }) {
   const invoices = useLive<Invoice>(() => db().invoices.toArray());
-  const rows = useRange(invoices, from, to);
-  const taxable = rows.reduce((s, i) => s + i.subtotal - i.discountTotal, 0);
-  const cgst = rows.reduce((s, i) => s + i.cgstTotal, 0);
-  const sgst = rows.reduce((s, i) => s + i.sgstTotal, 0);
-  const igst = rows.reduce((s, i) => s + i.igstTotal, 0);
+  const purchases = useLive<Purchase>(() => db().purchases.toArray());
+  const customers = useLive<Customer>(() => db().customers.toArray());
+  const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
+
+  // PRD Correction 12: GST registers must derive strictly from authoritative POSTED documents
+  // Exclude Drafts, Pending Sync, and Cancelled unposted documents
+  const postedInvoices = useMemo(
+    () => invoices.filter((i) => i.postingStatus === "posted" || (i.status as string) === "posted" || i.status === "paid" || i.status === "partial"),
+    [invoices]
+  );
+  const postedPurchases = useMemo(
+    () => purchases.filter((p) => p.postingStatus === "posted" || (p.status as string) === "posted" || p.status === "paid" || p.status === "partial"),
+    [purchases]
+  );
+
+  const invRows = useRange(postedInvoices, from, to);
+  const purRows = useRange(postedPurchases, from, to);
+
+  const taxableSales = invRows.reduce((s, i) => s + (i.subtotal - i.discountTotal), 0);
+  const cgst = invRows.reduce((s, i) => s + (i.cgstTotal || (i.gstTotal ? i.gstTotal / 2 : 0)), 0);
+  const sgst = invRows.reduce((s, i) => s + (i.sgstTotal || (i.gstTotal ? i.gstTotal / 2 : 0)), 0);
+  const igst = invRows.reduce((s, i) => s + (i.igstTotal || 0), 0);
+  const outputGstTotal = cgst + sgst + igst;
+
+  const taxablePurchases = purRows.reduce((s, p) => s + (p.subtotal - p.discountTotal), 0);
+  const inputGstTotal = purRows.reduce((s, p) => s + (p.gstTotal || 0), 0);
+
+  const netGstPosition = outputGstTotal - inputGstTotal;
+
+  type GstTx = {
+    id: string;
+    type: "Sale" | "Purchase";
+    date: number;
+    docNumber: string;
+    partyName: string;
+    gstin: string;
+    taxable: number;
+    cgst: number;
+    sgst: number;
+    igst: number;
+    totalTax: number;
+    link: string;
+  };
+
+  const transactions: GstTx[] = [
+    ...invRows.map((i): GstTx => {
+      const cust = customers.find((c) => c.id === i.customerId);
+      const c = i.cgstTotal || (i.gstTotal ? i.gstTotal / 2 : 0);
+      const s = i.sgstTotal || (i.gstTotal ? i.gstTotal / 2 : 0);
+      const g = i.igstTotal || 0;
+      return {
+        id: i.id,
+        type: "Sale",
+        date: i.date,
+        docNumber: i.number,
+        partyName: i.customerSnapshot?.name || cust?.name || "Customer",
+        gstin: i.customerSnapshot?.gstin || cust?.gstin || "—",
+        taxable: i.subtotal - i.discountTotal,
+        cgst: c,
+        sgst: s,
+        igst: g,
+        totalTax: i.gstTotal,
+        link: `/invoices?q=${encodeURIComponent(i.number)}`,
+      };
+    }),
+    ...purRows.map((p): GstTx => {
+      const supp = suppliers.find((s) => s.id === p.supplierId);
+      const c = p.cgstTotal || (p.gstTotal ? p.gstTotal / 2 : 0);
+      const s = p.sgstTotal || (p.gstTotal ? p.gstTotal / 2 : 0);
+      const g = p.igstTotal || 0;
+      return {
+        id: p.id,
+        type: "Purchase",
+        date: p.date,
+        docNumber: p.number,
+        partyName: p.supplierSnapshot?.name || supp?.name || "Supplier",
+        gstin: p.supplierSnapshot?.gstin || supp?.gstin || "—",
+        taxable: p.subtotal - p.discountTotal,
+        cgst: c,
+        sgst: s,
+        igst: g,
+        totalTax: p.gstTotal,
+        link: `/purchases?q=${encodeURIComponent(p.number)}`,
+      };
+    }),
+  ].sort((a, b) => b.date - a.date);
+
   return (
-    <Card className="card-soft mt-4 p-4">
-      <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">GST Report (Output Tax)</h3><ExportBtn name="gst.json" data={rows} /></div>
-      <div className="grid gap-3 sm:grid-cols-4">
-        <Stat label="Taxable" v={formatMoney(taxable)} />
-        <Stat label="CGST" v={formatMoney(cgst)} />
-        <Stat label="SGST" v={formatMoney(sgst)} />
-        <Stat label="IGST" v={formatMoney(igst)} />
+    <div className="mt-4 space-y-4">
+      {/* Statutory Preparation & Summary Disclaimer (Correction 13) */}
+      <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+        <strong className="block font-semibold">PREPARATION / SUMMARY REPORTS</strong>
+        <span>Prepared from BMS records. Verify before statutory filing. GSTR summary reports are for reconciliation and preparation only.</span>
       </div>
-    </Card>
+
+      <Card className="card-soft p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-foreground">GST Statutory Position & Summary</h3>
+            <p className="text-xs text-muted-foreground">Output Tax Collected vs Recorded Input GST</p>
+          </div>
+          <ExportBtn name="gst_register.json" data={{ summary: { outputGstTotal, inputGstTotal, netGstPosition }, transactions }} />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-4">
+          <Stat label="Output GST (Collected)" v={formatMoney(outputGstTotal)} accent />
+          <Stat label="Recorded Input GST" v={formatMoney(inputGstTotal)} />
+          <Stat
+            label={netGstPosition >= 0 ? "Net GST Payable" : "Net ITC Carry Forward"}
+            v={formatMoney(Math.abs(netGstPosition))}
+            accent={netGstPosition > 0}
+          />
+          <Stat label="Taxable Turnover" v={formatMoney(taxableSales)} />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground border-t pt-3">
+          <span>CGST Output: <strong className="font-mono text-foreground">{formatMoney(cgst)}</strong></span>
+          <span>•</span>
+          <span>SGST Output: <strong className="font-mono text-foreground">{formatMoney(sgst)}</strong></span>
+          <span>•</span>
+          <span>IGST Output: <strong className="font-mono text-foreground">{formatMoney(igst)}</strong></span>
+        </div>
+      </Card>
+
+      <Card className="card-soft p-4">
+        <div className="mb-3">
+          <h3 className="font-semibold text-foreground">GST Transaction Register</h3>
+          <p className="text-xs text-muted-foreground">Click any document number to open and inspect the source invoice or bill.</p>
+        </div>
+        <div className="overflow-x-auto scrollbar-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Doc #</TableHead>
+                <TableHead>Party Name</TableHead>
+                <TableHead>GSTIN</TableHead>
+                <TableHead className="text-right">Taxable</TableHead>
+                <TableHead className="text-right">CGST</TableHead>
+                <TableHead className="text-right">SGST</TableHead>
+                <TableHead className="text-right">IGST</TableHead>
+                <TableHead className="text-right font-semibold">Total Tax</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {transactions.map((tx) => (
+                <TableRow key={tx.id}>
+                  <TableCell>{formatDate(tx.date)}</TableCell>
+                  <TableCell>
+                    <span className={`rounded-md px-1.5 py-0.5 text-xs font-medium uppercase ${
+                      tx.type === "Sale" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-sky-500/10 text-sky-600 dark:text-sky-400"
+                    }`}>
+                      {tx.type}
+                    </span>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    <Link to={tx.link as any} className="text-primary underline hover:text-primary/80">
+                      {tx.docNumber}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="font-medium text-foreground">{tx.partyName}</TableCell>
+                  <TableCell className="font-mono text-xs">{tx.gstin}</TableCell>
+                  <TableCell className="text-right font-mono">{formatMoney(tx.taxable)}</TableCell>
+                  <TableCell className="text-right font-mono">{formatMoney(tx.cgst)}</TableCell>
+                  <TableCell className="text-right font-mono">{formatMoney(tx.sgst)}</TableCell>
+                  <TableCell className="text-right font-mono">{formatMoney(tx.igst)}</TableCell>
+                  <TableCell className="text-right font-mono font-semibold">{formatMoney(tx.totalTax)}</TableCell>
+                </TableRow>
+              ))}
+              {transactions.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={10} className="py-6 text-center text-sm text-muted-foreground">
+                    No GST transactions found in selected period.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
+    </div>
   );
 }
 

@@ -58,6 +58,8 @@ export interface Ledger {
   partyType?: PartyType;
   partyId?: string;             // Links to customerId or supplierId
   bankDetails?: BankMetadata;
+  isSystem?: boolean;
+  normalBalance?: "debit" | "credit";
   active: boolean;
   createdAt: number;
   updatedAt: number;
@@ -106,6 +108,9 @@ export interface Voucher {
   lines: VoucherLine[];
   totalDebit: number;           // In integer paise
   totalCredit: number;          // In integer paise
+  sourceType?: string;
+  sourceId?: string;
+  sourceNumber?: string;
   clientMutationId: string;     // Idempotency token (UUID)
   createdBy: string;
   createdAt: number;
@@ -124,9 +129,12 @@ export interface PostVoucherInput {
   financialYearId: string;
   branchId?: string;
   voucherType: VoucherType;
-  date: number;
+  date: number | string;
   reference?: string;
   narration: string;
+  sourceType?: string;
+  sourceId?: string;
+  sourceNumber?: string;
   lines: {
     ledgerId: string;
     debit: number;              // In integer paise or rupees (server validates)
@@ -148,6 +156,7 @@ export interface PostVoucherResult {
   error?: string;
   code?:
     | "UNAUTHORIZED"
+    | "SESSION_EXPIRED"
     | "FORBIDDEN"
     | "SERVER_CONFIG_REQUIRED"
     | "INVALID_INPUT"

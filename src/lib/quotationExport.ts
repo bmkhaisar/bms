@@ -213,7 +213,7 @@ async function drawCover(ctx: PdfContext): Promise<number> {
     ["GST", money(quotation.gstTotal)],
   ];
   for (const c of quotation.extraCharges || []) {
-    if (c.amount) rows.push([c.label, money(c.amount)]);
+    if (c.amount) rows.push([c.label || "Charge", money(c.amount)]);
   }
   rows.push(["Round Off", money(quotation.roundOff)]);
 
@@ -647,7 +647,7 @@ export async function exportQuotationDOCX(
     ["Discount", `- ${formatMoney(quotation.discountTotal)}`],
     ["GST", formatMoney(quotation.gstTotal)],
   ];
-  for (const c of quotation.extraCharges || []) if (c.amount) totalsRows.push([c.label, formatMoney(c.amount)]);
+  for (const c of quotation.extraCharges || []) if (c.amount) totalsRows.push([c.label || "Charge", formatMoney(c.amount)]);
   totalsRows.push(["Round Off", formatMoney(quotation.roundOff)]);
   totalsRows.push(["GRAND TOTAL", formatMoney(quotation.grandTotal)]);
 

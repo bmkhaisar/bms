@@ -7,6 +7,12 @@ import { ref, set, update } from "firebase/database";
 import { cacheEntity } from "@/modules/sync/dexieCache";
 import { createCompanySnapshot } from "@/modules/company/types";
 import type { Company } from "@/modules/company/types";
+import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
+import {
+  calculateDocumentTaxes,
+  createTaxSnapshot,
+  validateGstInvoiceNumber,
+} from "@/modules/tax/taxEngine";
 
 export interface PostingResult {
   success: boolean;
@@ -44,10 +50,62 @@ export async function postInvoiceTransaction(params: {
   const { companyId, financialYearId, invoice, company, customerLedgerId, idToken, uid } = params;
 
   try {
-    const totalPaise = Math.round(invoice.grandTotal * 100);
-    const taxPaise = Math.round(invoice.gstTotal * 100);
-    const extraChargesPaise = Math.round((invoice.extraChargesTotal || 0) * 100);
-    const taxablePaise = totalPaise - taxPaise; // Guarantees exact balance: taxable + tax === total
+    const normMode = ((company as any).taxRegistrationMode || (company as any).gstMode || "NORMAL_GST").toUpperCase();
+
+    // 1. Validate Legal Invoice Number for GST Tax Invoices (Rule 46: <= 16 chars)
+    if (normMode === "NORMAL_GST" || normMode === "REGISTERED") {
+      const numVal = validateGstInvoiceNumber(invoice.number);
+      if (!numVal.valid) {
+        return {
+          success: false,
+          error: numVal.error || `Invoice number '${invoice.number}' violates GST statutory Rule 46 numbering requirements.`,
+        };
+      }
+    }
+
+    // 2. Authoritative Server-Side Tax Recomputation (Correction 2: Never blind-trust client totals)
+    const placeOfSupply = invoice.placeOfSupply || invoice.customerSnapshot?.state || company.state || "27";
+    const recomputed = calculateDocumentTaxes({
+      items: (invoice.items || []).map((it) => ({
+        productId: it.productId,
+        name: it.name,
+        hsn: it.hsn,
+        quantity: it.quantity,
+        rate: it.rate,
+        gstRate: it.taxRate || 0,
+        cessRate: it.cessRate || 0,
+        discountValue: it.discountPercent ? (it.rate * it.quantity * it.discountPercent) / 100 : 0,
+        discountType: "fixed",
+        pricingMode: it.isTaxInclusive ? "inclusive" : "exclusive",
+      })),
+      extraCharges: (invoice.extraCharges || []).map((c) => ({
+        name: c.name || (c as any).label || "Charge",
+        amount: c.amount,
+        taxable: c.isTaxable !== false,
+        gstRate: c.taxRate || 0,
+      })),
+      companyGstMode: normMode as any,
+      companyStateCode: company.state,
+      placeOfSupply,
+      documentDiscountValue: invoice.discountTotal,
+      documentDiscountType: "fixed",
+    });
+
+    // 3. Reject Tampered Client Totals (Prevent manipulated browser payloads)
+    const clientGrandTotal = Number(invoice.grandTotal) || 0;
+    if (clientGrandTotal > 0 && Math.abs(clientGrandTotal - recomputed.grandTotal) > 1.0) {
+      return {
+        success: false,
+        error: `Calculation discrepancy rejected: Client payload claimed grandTotal ₹${clientGrandTotal.toFixed(
+          2
+        )}, but authoritative server recomputation calculated ₹${recomputed.grandTotal.toFixed(2)}.`,
+      };
+    }
+
+    // 4. Double-Entry Accounting from Authoritative Numbers
+    const totalPaise = Math.round(recomputed.grandTotal * 100);
+    const taxPaise = Math.round(recomputed.gstTotal * 100);
+    const taxablePaise = totalPaise - taxPaise; // Exact balance: taxable + tax === total
 
     const salesLedgerId = `led_${companyId}_sales`;
     const gstLedgerId = `led_${companyId}_output_gst`;
@@ -74,7 +132,7 @@ export async function postInvoiceTransaction(params: {
         : []),
     ];
 
-    // 1. Post voucher through authoritative server engine
+    // 5. Post voucher through authoritative server engine
     let voucherId: string | undefined = undefined;
     if (idToken) {
       const voucherRes = await postVoucherServerFn({
@@ -95,27 +153,54 @@ export async function postInvoiceTransaction(params: {
       }
     }
 
-    // 2. Attach frozen company snapshot
-    const snapshot = createCompanySnapshot(company);
+    // 6. Attach frozen company snapshot, signatory snapshot, and immutable historical tax snapshot (Correction 11)
+    const companySnapshot = createCompanySnapshot(company);
+    const signatorySnapshot = createSignatorySnapshot(
+      company,
+      (invoice as any).signatoryOverride,
+      invoice.date
+    );
+    const taxSnapshot = createTaxSnapshot({
+      taxTotals: recomputed,
+      companyGstMode: normMode as any,
+      supplierGstin: company.gstin,
+      customerGstin: invoice.customerSnapshot?.gstin,
+      companyStateCode: company.state,
+      placeOfSupply,
+    });
+
     const updatedInvoice: Invoice = {
       ...invoice,
       voucherId,
       postingStatus: "posted",
-      companySnapshot: snapshot,
+      status: "posted",
+      subtotal: recomputed.subtotal,
+      taxableAmount: recomputed.taxableValue,
+      gstTotal: recomputed.gstTotal,
+      cgstTotal: recomputed.cgst,
+      sgstTotal: recomputed.sgst,
+      igstTotal: recomputed.igst,
+      cessTotal: recomputed.cess,
+      roundOff: recomputed.roundOff,
+      grandTotal: recomputed.grandTotal,
+      balance: recomputed.balanceDue,
+      companySnapshot,
+      signatorySnapshot,
+      taxSnapshot: taxSnapshot as any,
       version: invoice.version || 1,
       updatedAt: Date.now(),
     };
 
-    // 3. Save to local Dexie database
+    // 7. Save to local Dexie database
     await db().invoices.put(updatedInvoice);
 
-    // 4. Save to Firebase RTDB if available
+    // 8. Save to Firebase RTDB if available
     if (firebaseDb) {
       const invRef = ref(firebaseDb, `companyData/${companyId}/invoices/${invoice.id}`);
       await set(invRef, sanitizeForFirebase(updatedInvoice));
     }
 
-    // 5. Cache in bms_cache_v1
+    // 9. Cache in bms_cache_v1
     await cacheEntity({
       uid,
       companyId,
@@ -201,13 +286,19 @@ export async function postPurchaseTransaction(params: {
       }
     }
 
-    // 2. Attach frozen company snapshot
+    // 2. Attach frozen company snapshot & signatory snapshot
     const snapshot = createCompanySnapshot(company);
+    const signatorySnapshot = createSignatorySnapshot(
+      company,
+      (purchase as any).signatoryOverride,
+      purchase.date
+    );
     const updatedPurchase: Purchase = {
       ...purchase,
       voucherId,
       postingStatus: "posted",
       companySnapshot: snapshot,
+      signatorySnapshot,
       version: purchase.version || 1,
       updatedAt: Date.now(),
     };

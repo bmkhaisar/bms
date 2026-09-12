@@ -146,7 +146,7 @@ export function CompanyAccessView({ idToken }: CompanyAccessViewProps) {
           setLoadingMemberships(false);
           return;
         }
-        const res = await listCompanyMembershipsFn({
+        const res: any = await listCompanyMembershipsFn({
           data: { idToken: token, companyId: selectedCompanyId },
         });
         if (res.success && res.memberships) {

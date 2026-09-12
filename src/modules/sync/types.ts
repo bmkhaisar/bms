@@ -6,7 +6,7 @@ export interface OutboxMutation {
   uid: string;                     // Authenticated user who created the mutation
   companyId: string;               // Target company
   financialYearId: string;         // Financial year context
-  entityType: "company" | "customer" | "supplier" | "product" | "invoice" | "receipt" | "voucher" | "stock";
+  entityType: "company" | "customer" | "supplier" | "product" | "invoice" | "quotation" | "receipt" | "payment" | "voucher" | "stock" | "category";
   entityId: string;                // ID of target entity
   operation: "create" | "update" | "post" | "void" | "adjust";
   payload: Record<string, unknown>; // Normalized mutation payload
@@ -29,6 +29,18 @@ export interface CachedEntity<T = unknown> {
   data: T;
   updatedAt: number;
   isDeleted?: boolean;
+
+  // Normalized indexed fields for sub-millisecond Dexie lookups and search
+  nameLower?: string;
+  sku?: string;
+  gstin?: string;
+  numberLower?: string;
+  status?: string;
+  date?: number;
+  serverUpdatedAt?: number;
+  localUpdatedAt?: number;
+  syncStatus?: "synced" | "pending" | "failed";
+  syncVersion?: number;
 }
 
 export type NetworkStatus = "online" | "offline" | "syncing" | "error";

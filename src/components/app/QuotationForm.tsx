@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent,
 } from "@dnd-kit/core";
@@ -20,6 +21,8 @@ import {
   Plus, Trash2, Copy, GripVertical, Save, X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { QuickCreateCustomerDrawer } from "./QuickCreateCustomerDrawer";
+import { QuickCreateProductModal } from "./QuickCreateProductModal";
 
 import {
   db, uid, type Quotation, type LineItem, type Customer, type Product, type ExtraCharge,
@@ -49,6 +52,8 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
   const [q, setQ] = useState<Quotation>(initial);
   const [saving, setSaving] = useState(false);
   const [rowIds, setRowIds] = useState<string[]>(() => initial.items.map(() => uid()));
+  const [quickCustomerOpen, setQuickCustomerOpen] = useState(false);
+  const [quickProductOpen, setQuickProductOpen] = useState(false);
 
   useEffect(() => {
     setQ(initial);
@@ -225,12 +230,42 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
           <TabsContent value="details">
             <Card className="p-4">
               <div className="grid gap-3 md:grid-cols-3">
-                <Field label="Customer *">
-                  <Select value={q.customerId || ""} onValueChange={v => setQ({ ...q, customerId: v })}>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Customer *</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 px-1.5 text-[11px] font-medium text-primary hover:text-primary/80"
+                      onClick={() => setQuickCustomerOpen(true)}
+                    >
+                      + New Customer
+                    </Button>
+                  </div>
+                  <Select
+                    value={q.customerId || ""}
+                    onValueChange={(v) => {
+                      if (v === "__new__") {
+                        setQuickCustomerOpen(true);
+                        return;
+                      }
+                      setQ({ ...q, customerId: v });
+                    }}
+                  >
                     <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
-                    <SelectContent>{customers.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                    <SelectContent>
+                      <SelectItem value="__new__" className="font-semibold text-primary">
+                        + Add New Customer
+                      </SelectItem>
+                      {customers.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
-                </Field>
+                </div>
                 <Field label="Date">
                   <Input type="date" value={toDateInput(q.date)} onChange={e => setQ({ ...q, date: fromDateInput(e.target.value) })} />
                 </Field>
@@ -275,7 +310,12 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
             <Card className="p-3">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className="text-sm text-muted-foreground">Drag rows to reorder. Click a product to auto-fill.</div>
-                <Button size="sm" className="gap-2" onClick={addRow}><Plus className="h-4 w-4" /> Add row</Button>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setQuickProductOpen(true)}>
+                    <Plus className="h-4 w-4" /> New product
+                  </Button>
+                  <Button size="sm" className="gap-2" onClick={addRow}><Plus className="h-4 w-4" /> Add row</Button>
+                </div>
               </div>
               <div className="space-y-3 sm:hidden">
                 {itemsWithIds.length === 0 && (
@@ -291,9 +331,19 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Select value={it.productId || "custom"} onValueChange={v => v === "custom" ? updateItem(i, { productId: "" }) : pickProduct(i, v)}>
+                      <Select
+                        value={it.productId || "custom"}
+                        onValueChange={v => {
+                          if (v === "__new__") {
+                            setQuickProductOpen(true);
+                            return;
+                          }
+                          v === "custom" ? updateItem(i, { productId: "" }) : pickProduct(i, v);
+                        }}
+                      >
                         <SelectTrigger className="h-10"><SelectValue placeholder="Select product" /></SelectTrigger>
                         <SelectContent>
+                          <SelectItem value="__new__" className="font-semibold text-primary">+ Add New Product</SelectItem>
                           <SelectItem value="custom">Custom item</SelectItem>
                           {products.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                         </SelectContent>
@@ -351,9 +401,19 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
                                   </button>
                                 </TableCell>
                                 <TableCell>
-                                  <Select value={it.productId || "custom"} onValueChange={v => v === "custom" ? updateItem(i, { productId: "" }) : pickProduct(i, v)}>
+                                  <Select
+                                    value={it.productId || "custom"}
+                                    onValueChange={v => {
+                                      if (v === "__new__") {
+                                        setQuickProductOpen(true);
+                                        return;
+                                      }
+                                      v === "custom" ? updateItem(i, { productId: "" }) : pickProduct(i, v);
+                                    }}
+                                  >
                                     <SelectTrigger className="h-9 min-w-[180px]"><SelectValue placeholder="Select product" /></SelectTrigger>
                                     <SelectContent>
+                                      <SelectItem value="__new__" className="font-semibold text-primary">+ Add New Product</SelectItem>
                                       <SelectItem value="custom">Custom item</SelectItem>
                                       {products.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                                     </SelectContent>
@@ -555,10 +615,136 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
                   <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">No bank selected.</div>
                 )}
               </Card>
+
+              {/* Signatory & Stamp Document Appearance Override */}
+              <Card className="p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium">Signatory & Stamp (Document Appearance)</div>
+                    <div className="text-xs text-muted-foreground">
+                      Use company defaults or customize signature and stamp visibility for this quotation.
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">Use Company Default</span>
+                    <Switch
+                      checked={!q.signatoryOverride}
+                      onCheckedChange={(useDefault) => {
+                        setQ({
+                          ...q,
+                          signatoryOverride: useDefault ? undefined : {
+                            showSignature: true,
+                            showStamp: true,
+                            showSignatoryName: true,
+                            showDesignation: true,
+                            showSignatureDate: true,
+                            signatureDateMode: "document_date",
+                          },
+                        });
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {q.signatoryOverride && (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2 rounded-lg border bg-muted/20 p-3">
+                    <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
+                      <span className="text-xs">Show Signature</span>
+                      <Switch
+                        checked={q.signatoryOverride.showSignature ?? true}
+                        onCheckedChange={(v) =>
+                          setQ({
+                            ...q,
+                            signatoryOverride: { ...q.signatoryOverride, showSignature: v },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
+                      <span className="text-xs">Show Stamp</span>
+                      <Switch
+                        checked={q.signatoryOverride.showStamp ?? true}
+                        onCheckedChange={(v) =>
+                          setQ({
+                            ...q,
+                            signatoryOverride: { ...q.signatoryOverride, showStamp: v },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
+                      <span className="text-xs">Show Signatory Name</span>
+                      <Switch
+                        checked={q.signatoryOverride.showSignatoryName ?? true}
+                        onCheckedChange={(v) =>
+                          setQ({
+                            ...q,
+                            signatoryOverride: { ...q.signatoryOverride, showSignatoryName: v },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
+                      <span className="text-xs">Show Designation</span>
+                      <Switch
+                        checked={q.signatoryOverride.showDesignation ?? true}
+                        onCheckedChange={(v) =>
+                          setQ({
+                            ...q,
+                            signatoryOverride: { ...q.signatoryOverride, showDesignation: v },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-md border bg-background p-2.5 sm:col-span-2">
+                      <span className="text-xs">Show Signature Date</span>
+                      <Switch
+                        checked={q.signatoryOverride.showSignatureDate ?? true}
+                        onCheckedChange={(v) =>
+                          setQ({
+                            ...q,
+                            signatoryOverride: { ...q.signatoryOverride, showSignatureDate: v },
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+              </Card>
             </div>
           </TabsContent>
         </Tabs>
       </div>
+
+      <QuickCreateCustomerDrawer
+        open={quickCustomerOpen}
+        onOpenChange={setQuickCustomerOpen}
+        onCustomerCreated={(c) => {
+          setQ(prev => ({ ...prev, customerId: c.id }));
+        }}
+      />
+      <QuickCreateProductModal
+        open={quickProductOpen}
+        onOpenChange={setQuickProductOpen}
+        onProductCreated={(p) => {
+          setQ(prev => {
+            const next = [...prev.items];
+            const newItem = computeLine({
+              productId: p.id,
+              name: p.name,
+              hsn: p.hsn,
+              unit: p.unit,
+              rate: p.sellingPrice,
+              gstRate: p.gstRate,
+              description: p.specifications || p.description || "",
+              quantity: 1,
+              discountPct: 0,
+            });
+            next.push(newItem);
+            return { ...prev, items: next };
+          });
+        }}
+      />
     </div>
   );
 }

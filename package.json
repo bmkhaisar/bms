@@ -12,6 +12,7 @@
     "format": "prettier --write .",
     "bootstrap:admin": "node scripts/bootstrap-platform-admin.mjs",
     "verify:firebase-admin": "node scripts/verify-firebase-admin.mjs",
+    "verify:r2": "node scripts/verify-r2.mjs",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {

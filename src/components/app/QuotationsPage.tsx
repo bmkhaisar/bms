@@ -24,6 +24,9 @@ import { useInitialLoading } from "@/lib/useInitialLoading";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { getNextDocumentNumber } from "@/lib/numberingClient";
+import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
+import { ref, set, onValue } from "firebase/database";
+import { cacheEntity } from "@/modules/sync/dexieCache";
 
 export function QuotationsPage() {
   const rows = useLive<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
@@ -37,7 +40,37 @@ export function QuotationsPage() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const initialLoading = useInitialLoading();
 
+  const { user } = useAuth();
+  const { activeCompany, activeFinancialYear } = useActiveCompany();
+
   useEffect(() => { getCompany().then(setCompany); }, []);
+
+  // Realtime Cloud Synchronization with Firebase RTDB and local Dexie indexing
+  useEffect(() => {
+    if (!activeCompany?.id || !firebaseDb) return;
+    const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations`);
+    const unsub = onValue(qRef, async (snap) => {
+      if (snap.exists()) {
+        const val = snap.val();
+        const serverQuotes = Object.values(val) as Quotation[];
+        for (const quote of serverQuotes) {
+          if (quote && quote.id) {
+            await db().quotations.put(quote);
+            await cacheEntity({
+              uid: user?.uid || "",
+              companyId: activeCompany.id,
+              entityType: "quotations",
+              entityId: quote.id,
+              data: quote,
+              financialYearId: activeFinancialYear?.id,
+              name: quote.number,
+            });
+          }
+        }
+      }
+    });
+    return () => unsub();
+  }, [activeCompany?.id, activeFinancialYear?.id, user?.uid]);
 
   // Deep-link support: auto-filter and open quotation editor/preview
   useEffect(() => {
@@ -68,9 +101,6 @@ export function QuotationsPage() {
     return a.number.localeCompare(b.number);
   });
   const pager = usePagination(filtered, 12);
-
-  const { user } = useAuth();
-  const { activeCompany, activeFinancialYear } = useActiveCompany();
 
   async function openNew() {
     let idToken: string | undefined;
@@ -104,12 +134,55 @@ export function QuotationsPage() {
   }
   async function saveQuotation(next: Quotation) {
     await db().quotations.put(next);
+    if (activeCompany?.id && firebaseDb) {
+      try {
+        const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${next.id}`);
+        await set(qRef, sanitizeForFirebase({
+          ...next,
+          companyId: activeCompany.id,
+          financialYearId: activeFinancialYear?.id,
+          updatedAt: Date.now(),
+        }));
+        await cacheEntity({
+          uid: user?.uid || "",
+          companyId: activeCompany.id,
+          entityType: "quotations",
+          entityId: next.id,
+          data: next,
+          financialYearId: activeFinancialYear?.id,
+          name: next.number,
+        });
+      } catch (e) {
+        console.warn("Quotation RTDB sync error:", e);
+      }
+    }
     toast.success("Quotation saved");
     setEditing(null);
   }
   async function remove(id: string) {
     await db().quotations.delete(id);
+    if (activeCompany?.id && firebaseDb) {
+      try {
+        const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${id}`);
+        await set(qRef, null);
+      } catch (e) {
+        console.warn("Quotation RTDB delete error:", e);
+      }
+    }
     toast.success("Deleted");
+  }
+
+  async function handleConvert(r: Quotation) {
+    let idToken: string | undefined;
+    try { idToken = await user?.getIdToken(); } catch {}
+    await convertQuotationToInvoice(r, {
+      activeCompany,
+      financialYearId: activeFinancialYear?.id,
+      fyName: activeFinancialYear?.name,
+      user,
+      idToken,
+      companySettings: company,
+    });
   }
 
   async function exportPDF(r: Quotation) {
@@ -216,7 +289,7 @@ export function QuotationsPage() {
                           <Button size="icon" variant="ghost" title="Download PDF" onClick={() => exportPDF(r)}><Download className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Download DOCX" onClick={() => exportDOCX(r)}><FileType2 className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Share" onClick={() => share(r)}><Share2 className="h-4 w-4" /></Button>
-                          <Button size="icon" variant="ghost" title="Convert to Invoice" onClick={() => convertQuotationToInvoice(r)}><FileCheck className="h-4 w-4 text-primary" /></Button>
+                          <Button size="icon" variant="ghost" title="Convert to Invoice" onClick={() => handleConvert(r)}><FileCheck className="h-4 w-4 text-primary" /></Button>
                           <Button size="icon" variant="ghost" title="Edit" onClick={() => setEditing({ ...r })}><Pencil className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Duplicate" onClick={() => duplicate(r)}><Copy className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Delete" onClick={() => setDeleteId(r.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>

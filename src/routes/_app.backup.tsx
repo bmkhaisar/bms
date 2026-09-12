@@ -9,10 +9,14 @@ import { useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
-import { clearAllDeviceData } from "@/modules/sync/dexieCache";
+import { clearAllDeviceData, estimateLocalCacheStats } from "@/modules/sync/dexieCache";
+import { outboxManager } from "@/modules/sync/outboxManager";
+import type { NetworkStatus } from "@/modules/sync/types";
+import { Wifi, RefreshCw, Database, HardDrive } from "lucide-react";
+import { useEffect } from "react";
 
 export const Route = createFileRoute("/_app/backup")({
-  head: () => ({ meta: [{ title: "Company Export & Local Data — BMS NEXT" }] }),
+  head: () => ({ meta: [{ title: "Backup & Sync — BMS NEXT" }] }),
   component: BackupPage,
 });
 
@@ -28,11 +32,25 @@ const EXPORT_TABLES = [
 ] as const;
 
 export function BackupPage() {
-  const fileRef = useRef<HTMLInputElement>(null);
   const { activeCompany, activeFinancialYear, isOwner } = useActiveCompany();
-  const { user, clearDeviceData } = useAuth();
-  const [resetOpen, setResetOpen] = useState(false);
+  const { user } = useAuth();
   const [clearDeviceOpen, setClearDeviceOpen] = useState(false);
+  const [networkStatus, setNetworkStatus] = useState<NetworkStatus>("online");
+  const [pendingCount, setPendingCount] = useState(0);
+  const [cacheStats, setCacheStats] = useState<{
+    recordCount: number;
+    outboxPendingCount: number;
+    estimatedSizeBytes: number;
+  } | null>(null);
+
+  useEffect(() => {
+    estimateLocalCacheStats().then(setCacheStats);
+    const unsub = outboxManager.subscribeStatus((status, count) => {
+      setNetworkStatus(status);
+      setPendingCount(count);
+    });
+    return () => unsub();
+  }, [activeCompany?.id]);
 
   async function handleExport() {
     if (!activeCompany) {
@@ -48,7 +66,7 @@ export function BackupPage() {
     }
 
     const exportPayload = {
-      schemaVersion: "2.0",
+      schemaVersion: "3.0",
       companyId: activeCompany.id,
       companyName: activeCompany.name,
       financialYearId: activeFinancialYear?.id || null,
@@ -71,21 +89,99 @@ export function BackupPage() {
   }
 
   return (
-    <AppShell title="Export & Data Management">
+    <AppShell title="Backup & Sync">
       <PageHeader
-        title="Company Data & Local Storage"
-        description="Tenant-scoped JSON exports and offline cache management."
+        title="Backup & Sync Architecture"
+        description="Authoritative cloud sync state, high-speed local indexing, and tenant backups."
       />
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {/* Export Card */}
+        {/* 1. Cloud Sync Status (PRD #85) */}
         <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
-              <Download className="h-4 w-4 text-primary" /> Cloud-Aware Export
+              <Wifi className="h-4 w-4 text-emerald-500" /> Cloud Synchronization
             </CardTitle>
             <CardDescription className="text-xs">
-              Tenant-scoped snapshot with schema version 2.0
+              Firebase Realtime Database (Tenant Scoped)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-xs text-muted-foreground">
+            <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/50 p-2.5">
+              <span>Status:</span>
+              <span className="flex items-center gap-1.5 font-medium text-foreground">
+                {networkStatus === "online" ? (
+                  <>
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Online & Active
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3 w-3 animate-spin text-amber-500" />
+                    Syncing Outbox ({pendingCount})
+                  </>
+                )}
+              </span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/50 p-2.5">
+              <span>Pending Cloud Writes:</span>
+              <span className="font-mono font-semibold text-foreground">{pendingCount}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/50 p-2.5">
+              <span>Source of Truth:</span>
+              <span className="font-medium text-foreground">Cloud RTDB</span>
+            </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground pt-1">
+              Changes on device A immediately push to cloud RTDB and replicate to all 10 employees concurrently.
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* 2. Local Dexie Cache (PRD #4, #5, #85) */}
+        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+              <Database className="h-4 w-4 text-primary" /> Local Indexed Cache
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Dexie IndexedDB mirror (bms_cache_v1 v3)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-xs text-muted-foreground">
+            <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/50 p-2.5">
+              <span>Cached Records:</span>
+              <span className="font-mono font-semibold text-foreground">
+                {cacheStats?.recordCount ?? "Loading…"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/50 p-2.5">
+              <span>Estimated Cache Size:</span>
+              <span className="font-mono font-semibold text-foreground">
+                {cacheStats ? `${(cacheStats.estimatedSizeBytes / 1024).toFixed(1)} KB` : "—"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/50 p-2.5">
+              <span>Compound Indexes:</span>
+              <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">Active (v3)</span>
+            </div>
+            <Button
+              variant="outline"
+              className="gap-2 w-full text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-300 dark:border-amber-800"
+              onClick={() => setClearDeviceOpen(true)}
+            >
+              <Trash2 className="h-4 w-4" /> Clear Local Cache
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* 3. Export Card */}
+        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base font-semibold">
+              <Download className="h-4 w-4 text-primary" /> Export Company Data
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Complete tenant-scoped backup
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 text-xs text-muted-foreground">
@@ -95,39 +191,10 @@ export function BackupPage() {
             </p>
             <div className="rounded-lg border border-border/50 bg-background/50 p-3 text-[11px] space-y-1">
               <div>Company: <span className="font-mono text-foreground">{activeCompany?.name || "—"}</span></div>
-              <div>FY: <span className="font-mono text-foreground">{activeFinancialYear?.name || "Active"}</span></div>
-              <div>Format: <span className="font-mono text-foreground">BMS NEXT v2.0 JSON</span></div>
+              <div>Format: <span className="font-mono text-foreground">BMS NEXT v3.0 JSON</span></div>
             </div>
             <Button className="gap-2 w-full" onClick={handleExport} disabled={!activeCompany}>
-              <Download className="h-4 w-4" /> Download Company JSON
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Clear Local Cache */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base font-semibold">
-              <Trash2 className="h-4 w-4 text-amber-600" /> Offline Cache
-            </CardTitle>
-            <CardDescription className="text-xs">
-              Manage IndexedDB storage on this device
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4 text-xs text-muted-foreground">
-            <p>
-              Removes locally cached data (<code className="text-[11px] font-mono">bms_cache_v1</code>) from
-              this browser. Cloud records in Firebase remain safe and will re-sync upon your next sign-in.
-            </p>
-            <div className="rounded-lg border border-amber-200 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20 p-3 text-[11px] text-amber-800 dark:text-amber-300">
-              Useful when using a shared workstation or if local storage displays out-of-sync state.
-            </div>
-            <Button
-              variant="outline"
-              className="gap-2 w-full text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-300 dark:border-amber-800"
-              onClick={() => setClearDeviceOpen(true)}
-            >
-              Clear Local Data From This Device
+              <Download className="h-4 w-4" /> Export Company JSON
             </Button>
           </CardContent>
         </Card>

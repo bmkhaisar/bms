@@ -1,15 +1,43 @@
 import { db, type LineItem } from "./db";
+import {
+  calculateDocumentTaxes,
+  computeTaxLine,
+  computeTaxCharge,
+  toPaise,
+  toRupees,
+  determineInterState,
+  normalizeStateCode,
+} from "@/modules/tax/taxEngine";
+import type { TaxTotals, TaxCalculationParams, ComputedTaxLine } from "@/modules/tax/types";
+
+export {
+  calculateDocumentTaxes,
+  computeTaxLine,
+  computeTaxCharge,
+  toPaise,
+  toRupees,
+  determineInterState,
+  normalizeStateCode,
+};
+export type { TaxTotals, TaxCalculationParams, ComputedTaxLine };
+
+export function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
 
 export function computeLine(item: Partial<LineItem>): LineItem {
   const quantity = Number(item.quantity) || 0;
   const rate = Number(item.rate) || 0;
   const discountPct = Number(item.discountPct) || 0;
   const gstRate = Number(item.gstRate) || 0;
-  const gross = quantity * rate;
-  const discount = (gross * discountPct) / 100;
-  const taxable = gross - discount;
-  const gstAmount = (taxable * gstRate) / 100;
-  const total = taxable + gstAmount;
+
+  // Use paise precision
+  const grossPaise = Math.round(quantity * Math.round(rate * 100));
+  const discountPaise = Math.round((grossPaise * discountPct) / 100);
+  const taxablePaise = Math.max(0, grossPaise - discountPaise);
+  const gstPaise = gstRate > 0 ? Math.round((taxablePaise * gstRate) / 100) : 0;
+  const totalPaise = taxablePaise + gstPaise;
+
   return {
     productId: item.productId || "",
     name: item.name || "",
@@ -21,14 +49,10 @@ export function computeLine(item: Partial<LineItem>): LineItem {
     rate,
     discountPct,
     gstRate,
-    taxable: round2(taxable),
-    gstAmount: round2(gstAmount),
-    total: round2(total),
+    taxable: round2(taxablePaise / 100),
+    gstAmount: round2(gstPaise / 100),
+    total: round2(totalPaise / 100),
   };
-}
-
-export function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 export interface Totals {
@@ -42,28 +66,45 @@ export interface Totals {
   grandTotal: number;
 }
 
-export function computeTotals(items: LineItem[], isIgst = false): Totals {
-  let subtotal = 0;
-  let discountTotal = 0;
-  let gstTotal = 0;
-  for (const it of items) {
-    const gross = it.quantity * it.rate;
-    subtotal += gross;
-    discountTotal += (gross * it.discountPct) / 100;
-    gstTotal += it.gstAmount;
+export function computeTotals(
+  items: LineItem[],
+  isIgst = false,
+  options?: {
+    enableGst?: boolean;
+    extraCharges?: Array<{ name: string; amount: number; taxable?: boolean; gstRate?: number }>;
   }
-  const beforeRound = subtotal - discountTotal + gstTotal;
-  const grand = Math.round(beforeRound);
-  const roundOff = round2(grand - beforeRound);
+): Totals {
+  const calculated = calculateDocumentTaxes({
+    items: items.map((it) => ({
+      productId: it.productId,
+      name: it.name,
+      hsn: it.hsn,
+      quantity: it.quantity,
+      unit: it.unit,
+      rate: it.rate,
+      discountValue: it.discountPct,
+      discountType: "percentage",
+      gstRate: it.gstRate,
+    })),
+    extraCharges: options?.extraCharges?.map((c) => ({
+      name: c.name,
+      amount: c.amount,
+      taxable: c.taxable,
+      gstRate: c.gstRate,
+    })),
+    isInterState: isIgst,
+    enableGst: options?.enableGst ?? true,
+  });
+
   return {
-    subtotal: round2(subtotal),
-    discountTotal: round2(discountTotal),
-    gstTotal: round2(gstTotal),
-    cgstTotal: isIgst ? 0 : round2(gstTotal / 2),
-    sgstTotal: isIgst ? 0 : round2(gstTotal / 2),
-    igstTotal: isIgst ? round2(gstTotal) : 0,
-    roundOff,
-    grandTotal: grand,
+    subtotal: calculated.subtotal,
+    discountTotal: calculated.totalDiscount,
+    gstTotal: calculated.gstTotal,
+    cgstTotal: calculated.cgstTotal,
+    sgstTotal: calculated.sgstTotal,
+    igstTotal: calculated.igstTotal,
+    roundOff: calculated.roundOff,
+    grandTotal: calculated.grandTotal,
   };
 }
 

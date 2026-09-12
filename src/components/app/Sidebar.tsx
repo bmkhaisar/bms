@@ -12,22 +12,53 @@ import { outboxManager } from "@/modules/sync/outboxManager";
 import type { NetworkStatus } from "@/modules/sync/types";
 
 type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; exact?: boolean };
-const nav: NavItem[] = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
-  { to: "/customers", label: "Customers", icon: Users },
-  { to: "/suppliers", label: "Suppliers", icon: Truck },
-  { to: "/products", label: "Products", icon: Package },
-  { to: "/categories", label: "Categories", icon: Tags },
-  { to: "/quotations", label: "Quotations", icon: FileText },
-  { to: "/masters", label: "Quote Masters", icon: Layers },
-  { to: "/invoices", label: "GST Invoices", icon: Receipt },
-  { to: "/receipts", label: "Receipts", icon: HandCoins },
-  { to: "/purchases", label: "Purchases", icon: ShoppingCart },
-  { to: "/ledger", label: "Ledgers", icon: BookOpen },
-  { to: "/reports", label: "Reports", icon: BarChart3 },
-  { to: "/settings", label: "Company", icon: Building2 },
-  { to: "/backup", label: "Backup & Sync", icon: HardDriveDownload },
-  { to: "/about", label: "About", icon: Info },
+type NavGroup = { title: string; items: NavItem[] };
+
+const navGroups: NavGroup[] = [
+  {
+    title: "OVERVIEW",
+    items: [
+      { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
+    ],
+  },
+  {
+    title: "SALES",
+    items: [
+      { to: "/customers", label: "Customers", icon: Users },
+      { to: "/quotations", label: "Quotations", icon: FileText },
+      { to: "/invoices", label: "Invoices", icon: Receipt },
+      { to: "/receipts", label: "Receipts", icon: HandCoins },
+      { to: "/masters", label: "Quote Masters", icon: Layers },
+    ],
+  },
+  {
+    title: "PURCHASE",
+    items: [
+      { to: "/suppliers", label: "Suppliers", icon: Truck },
+      { to: "/purchases", label: "Purchases", icon: ShoppingCart },
+    ],
+  },
+  {
+    title: "INVENTORY",
+    items: [
+      { to: "/products", label: "Products", icon: Package },
+      { to: "/categories", label: "Categories", icon: Tags },
+    ],
+  },
+  {
+    title: "ACCOUNTING",
+    items: [
+      { to: "/ledger", label: "Ledgers & Vouchers", icon: BookOpen },
+      { to: "/reports", label: "Reports & GST", icon: BarChart3 },
+    ],
+  },
+  {
+    title: "SETTINGS",
+    items: [
+      { to: "/settings", label: "Company", icon: Building2 },
+      { to: "/backup", label: "Backup & Sync", icon: HardDriveDownload },
+    ],
+  },
 ];
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
@@ -58,28 +89,35 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <CompanySwitcher />
       </div>
 
-      {/* Navigation Links */}
-      <nav className="flex-1 overflow-y-auto scrollbar-hidden p-2 space-y-0.5">
-        {nav.map((n) => {
-          const active = n.exact ? loc.pathname === n.to : loc.pathname.startsWith(n.to);
-          const Icon = n.icon;
-          return (
-            <Link
-              key={n.to}
-              to={n.to as unknown as "/"}
-              onClick={onNavigate}
-              className={cn(
-                "group flex items-center gap-3 rounded-md px-3 py-2 text-xs font-medium transition-all",
-                active
-                  ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-xs"
-                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-              )}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span>{n.label}</span>
-            </Link>
-          );
-        })}
+      {/* Grouped Navigation Links */}
+      <nav className="flex-1 overflow-y-auto scrollbar-hidden p-2 space-y-3">
+        {navGroups.map((group) => (
+          <div key={group.title} className="space-y-0.5">
+            <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+              {group.title}
+            </div>
+            {group.items.map((n) => {
+              const active = n.exact ? loc.pathname === n.to : loc.pathname.startsWith(n.to);
+              const Icon = n.icon;
+              return (
+                <Link
+                  key={n.to}
+                  to={n.to as unknown as "/"}
+                  onClick={onNavigate}
+                  className={cn(
+                    "group flex items-center gap-3 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+                    active
+                      ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-xs font-semibold"
+                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span>{n.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       {/* Realtime / Offline Sync Status Footer */}

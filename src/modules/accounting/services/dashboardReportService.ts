@@ -14,6 +14,12 @@ export interface DashboardMetrics {
   stockValue: number;
   lowStockCount: number;
   gstLiability: number;
+  outputGst: number;
+  inputGst: number;
+  netGst: number;
+  cgstOutput: number;
+  sgstOutput: number;
+  igstOutput: number;
   salesVsPurchasesTrend: Array<{ label: string; sales: number; purchases: number }>;
   agingReceivables: Array<{ range: string; amount: number }>;
   agingPayables: Array<{ range: string; amount: number }>;
@@ -115,7 +121,7 @@ export function computeDashboardMetrics(params: {
     }
   }
 
-  // 5. GST Net Liability (Output GST minus Input GST)
+  // 5. Authoritative GST Breakdown (Output GST, Input GST, Net GST Position)
   const gstOutputPaise = ledgers
     .filter((l) => l.name.toLowerCase().includes("output gst"))
     .reduce((sum, l) => sum + Math.abs(l.currentBalance || 0), 0);
@@ -123,11 +129,21 @@ export function computeDashboardMetrics(params: {
     .filter((l) => l.name.toLowerCase().includes("input gst"))
     .reduce((sum, l) => sum + Math.abs(l.currentBalance || 0), 0);
 
-  const gstLiability =
+  const outputGst =
     gstOutputPaise > 0
-      ? (gstOutputPaise - gstInputPaise) / 100
-      : fyInvoices.reduce((s, i) => s + (i.gstTotal || 0), 0) -
-        fyPurchases.reduce((s, p) => s + (p.gstTotal || 0), 0);
+      ? gstOutputPaise / 100
+      : fyInvoices.reduce((s, i) => s + (i.gstTotal || 0), 0);
+
+  const inputGst =
+    gstInputPaise > 0
+      ? gstInputPaise / 100
+      : fyPurchases.reduce((s, p) => s + (p.gstTotal || 0), 0);
+
+  const netGst = outputGst - inputGst;
+
+  const cgstOutput = fyInvoices.reduce((s, i) => s + (i.cgstTotal || 0), 0);
+  const sgstOutput = fyInvoices.reduce((s, i) => s + (i.sgstTotal || 0), 0);
+  const igstOutput = fyInvoices.reduce((s, i) => s + (i.igstTotal || 0), 0);
 
   // 6. Monthly Trend Series (Last 6 Months)
   const trendMonths: Array<{ label: string; sales: number; purchases: number }> = [];
@@ -194,8 +210,14 @@ export function computeDashboardMetrics(params: {
     grossProfit,
     netProfit,
     stockValue,
-    lowStockCount,
-    gstLiability: Math.max(0, gstLiability),
+    lowStockCount: lowStockCount,
+    gstLiability: Math.max(0, netGst),
+    outputGst,
+    inputGst,
+    netGst,
+    cgstOutput,
+    sgstOutput,
+    igstOutput,
     salesVsPurchasesTrend: trendMonths,
     agingReceivables,
     agingPayables: [],
