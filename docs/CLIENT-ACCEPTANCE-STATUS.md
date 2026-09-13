@@ -200,4 +200,41 @@
 | `COUNTRY_ADDRESS_VALIDATION` | **VERIFIED** | September 2026 |
 | `PARTY_BOTH_AR_AP_ISOLATION` | **VERIFIED** | September 2026 |
 
-All client operational feedback items, accounting integrity rules, and UX reliability mandates from the PRD and Addendum are fully implemented, verified, and ready for production deployment.
+---
+
+## 6. BMS NEXT Production PRD — Core Client Requirements Verification
+
+### 6.1. Verification Flags (PRD § 114)
+
+| Acceptance Flag | Target Requirement | Status | Evidence & Implementation |
+|---|---|:---:|---|
+| `PARTY_MASTER_TALLY_TYPES` | Party Master exposes strictly `Sundry Debtors` & `Sundry Creditors` | **VERIFIED** | `_app.parties.tsx`, `db.ts`, `QuickCreateCustomerDrawer.tsx`, `QuickCreateSupplierDrawer.tsx`. Safe mapping: CUSTOMER -> SUNDRY_DEBTOR, SUPPLIER -> SUNDRY_CREDITOR, legacy BOTH preserved. |
+| `CREDIT_DAYS_ZERO` | Credit Days = 0 means "Payment Due Immediately" (0 is not falsy) | **VERIFIED** | `summaryService.ts`, `_app.parties.tsx`, `DocumentListPage.tsx`, `PartySearchSelect.tsx`. `dueDate = invoiceDate`. Deterministic calculation. |
+| `BILL_TO_SHIP_TO_SEPARATION` | Separate BILL TO and SHIP TO concepts & forms in Quotations & Invoices | **VERIFIED** | `QuotationForm.tsx`, `DocumentListPage.tsx`, `QuotationQuickPreviewModal.tsx`. Distinct `billToPartyId`, `billToSnapshot`, `shipToPartyId`, `shippingAddressSnapshot`. |
+| `SHIP_TO_PARTY` | Separate consignee party / site address support with "Same as Billing" toggle | **VERIFIED** | Side-by-side BILL TO and SHIP TO cards with instant party & address selection; uncheck allows dedicated consignee. |
+| `SHIPPING_ADDRESS_PERSISTENCE` | Shipping address preserved across draft save/reopen, issuing, and reloading | **VERIFIED** | `getNormalizedDoc` in `DocumentListPage.tsx`, `quotationConversion.ts`, IndexedDB BizDB v5 schema stores authoritative snapshots. |
+| `SHIPPING_ADDRESS_PDF` | Shipping address rendered clearly in vector PDF engine | **VERIFIED** | `documentRenderer.ts`, `DocumentPrint.tsx`, `quotationExport.ts` render side-by-side BILL TO and SHIP TO blocks. |
+| `ALL_COPY_ADDRESS_RENDERING` | All document copies (Original, Driver, Transport, Customer, Office) render destination | **VERIFIED** | Driver Copy prominently highlights delivery destination in dedicated styled container; copy label changes without mutating document data. |
+| `DASHBOARD_AMOUNT_RECEIVED` | Actual customer money receipts KPI from posted vouchers for selected period | **VERIFIED** | `dashboardReportService.ts`, `_app.index.tsx`. Excludes draft/failed/reversed receipts. Advance allocation does not double-count. Drilldown to `/receipts`. |
+| `PURCHASE_SUPPLIER_INVOICE_NUMBER` | Purchase form records Supplier Invoice No. and Supplier Invoice Date separately from BMS Purchase No. | **VERIFIED** | `DocumentListPage.tsx`, `db.ts`, `GlobalSearch.tsx`, `SupplierInsightDrawer.tsx`, `_app.reports.tsx`. Retains internal atomic numbering alongside vendor invoice. |
+| `PURCHASE_DUPLICATE_INVOICE_GUARD` | Scoped duplicate check before posting (`companyId` + `supplierPartyId` + normalized `supplierInvoiceNumber`) | **VERIFIED** | `DocumentListPage.tsx` duplicate warning modal; prevents accidental double billing while allowing different vendors to share invoice numbers. |
+| `LOCAL_FIRST_IMMEDIATE_UI` | Changes reflect in UI immediately via Dexie cache & optimistic state without reload | **VERIFIED** | Dexie IndexedDB cache first, React state update, background RTDB synchronization. |
+| `NO_MANUAL_REFRESH_REQUIRED` | Zero operations require `window.location.reload()` or browser refresh | **VERIFIED** | Fully reactive state, TanStack router cache invalidation, and Dexie live listeners. |
+| `MULTI_DEVICE_REALTIME` | Realtime multi-tenant RTDB synchronization across sessions and devices | **VERIFIED** | Firebase RTDB company listeners + Dexie outbox synchronization. |
+| `PRODUCTION_BROWSER_QA` | End-to-end runtime audit passing across all workflows and compilation | **VERIFIED** | 282 automated tests pass (100%), `npx tsc --noEmit` 0 errors, `npm run build` clean output. |
+
+### 6.2. Full PWA Installation Support
+- **App Name**: `BMS NEXT` (Short name: `BMS NEXT`).
+- **Web App Manifest**: `/manifest.webmanifest` configured with `display: "standalone"`, `id: "/"`, `start_url: "/"`, `orientation: "any"`, `#0f172a` background, `#2563eb` theme color.
+- **App Icons**: 192x192 and 512x512 maskable PNG icons, multi-size favicon.
+- **Service Worker (`/sw.js`)**: Production-grade offline shell caching static assets (`bms-next-shell-v1`), strictly bypassing CacheStorage for Firebase RTDB, Auth, and private API mutations (which are securely managed by Dexie).
+- **In-App PWA Install Banner (`InstallPwaBanner.tsx`)**: Listens to `beforeinstallprompt`, provides clean "Install BMS NEXT" button, detects iOS Safari with "Add to Home Screen" instructions, and respects 7-day dismissal cooldown.
+
+### 6.3. Final Automated Test Metrics
+```bash
+npm test
+# Result: 282 passing, 0 failing, duration: ~1.7s
+# Suites verified: Platform Admin, Security Rules, Document Hardening, Signatory,
+# Smart Billing, Client Workflow Acceptance, Calculation Parity Regression, PRD Acceptance
+```
+

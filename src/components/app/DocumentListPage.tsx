@@ -6,9 +6,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { LineItemsEditor } from "./LineItemsEditor";
 import { computeLine, computeTotals, applyStockDelta } from "@/lib/calc";
-import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge } from "@/lib/db";
+import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge, AddressSnapshot } from "@/lib/db";
 import { db, nextNumber, uid, getCompany } from "@/lib/db";
 import { useEffect, useState } from "react";
 import { useLive } from "@/lib/useLive";
@@ -16,7 +17,7 @@ import { toDateInput, fromDateInput, formatDate, formatMoney } from "@/lib/forma
 import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { Copy, Download, FileText, Pencil, Plus, Printer, Trash2, UserPlus, Truck, HandCoins, Loader2 } from "lucide-react";
+import { Copy, Download, FileText, Pencil, Plus, Printer, Trash2, UserPlus, Truck, HandCoins, Loader2, AlertTriangle } from "lucide-react";
 import { ListToolbar, EmptyState, usePagination, Pager } from "./ListHelpers";
 import { DocumentPrint, type DocumentKind } from "./DocumentPrint";
 import { printElement } from "@/lib/pdf";
@@ -112,6 +113,16 @@ export function DocumentListPage<T extends AnyDoc>({
     pendingInvoice: Invoice;
   } | null>(null);
 
+  // Duplicate supplier invoice warning modal state (PRD §§ 58-62)
+  const [duplicatePurchaseWarning, setDuplicatePurchaseWarning] = useState<{
+    open: boolean;
+    supplierName: string;
+    invoiceNo: string;
+    existingId: string;
+    existingNumber: string;
+    pendingPurchase: Purchase;
+  } | null>(null);
+
   // Posting button progression (PRD § 55)
   const [postingPhase, setPostingPhase] = useState<"idle" | "validating" | "calculating" | "posting" | "posted">("idle");
 
@@ -123,6 +134,11 @@ export function DocumentListPage<T extends AnyDoc>({
     const party = (doc as any).customerSnapshot || (doc as any).supplierSnapshot || (partyById((doc as any).customerId ?? (doc as Purchase).supplierId) || { name: "Client" }) as any;
     const docCompany = (doc as any).companySnapshot || activeCompany || company || {};
     const isTaxDoc = enableGst && (doc.gstTotal > 0 || (doc as Invoice).isIgst);
+
+    const billSnapshot = (doc as any).billToSnapshot || (doc as any).billingAddressSnapshot;
+    const shipSnapshot = (doc as any).shippingAddressSnapshot;
+    const shipParty = (doc as any).shipToPartySnapshot;
+    const isSame = (doc as any).sameAsBilling !== false;
 
     return {
       kind: kind as any,
@@ -165,16 +181,24 @@ export function DocumentListPage<T extends AnyDoc>({
       signatoryOverride: (doc as any).signatoryOverride,
       signatorySnapshot: (doc as any).signatorySnapshot,
       party: {
-        name: party.name,
-        company: party.company,
-        address: party.address,
-        city: party.city,
-        state: party.state,
-        pincode: party.pincode,
-        gstin: party.gstin,
-        phone: party.mobile || party.phone,
+        name: billSnapshot?.partyName || party.name,
+        company: billSnapshot?.tradingName || party.company,
+        address: billSnapshot?.address || (doc as any).billingAddress || party.billingAddress || party.address,
+        city: billSnapshot?.city || party.city,
+        state: billSnapshot?.state || party.state,
+        pincode: billSnapshot?.pincode || party.pincode,
+        gstin: billSnapshot?.gstin || party.gstin,
+        phone: billSnapshot?.phone || party.mobile || party.phone,
         email: party.email,
-        placeOfSupply: party.state,
+        placeOfSupply: billSnapshot?.state || party.state,
+        shippingAddress: (doc as any).shippingAddress,
+        shipToName: shipParty?.partyName || shipParty?.name || (isSame ? (billSnapshot?.partyName || party.name) : undefined),
+        shipToAddress: shipSnapshot?.address || (doc as any).shippingAddress,
+        shipToCity: shipSnapshot?.city,
+        shipToState: shipSnapshot?.state,
+        shipToPincode: shipSnapshot?.pincode,
+        shipToGstin: shipParty?.gstin || shipSnapshot?.gstin,
+        shipToPhone: shipSnapshot?.phone,
       },
       items: (doc as any).lineSnapshots && (doc as any).lineSnapshots.length > 0 ? (doc as any).lineSnapshots : doc.items,
       subtotal: doc.subtotal,
@@ -216,7 +240,14 @@ export function DocumentListPage<T extends AnyDoc>({
     if (!q) return true;
     const s = q.toLowerCase();
     const p = partyById((r as any).customerId ?? (r as Purchase).supplierId);
-    return (r as AnyDoc).number.toLowerCase().includes(s) || (p?.name.toLowerCase().includes(s) ?? false);
+    const suppInv = (r as Purchase).supplierInvoiceNumber?.toLowerCase() ?? "";
+    const gstin = p?.gstin?.toLowerCase() ?? "";
+    return (
+      (r as AnyDoc).number.toLowerCase().includes(s) ||
+      (p?.name.toLowerCase().includes(s) ?? false) ||
+      gstin.includes(s) ||
+      suppInv.includes(s)
+    );
   });
   const pager = usePagination(filtered, 12);
 
@@ -301,12 +332,19 @@ export function DocumentListPage<T extends AnyDoc>({
     });
 
     if (kind === "invoice") {
+      const creditDays = typeof (selectedParty as any)?.creditDays === "number" ? (selectedParty as any).creditDays : 0;
+      const baseDate = editing.date || Date.now();
+      const dueDate = baseDate + creditDays * 24 * 60 * 60 * 1000;
       setEditing({
         ...editing,
         customerId: selectedPartyId,
+        billToPartyId: selectedPartyId,
+        shipToPartyId: selectedPartyId,
         isIgst: isInter,
         billingAddress: selectedParty?.address || "",
         shippingAddress: selectedParty?.address || "",
+        sameAsBilling: true,
+        dueDate,
       } as T);
     } else if (kind === "quotation") {
       setEditing({
@@ -395,6 +433,57 @@ export function DocumentListPage<T extends AnyDoc>({
 
     if (kind === "invoice") {
       const inv = patched as Invoice;
+      const cust = party as Customer | undefined;
+      const billToSnapshot: AddressSnapshot = inv.billToSnapshot || (inv as any).billingAddressSnapshot || {
+        partyName: cust?.name || "",
+        tradingName: cust?.tradingName,
+        gstin: cust?.gstin,
+        pan: cust?.pan,
+        address: inv.billingAddress || cust?.billingAddress || cust?.address || "",
+        addressLine1: inv.billingAddress || cust?.billingAddress || cust?.address || "",
+        city: cust?.city,
+        district: cust?.district,
+        state: cust?.state,
+        stateCode: cust?.stateCode,
+        country: cust?.country || "India",
+        pincode: cust?.pincode,
+        phone: cust?.phone || cust?.mobile,
+        contactPerson: cust?.contactPerson,
+      };
+
+      const isSameAsBilling = inv.sameAsBilling !== false;
+      const shipToPartyId = isSameAsBilling ? inv.customerId : (inv.shipToPartyId || inv.customerId);
+      const shipToParty = shipToPartyId ? customers.find(c => c.id === shipToPartyId) || cust : cust;
+
+      const shippingAddressSnapshot: AddressSnapshot = isSameAsBilling
+        ? billToSnapshot
+        : (inv.shippingAddressSnapshot || {
+            partyName: shipToParty?.name || cust?.name || "",
+            tradingName: shipToParty?.tradingName,
+            gstin: shipToParty?.gstin,
+            address: inv.shippingAddress || shipToParty?.billingAddress || shipToParty?.address || "",
+            addressLine1: inv.shippingAddress || shipToParty?.billingAddress || shipToParty?.address || "",
+            city: shipToParty?.city || cust?.city,
+            district: shipToParty?.district,
+            state: shipToParty?.state || cust?.state,
+            stateCode: shipToParty?.stateCode,
+            country: shipToParty?.country || "India",
+            pincode: shipToParty?.pincode || cust?.pincode,
+            phone: shipToParty?.phone || cust?.phone,
+            contactPerson: shipToParty?.contactPerson || cust?.contactPerson,
+          });
+
+      inv.billToPartyId = inv.customerId;
+      inv.billToSnapshot = billToSnapshot;
+      inv.billingAddressSnapshot = billToSnapshot;
+      inv.billingAddress = inv.billingAddress || formatAddressLines(billToSnapshot);
+      inv.sameAsBilling = isSameAsBilling;
+      inv.shipToPartyId = shipToPartyId;
+      inv.shipToPartySnapshot = isSameAsBilling ? billToSnapshot : (inv.shipToPartySnapshot || shippingAddressSnapshot);
+      inv.shippingAddressId = isSameAsBilling ? inv.billingAddressId : inv.shippingAddressId;
+      inv.shippingAddressSnapshot = shippingAddressSnapshot;
+      inv.shippingAddress = isSameAsBilling ? (inv.billingAddress || formatAddressLines(billToSnapshot)) : (inv.shippingAddress || formatAddressLines(shippingAddressSnapshot));
+
       setPostingPhase("validating");
 
       // 1. Advance Party Restriction Check (PRD §§ 16-18, 100, 106)
@@ -505,6 +594,38 @@ export function DocumentListPage<T extends AnyDoc>({
       setPostingPhase("posted");
     } else if (kind === "purchase") {
       const pu = patched as Purchase;
+      const suppInv = pu.supplierInvoiceNumber?.trim();
+      const policy = (activeCompany as any)?.supplierInvoiceNumberPolicy;
+      if (policy === "REQUIRED" && !suppInv) {
+        setPostingPhase("idle");
+        setSavingDoc(false);
+        toast.error("Supplier Invoice Number is required by company policy.");
+        return;
+      }
+
+      if (suppInv) {
+        const norm = suppInv.toLowerCase();
+        const existing = (rows as Purchase[]).find(
+          p => p.id !== pu.id &&
+               p.supplierId === pu.supplierId &&
+               p.supplierInvoiceNumber?.trim().toLowerCase() === norm
+        );
+
+        if (existing) {
+          setPostingPhase("idle");
+          setSavingDoc(false);
+          setDuplicatePurchaseWarning({
+            open: true,
+            supplierName: party?.name || "Supplier",
+            invoiceNo: suppInv,
+            existingId: existing.id,
+            existingNumber: existing.number,
+            pendingPurchase: pu,
+          });
+          return;
+        }
+      }
+
       pu.balance = Math.max(0, pu.grandTotal - pu.amountPaid);
       pu.status = pu.balance <= 0.01 ? "paid" : pu.amountPaid > 0 ? "partial" : "unpaid";
 
@@ -686,6 +807,17 @@ export function DocumentListPage<T extends AnyDoc>({
       ...editing,
       customerId: quote.customerId,
       customerSnapshot: quote.customerSnapshot,
+      billToPartyId: quote.billToPartyId || quote.customerId,
+      billToSnapshot: quote.billToSnapshot,
+      billingAddressId: quote.billingAddressId,
+      billingAddressSnapshot: quote.billingAddressSnapshot,
+      billingAddress: quote.billingAddress,
+      sameAsBilling: quote.sameAsBilling !== false,
+      shipToPartyId: quote.shipToPartyId || quote.customerId,
+      shipToPartySnapshot: quote.shipToPartySnapshot,
+      shippingAddressId: quote.shippingAddressId,
+      shippingAddressSnapshot: quote.shippingAddressSnapshot,
+      shippingAddress: quote.shippingAddress,
       items,
       subtotal: totals.subtotal,
       discountTotal: totals.discountTotal,
@@ -803,7 +935,8 @@ export function DocumentListPage<T extends AnyDoc>({
                 <Table className="text-xs">
                   <TableHeader className="bg-muted/50">
                     <TableRow>
-                      <TableHead>Number</TableHead>
+                      <TableHead>{kind === "purchase" ? "BMS Purchase #" : "Number"}</TableHead>
+                      {kind === "purchase" && <TableHead>Supplier Invoice #</TableHead>}
                       <TableHead>Date</TableHead>
                       <TableHead>{tableFor === "customer" ? "Customer" : "Supplier"}</TableHead>
                       <TableHead className="text-right">Grand Total</TableHead>
@@ -820,6 +953,11 @@ export function DocumentListPage<T extends AnyDoc>({
                       return (
                         <TableRow key={r.id}>
                           <TableCell className="font-mono font-medium">{r.number}</TableCell>
+                          {kind === "purchase" && (
+                            <TableCell className="font-mono font-semibold text-primary">
+                              {(r as Purchase).supplierInvoiceNumber || "—"}
+                            </TableCell>
+                          )}
                           <TableCell>{formatDate(r.date)}</TableCell>
                           <TableCell className="font-medium">
                             {p?.name ?? "—"}
@@ -929,47 +1067,172 @@ export function DocumentListPage<T extends AnyDoc>({
           </DialogHeader>
           {editing && (
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden overscroll-contain scrollbar-hidden px-3 py-4 sm:px-6 text-xs">
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Document Number</Label>
-                  <Input value={editing.number} readOnly className="font-mono text-xs bg-muted/30" />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Date</Label>
-                  <Input type="date" value={toDateInput(editing.date)} onChange={e => setEditing({ ...editing, date: fromDateInput(e.target.value) })} />
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">{tableFor === "customer" ? "Customer *" : "Supplier *"}</Label>
-                    {((editing as any).customerId || (editing as Purchase).supplierId) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const id = (editing as any).customerId ?? (editing as Purchase).supplierId;
-                          if (tableFor === "customer") setInsightCustomerId(id);
-                          else setInsightSupplierId(id);
-                        }}
-                        className="text-[11px] text-primary hover:underline flex items-center gap-1 font-medium"
-                      >
-                        <FileText className="h-3 w-3" /> View Financial History
-                      </button>
-                    )}
-                  </div>
-                  <PartySearchSelect
-                    type={tableFor === "customer" ? "customer" : "supplier"}
-                    value={((editing as any).customerId ?? (editing as Purchase).supplierId) || ""}
-                    parties={parties}
-                    onChange={(id: string) => onPartySelect(id)}
-                    onAddNew={() => (tableFor === "customer" ? setOpenCustomerDrawer(true) : setOpenSupplierDrawer(true))}
-                  />
-                </div>
+              {kind === "invoice" && (
+                <div className="space-y-4">
+                  {/* Bill To & Ship To Side-by-Side Cards */}
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {/* BILL TO */}
+                    <Card className="p-3.5 space-y-2.5 border-border/70 shadow-xs">
+                      <div className="flex items-center justify-between border-b pb-1.5">
+                        <div className="text-xs font-bold uppercase tracking-wider text-primary">
+                          BILL TO (Customer / Sundry Debtor)
+                        </div>
+                        {(editing as any).customerId && (
+                          <button
+                            type="button"
+                            onClick={() => setInsightCustomerId((editing as any).customerId)}
+                            className="text-[11px] text-primary hover:underline font-medium"
+                          >
+                            Financial History
+                          </button>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">Customer *</Label>
+                        <PartySearchSelect
+                          type="customer"
+                          value={(editing as any).customerId || ""}
+                          parties={parties}
+                          onChange={(id: string) => onPartySelect(id)}
+                          onAddNew={() => setOpenCustomerDrawer(true)}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <PartyAddressSelect
+                          party={partyById((editing as any).customerId)}
+                          selectedAddressId={(editing as any).billingAddressId}
+                          onChange={(snapshot, addressId) => {
+                            setEditing(prev => {
+                              if (!prev) return prev;
+                              const formatted = formatAddressLines(snapshot);
+                              const isSame = (prev as any).sameAsBilling !== false;
+                              return {
+                                ...prev,
+                                billingAddressId: addressId,
+                                billingAddressSnapshot: snapshot,
+                                billingAddress: formatted,
+                                ...(isSame ? {
+                                  shippingAddressId: addressId,
+                                  shippingAddressSnapshot: snapshot,
+                                  shippingAddress: formatted,
+                                } : {}),
+                              } as T;
+                            });
+                          }}
+                          label="Billing Address (Saved Party Master)"
+                        />
+                      </div>
+                    </Card>
 
-                {tableFor === "customer" && (editing as any).customerId && (
-                  <div className="sm:col-span-3">
+                    {/* SHIP TO */}
+                    <Card className="p-3.5 space-y-2.5 border-border/70 shadow-xs">
+                      <div className="flex items-center justify-between border-b pb-1.5">
+                        <div className="text-xs font-bold uppercase tracking-wider text-primary">
+                          SHIP TO (Delivery Destination / Consignee)
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            id="inv-same-as-billing"
+                            checked={(editing as any).sameAsBilling !== false}
+                            onCheckedChange={(checked) => {
+                              const isChecked = checked === true;
+                              setEditing(prev => {
+                                if (!prev) return prev;
+                                const billSnapshot = (prev as any).billingAddressSnapshot;
+                                const billAddr = (prev as any).billingAddress;
+                                return {
+                                  ...prev,
+                                  sameAsBilling: isChecked,
+                                  ...(isChecked ? {
+                                    shipToPartyId: (prev as any).customerId,
+                                    shippingAddressId: (prev as any).billingAddressId,
+                                    shippingAddressSnapshot: billSnapshot,
+                                    shippingAddress: billAddr,
+                                  } : {}),
+                                } as T;
+                              });
+                            }}
+                          />
+                          <Label htmlFor="inv-same-as-billing" className="text-xs cursor-pointer select-none font-medium">
+                            Same as Billing Address
+                          </Label>
+                        </div>
+                      </div>
+
+                      {(editing as any).sameAsBilling !== false ? (
+                        <div className="rounded-lg border border-dashed border-border/80 bg-muted/20 p-3.5 text-center text-xs text-muted-foreground leading-relaxed">
+                          <p className="font-medium text-foreground mb-0.5">Shipping destination is identical to Billing Address.</p>
+                          <p className="text-[11px]">Uncheck to select a different delivery destination, site address, or consignee.</p>
+                          {(editing as any).billingAddress && (
+                            <div className="mt-2 rounded border border-border/50 bg-background/80 p-2 text-left text-[11px] font-mono text-muted-foreground whitespace-pre-line">
+                              {(editing as any).billingAddress}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          <div className="space-y-1">
+                            <Label className="text-xs font-medium">Ship To Party / Consignee</Label>
+                            <PartySearchSelect
+                              type="customer"
+                              value={(editing as any).shipToPartyId || (editing as any).customerId || ""}
+                              parties={parties}
+                              onChange={(id: string) => {
+                                const p = customers.find(c => c.id === id);
+                                setEditing(prev => ({
+                                  ...prev,
+                                  shipToPartyId: id,
+                                  shipToPartySnapshot: p ? {
+                                    partyName: p.name,
+                                    tradingName: p.tradingName,
+                                    gstin: p.gstin,
+                                    address: p.billingAddress || p.address,
+                                    city: p.city,
+                                    state: p.state,
+                                    country: p.country,
+                                    pincode: p.pincode,
+                                    phone: p.phone,
+                                  } : undefined,
+                                } as T));
+                              }}
+                              onAddNew={() => setOpenCustomerDrawer(true)}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <PartyAddressSelect
+                              party={customers.find(c => c.id === ((editing as any).shipToPartyId || (editing as any).customerId))}
+                              selectedAddressId={(editing as any).shippingAddressId}
+                              onChange={(snapshot, addressId) => {
+                                setEditing(prev => ({
+                                  ...prev,
+                                  shippingAddressId: addressId,
+                                  shippingAddressSnapshot: snapshot,
+                                  shippingAddress: formatAddressLines(snapshot),
+                                } as T));
+                              }}
+                              label="Shipping / Site Destination (Saved Party Master)"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Custom Shipping / Site Address Details</Label>
+                            <Textarea
+                              rows={2}
+                              value={(editing as unknown as Invoice).shippingAddress || ""}
+                              onChange={e => setEditing({ ...editing, shippingAddress: e.target.value } as T)}
+                              placeholder="Site / delivery address, gate no, contact person at site…"
+                              className="text-xs"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </Card>
+                  </div>
+
+                  {(editing as any).customerId && (
                     <InvoicePartyStatusPanel
                       party={partyById((editing as any).customerId) as any}
                       invoiceTotal={
-                        computeTotals(editing.items, Boolean(kind === "invoice" && (editing as any).isIgst), { enableGst }).grandTotal +
+                        computeTotals(editing.items, Boolean((editing as any).isIgst), { enableGst }).grandTotal +
                         ((editing as any).extraChargesTotal || 0)
                       }
                       onRecordReceipt={(_p, deficit) => {
@@ -978,29 +1241,69 @@ export function DocumentListPage<T extends AnyDoc>({
                         setOpenReceiptModal(true);
                       }}
                     />
-                  </div>
-                )}
+                  )}
 
-                <div className="space-y-1 sm:col-span-3">
-                  <PartyAddressSelect
-                    party={partyById((editing as any).customerId ?? (editing as Purchase).supplierId)}
-                    selectedAddressId={(editing as any).billingAddressId}
-                    onChange={(snapshot, addressId) => {
-                      setEditing({
-                        ...editing,
-                        billingAddressId: addressId,
-                        billingAddressSnapshot: snapshot,
-                        billingAddress: formatAddressLines(snapshot),
-                        shippingAddress: (editing as any).shippingAddress || formatAddressLines(snapshot),
-                      } as T);
-                    }}
-                    label={tableFor === "customer" ? "Billing Address (Saved Party Master)" : "Supplier Address (Saved Party Master)"}
-                  />
-                </div>
-
-                {kind === "invoice" && (
-                  <>
-                    <div className="space-y-1 sm:col-span-3">
+                  {/* Document Parameters Grid */}
+                  <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Invoice Number</Label>
+                      <Input value={editing.number} readOnly className="font-mono text-xs bg-muted/30" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Invoice Date</Label>
+                      <Input
+                        type="date"
+                        value={toDateInput(editing.date)}
+                        onChange={e => {
+                          const newDate = fromDateInput(e.target.value);
+                          const cust = partyById((editing as any).customerId);
+                          const creditDays = typeof (cust as any)?.creditDays === "number" ? (cust as any).creditDays : 0;
+                          setEditing({
+                            ...editing,
+                            date: newDate,
+                            dueDate: newDate + creditDays * 24 * 60 * 60 * 1000,
+                          } as T);
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">Due Date</Label>
+                        {partyById((editing as any).customerId) && (
+                          <span className="text-[10px] text-muted-foreground">
+                            {((partyById((editing as any).customerId) as any)?.creditDays === 0) ? "Immediate (0d)" : `${(partyById((editing as any).customerId) as any)?.creditDays || 0}d terms`}
+                          </span>
+                        )}
+                      </div>
+                      <Input
+                        type="date"
+                        value={toDateInput((editing as unknown as Invoice).dueDate)}
+                        onChange={e => setEditing({ ...editing, dueDate: fromDateInput(e.target.value) } as T)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Advance / Amount Paid (₹)</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={(editing as unknown as Invoice).amountPaid || ""}
+                        onChange={e => setEditing({ ...editing, amountPaid: Number(e.target.value) || 0 } as T)}
+                        placeholder="0.00"
+                      />
+                    </div>
+                    {enableGst && (
+                      <div className="space-y-1 sm:col-span-2">
+                        <Label className="text-xs">Tax Supply Determination</Label>
+                        <Select value={(editing as unknown as Invoice).isIgst ? "igst" : "cgst"} onValueChange={v => setEditing({ ...editing, isIgst: v === "igst" } as T)}>
+                          <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="cgst">Intra-State: CGST + SGST</SelectItem>
+                            <SelectItem value="igst">Inter-State: IGST</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <div className="space-y-1 sm:col-span-2">
                       <Label className="text-xs">Load from Quotation (Preserves items, specs, terms)</Label>
                       <Select onValueChange={applyQuotationToInvoice}>
                         <SelectTrigger className="h-9 text-xs">
@@ -1016,48 +1319,148 @@ export function DocumentListPage<T extends AnyDoc>({
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Due Date</Label>
-                      <Input type="date" value={toDateInput((editing as unknown as Invoice).dueDate)} onChange={e => setEditing({ ...editing, dueDate: fromDateInput(e.target.value) } as T)} />
-                    </div>
-                    {enableGst && (
-                      <div className="space-y-1">
-                        <Label className="text-xs">Tax Supply Determination</Label>
-                        <Select value={(editing as unknown as Invoice).isIgst ? "igst" : "cgst"} onValueChange={v => setEditing({ ...editing, isIgst: v === "igst" } as T)}>
-                          <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="cgst">Intra-State: CGST + SGST</SelectItem>
-                            <SelectItem value="igst">Inter-State: IGST</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
-                    <div className="space-y-1">
-                      <Label className="text-xs">Advance / Amount Paid (₹)</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={(editing as unknown as Invoice).amountPaid || ""}
-                        onChange={e => setEditing({ ...editing, amountPaid: Number(e.target.value) || 0 } as T)}
-                        placeholder="0.00"
-                      />
-                    </div>
-                  </>
-                )}
+                  </div>
+                </div>
+              )}
 
-                {kind === "purchase" && (
+              {kind === "purchase" && (
+                <div className="space-y-4">
+                  <Card className="p-4 border-border/70 shadow-xs space-y-3">
+                    <div className="text-xs font-bold uppercase tracking-wider text-primary border-b pb-2">
+                      PURCHASE & SUPPLIER DETAILS
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs font-medium">Supplier (Sundry Creditor) *</Label>
+                          {(editing as Purchase).supplierId && (
+                            <button
+                              type="button"
+                              onClick={() => setInsightSupplierId((editing as Purchase).supplierId)}
+                              className="text-[11px] text-primary hover:underline flex items-center gap-1 font-medium"
+                            >
+                              <FileText className="h-3 w-3" /> Supplier History
+                            </button>
+                          )}
+                        </div>
+                        <PartySearchSelect
+                          type="supplier"
+                          value={(editing as Purchase).supplierId || ""}
+                          parties={parties}
+                          onChange={(id: string) => onPartySelect(id)}
+                          onAddNew={() => setOpenSupplierDrawer(true)}
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">
+                          Supplier Invoice No.
+                          {((activeCompany as any)?.supplierInvoiceNumberPolicy === "REQUIRED") && <span className="text-destructive"> *</span>}
+                        </Label>
+                        <Input
+                          placeholder="e.g. INV-87945"
+                          value={(editing as Purchase).supplierInvoiceNumber || ""}
+                          onChange={e => setEditing({ ...editing, supplierInvoiceNumber: e.target.value } as T)}
+                          className="font-mono text-xs"
+                        />
+                        <p className="text-[10px] text-muted-foreground">Original invoice number from vendor bill</p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">Supplier Invoice Date</Label>
+                        <Input
+                          type="date"
+                          value={toDateInput((editing as Purchase).supplierInvoiceDate)}
+                          onChange={e => setEditing({ ...editing, supplierInvoiceDate: fromDateInput(e.target.value) } as T)}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Date printed on supplier's invoice</p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">BMS Purchase No.</Label>
+                        <Input value={editing.number} readOnly className="font-mono text-xs bg-muted/30" />
+                        <p className="text-[10px] text-muted-foreground">Internal atomic BMS reference</p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">Purchase Entry Date</Label>
+                        <Input
+                          type="date"
+                          value={toDateInput(editing.date)}
+                          onChange={e => setEditing({ ...editing, date: fromDateInput(e.target.value) })}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Date entered into accounts</p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">Amount Paid (₹)</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={(editing as Purchase).amountPaid || ""}
+                          onChange={e => setEditing({ ...editing, amountPaid: Number(e.target.value) || 0 } as T)}
+                          placeholder="0.00"
+                        />
+                      </div>
+
+                      <div className="space-y-1 sm:col-span-2 md:col-span-3">
+                        <PartyAddressSelect
+                          party={partyById((editing as Purchase).supplierId)}
+                          selectedAddressId={(editing as any).billingAddressId}
+                          onChange={(snapshot, addressId) => {
+                            setEditing({
+                              ...editing,
+                              billingAddressId: addressId,
+                              billingAddressSnapshot: snapshot,
+                              billingAddress: formatAddressLines(snapshot),
+                            } as T);
+                          }}
+                          label="Supplier Address (Saved Party Master)"
+                        />
+                      </div>
+                    </div>
+                  </Card>
+                </div>
+              )}
+
+              {kind === "quotation" && (
+                <div className="grid gap-3 sm:grid-cols-3">
                   <div className="space-y-1">
-                    <Label className="text-xs">Amount Paid (₹)</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={(editing as unknown as Purchase).amountPaid || ""}
-                      onChange={e => setEditing({ ...editing, amountPaid: Number(e.target.value) || 0 } as T)}
-                      placeholder="0.00"
+                    <Label className="text-xs">Document Number</Label>
+                    <Input value={editing.number} readOnly className="font-mono text-xs bg-muted/30" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Date</Label>
+                    <Input type="date" value={toDateInput(editing.date)} onChange={e => setEditing({ ...editing, date: fromDateInput(e.target.value) })} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Customer *</Label>
+                    <PartySearchSelect
+                      type="customer"
+                      value={(editing as any).customerId || ""}
+                      parties={parties}
+                      onChange={(id: string) => onPartySelect(id)}
+                      onAddNew={() => setOpenCustomerDrawer(true)}
                     />
                   </div>
-                )}
-              </div>
+                  <div className="space-y-1 sm:col-span-3">
+                    <PartyAddressSelect
+                      party={partyById((editing as any).customerId)}
+                      selectedAddressId={(editing as any).billingAddressId}
+                      onChange={(snapshot, addressId) => {
+                        setEditing({
+                          ...editing,
+                          billingAddressId: addressId,
+                          billingAddressSnapshot: snapshot,
+                          billingAddress: formatAddressLines(snapshot),
+                          shippingAddress: (editing as any).shippingAddress || formatAddressLines(snapshot),
+                        } as T);
+                      }}
+                      label="Customer Billing Address (Saved Party Master)"
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Line Items Editor */}
               <LineItemsEditor
@@ -1109,18 +1512,7 @@ export function DocumentListPage<T extends AnyDoc>({
                 </div>
               </div>
 
-              {kind === "invoice" && (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Billing Address</Label>
-                    <Textarea rows={2} value={(editing as unknown as Invoice).billingAddress ?? ""} onChange={e => setEditing({ ...editing, billingAddress: e.target.value } as T)} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Shipping Address</Label>
-                    <Textarea rows={2} value={(editing as unknown as Invoice).shippingAddress ?? ""} onChange={e => setEditing({ ...editing, shippingAddress: e.target.value } as T)} />
-                  </div>
-                </div>
-              )}
+
               <div className="space-y-1">
                 <Label className="text-xs">Notes & Payment Terms</Label>
                 <Textarea rows={2} value={(editing as AnyDoc).notes ?? ""} onChange={e => setEditing({ ...editing, notes: e.target.value } as T)} />
@@ -1272,81 +1664,7 @@ export function DocumentListPage<T extends AnyDoc>({
                   className="gap-1.5"
                   onClick={() => {
                     if (!preview) return;
-                    const isInv = kind === "invoice";
-                    const party = (partyById((preview as any).customerId ?? (preview as Purchase).supplierId) || { name: "Client" }) as any;
-                    const docCompany = (preview as any).companySnapshot || activeCompany || company || {};
-                    const isTaxDoc = enableGst && (preview.gstTotal > 0 || (preview as Invoice).isIgst);
-
-                    const normDoc: NormalizedDocument = {
-                      kind: kind as any,
-                      title: isTaxDoc ? "Tax Invoice" : kind === "invoice" ? "Commercial Invoice" : kind === "quotation" ? "Quotation" : "Purchase Bill",
-                      number: preview.number,
-                      date: preview.date,
-                      dueDate: (preview as Invoice).dueDate,
-                      company: {
-                        name: docCompany.name,
-                        legalName: docCompany.legalName || docCompany.name,
-                        address: docCompany.address,
-                        city: docCompany.city,
-                        state: docCompany.state,
-                        pincode: docCompany.pincode,
-                        gstin: docCompany.gstin,
-                        pan: docCompany.pan,
-                        phone: docCompany.phone || docCompany.mobile,
-                        email: docCompany.email,
-                        logo: docCompany.logoUrl || (docCompany as any).logo,
-                        bankName: docCompany.bankName,
-                        bankAccountNo: docCompany.bankAccount || docCompany.bankAccountNo,
-                        bankIfsc: docCompany.bankIfsc,
-                        upiId: docCompany.upiId,
-                        terms: docCompany.terms,
-                        authorizedSignatory: docCompany.authorizedSignatory,
-                        designation: docCompany.designation,
-                        signatureMode: docCompany.signatureMode,
-                        typedSignatureStyle: docCompany.typedSignatureStyle,
-                        signatureUrl: docCompany.signatureUrl,
-                        stampUrl: docCompany.stampUrl,
-                        stampMode: docCompany.stampMode,
-                        showSignature: docCompany.showSignature,
-                        showStamp: docCompany.showStamp,
-                        showSignatoryName: docCompany.showSignatoryName,
-                        showDesignation: docCompany.showDesignation,
-                        showSignatureDate: docCompany.showSignatureDate,
-                        signatureDateMode: docCompany.signatureDateMode,
-                        customSignatureDate: docCompany.customSignatureDate,
-                      },
-                      signatoryOverride: (preview as any).signatoryOverride,
-                      signatorySnapshot: (preview as any).signatorySnapshot,
-                      party: {
-                        name: party.name,
-                        company: party.company,
-                        address: party.address,
-                        city: party.city,
-                        state: party.state,
-                        pincode: party.pincode,
-                        gstin: party.gstin,
-                        phone: party.mobile || party.phone,
-                        email: party.email,
-                        placeOfSupply: party.state,
-                      },
-                      items: preview.items,
-                      subtotal: preview.subtotal,
-                      discountTotal: preview.discountTotal,
-                      cgstTotal: (preview as Invoice).cgstTotal,
-                      sgstTotal: (preview as Invoice).sgstTotal,
-                      igstTotal: (preview as Invoice).igstTotal,
-                      gstTotal: preview.gstTotal,
-                      extraCharges: (preview as Invoice).extraCharges,
-                      extraChargesTotal: (preview as Invoice).extraChargesTotal,
-                      roundOff: preview.roundOff,
-                      grandTotal: preview.grandTotal,
-                      amountPaid: (preview as Invoice).amountPaid,
-                      balance: (preview as Invoice).balance,
-                      notes: preview.notes,
-                      terms: (preview as any).terms,
-                      enableGst: isTaxDoc,
-                      watermarkMode: (docCompany as any).watermarkSetting || "off",
-                    };
+                    const normDoc = getNormalizedDoc(preview);
                     downloadDocumentPDF(normDoc, `${preview.number}.pdf`);
                     toast.success(`Selectable Vector PDF generated: ${preview.number}.pdf`);
                   }}
@@ -1568,6 +1886,51 @@ export function DocumentListPage<T extends AnyDoc>({
           }}
         />
       )}
+
+      {/* Duplicate Supplier Invoice Warning Modal (PRD §§ 58-62) */}
+      <Dialog
+        open={Boolean(duplicatePurchaseWarning?.open)}
+        onOpenChange={(o) => !o && setDuplicatePurchaseWarning(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle className="h-5 w-5 text-amber-600" />
+              Duplicate Supplier Invoice Detected
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-xs">
+            <p className="text-slate-700 leading-relaxed">
+              Supplier Invoice <strong className="font-mono font-bold text-foreground">"{duplicatePurchaseWarning?.invoiceNo}"</strong> has already been recorded for <strong className="text-foreground">{duplicatePurchaseWarning?.supplierName}</strong> in BMS Purchase <strong className="font-mono">{duplicatePurchaseWarning?.existingNumber}</strong>.
+            </p>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-800 leading-relaxed">
+              To prevent double-counting expenses, payables, or input tax credit, please verify whether this purchase bill was already recorded.
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setDuplicatePurchaseWarning(null)}
+              className="text-xs"
+            >
+              Review Invoice No.
+            </Button>
+            <Button
+              variant="default"
+              onClick={() => {
+                const existingId = duplicatePurchaseWarning?.existingId;
+                setDuplicatePurchaseWarning(null);
+                setOpen(false);
+                const target = (rows as Purchase[]).find(p => p.id === existingId);
+                if (target) setPreview(target as unknown as T);
+              }}
+              className="text-xs"
+            >
+              Open Existing Purchase
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={Boolean(deleteTargetDoc)}

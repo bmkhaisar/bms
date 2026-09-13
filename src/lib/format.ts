@@ -14,9 +14,10 @@ export function formatNumber(n: number, digits = 2): string {
   });
 }
 
-export function formatDate(ts: number | undefined): string {
+export function formatDate(ts: number | string | undefined): string {
   if (!ts) return "-";
-  const d = new Date(ts);
+  const d = typeof ts === "string" ? new Date(ts.includes("T") ? ts : ts + "T00:00:00") : new Date(ts);
+  if (isNaN(d.getTime())) return String(ts);
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yy = d.getFullYear();
@@ -29,8 +30,10 @@ export function todayTs(): number {
   return d.getTime();
 }
 
-export function toDateInput(ts: number | undefined): string {
-  const d = ts ? new Date(ts) : new Date();
+export function toDateInput(ts: number | string | undefined): string {
+  if (!ts) return "";
+  const d = typeof ts === "string" ? new Date(ts.includes("T") ? ts : ts + "T00:00:00") : new Date(ts);
+  if (isNaN(d.getTime())) return "";
   return d.toISOString().slice(0, 10);
 }
 

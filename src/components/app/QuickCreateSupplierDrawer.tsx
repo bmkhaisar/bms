@@ -94,6 +94,7 @@ export function QuickCreateSupplierDrawer({
         gstin: form.gstin.trim() ? form.gstin.trim().toUpperCase() : undefined,
         address: form.address.trim() || undefined,
         openingBalance: Number(form.openingBalance) || 0,
+        partyType: "SUNDRY_CREDITORS",
         createdAt: Date.now(),
       };
 
@@ -128,7 +129,7 @@ export function QuickCreateSupplierDrawer({
       <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base font-bold">
-            <Truck className="h-5 w-5 text-primary" /> Quick Add Supplier / Vendor
+            <Truck className="h-5 w-5 text-primary" /> New Sundry Creditor (Supplier)
           </DialogTitle>
         </DialogHeader>
 

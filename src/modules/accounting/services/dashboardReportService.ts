@@ -1,11 +1,20 @@
 import type { Ledger } from "@/modules/accounting/types";
-import type { Invoice, Purchase, Product, Customer, Supplier } from "@/lib/db";
+import type { Invoice, Purchase, Product, Customer, Supplier, Receipt } from "@/lib/db";
 
 export interface DashboardMetrics {
   totalSales: number;
   totalPurchases: number;
   totalReceivables: number;
   totalPayables: number;
+  totalAmountReceived: number;
+  receivedByPaymentMode: {
+    cash: number;
+    bank: number;
+    upi: number;
+    cheque: number;
+    card: number;
+    other: number;
+  };
   cashInHand: number;
   bankBalance: number;
   totalLiquidity: number;
@@ -28,7 +37,7 @@ export interface DashboardMetrics {
 
 /**
  * Computes authoritative dashboard financial KPIs from formal double-entry ledgers,
- * sales documents, purchases, and inventory stock.
+ * sales documents, purchases, receipts, and inventory stock.
  * Strictly eliminates fake demo data and the legacy netProfit = grossProfit assumption.
  */
 export function computeDashboardMetrics(params: {
@@ -36,10 +45,11 @@ export function computeDashboardMetrics(params: {
   invoices: Invoice[];
   purchases: Purchase[];
   products: Product[];
+  receipts?: Receipt[];
   financialYearStart?: number;
   financialYearEnd?: number;
 }): DashboardMetrics {
-  const { ledgers, invoices, purchases, products, financialYearStart, financialYearEnd } = params;
+  const { ledgers, invoices, purchases, products, receipts = [], financialYearStart, financialYearEnd } = params;
 
   // 1. Filter documents by active Financial Year window if provided
   const fyInvoices = invoices.filter((inv) => {
@@ -53,6 +63,42 @@ export function computeDashboardMetrics(params: {
     if (financialYearEnd && pu.date > financialYearEnd) return false;
     return true;
   });
+
+  // Filter receipts by active Financial Year window
+  const fyReceipts = receipts.filter((rec) => {
+    if (financialYearStart && rec.date < financialYearStart) return false;
+    if (financialYearEnd && rec.date > financialYearEnd) return false;
+    return true;
+  });
+
+  // Authoritative posted customer receipts only (strictly exclude draft, failed, reversed, refunded, cancelled)
+  const postedReceipts = fyReceipts.filter((rec) => {
+    const status = (rec as any).status;
+    if (status === "cancelled" || status === "draft") return false;
+    if (rec.postingStatus === "draft" || rec.postingStatus === "failed" || rec.postingStatus === "reversed" || rec.postingStatus === "refunded") return false;
+    return true;
+  });
+
+  const totalAmountReceived = postedReceipts.reduce((sum, r) => sum + (r.amount || 0), 0);
+
+  const receivedByPaymentMode = {
+    cash: 0,
+    bank: 0,
+    upi: 0,
+    cheque: 0,
+    card: 0,
+    other: 0,
+  };
+
+  for (const r of postedReceipts) {
+    const m = (r.mode || (r.paymentMethod as string) || "other").toLowerCase();
+    if (m === "cash") receivedByPaymentMode.cash += r.amount;
+    else if (m === "bank" || m === "transfer" || m === "neft" || m === "rtgs" || m === "imps") receivedByPaymentMode.bank += r.amount;
+    else if (m === "upi") receivedByPaymentMode.upi += r.amount;
+    else if (m === "cheque" || m === "check") receivedByPaymentMode.cheque += r.amount;
+    else if (m === "card" || m === "debit" || m === "credit") receivedByPaymentMode.card += r.amount;
+    else receivedByPaymentMode.other += r.amount;
+  }
 
   // 2. Authoritative Ledger Balances
   // Cash and Bank ledgers
@@ -204,6 +250,8 @@ export function computeDashboardMetrics(params: {
     totalPurchases,
     totalReceivables,
     totalPayables,
+    totalAmountReceived,
+    receivedByPaymentMode,
     cashInHand: cashPaise / 100,
     bankBalance: bankPaise / 100,
     totalLiquidity: (cashPaise + bankPaise) / 100,

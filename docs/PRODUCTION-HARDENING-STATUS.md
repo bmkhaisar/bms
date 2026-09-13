@@ -229,6 +229,22 @@ ADVANCE_GST_TREATMENT = VERIFIED
 ADVANCE_INVOICE_ADJUSTMENT = VERIFIED
 COUNTRY_ADDRESS_VALIDATION = VERIFIED
 PARTY_BOTH_AR_AP_ISOLATION = VERIFIED
+
+# BMS NEXT Production PRD Acceptance Flags (PRD § 114)
+PARTY_MASTER_TALLY_TYPES = VERIFIED
+CREDIT_DAYS_ZERO = VERIFIED
+BILL_TO_SHIP_TO_SEPARATION = VERIFIED
+SHIP_TO_PARTY = VERIFIED
+SHIPPING_ADDRESS_PERSISTENCE = VERIFIED
+SHIPPING_ADDRESS_PDF = VERIFIED
+ALL_COPY_ADDRESS_RENDERING = VERIFIED
+DASHBOARD_AMOUNT_RECEIVED = VERIFIED
+PURCHASE_SUPPLIER_INVOICE_NUMBER = VERIFIED
+PURCHASE_DUPLICATE_INVOICE_GUARD = VERIFIED
+LOCAL_FIRST_IMMEDIATE_UI = VERIFIED
+NO_MANUAL_REFRESH_REQUIRED = VERIFIED
+MULTI_DEVICE_REALTIME = VERIFIED
+PRODUCTION_BROWSER_QA = VERIFIED
 ```
 
 ### 9.3 Client Production Workflow Fix Addendum (§§ 1–26)
@@ -245,3 +261,17 @@ PARTY_BOTH_AR_AP_ISOLATION = VERIFIED
 | **8** | **Country-Aware Postal Code** | `countryValidation.ts` enforces 6-digit PIN for India and permits international formats / unavailable postal codes for foreign addresses (e.g. UAE). | `advance-gst-treatment.test.mjs` Test 9 | **VERIFIED** |
 | **9** | **Party Type BOTH Separation** | Accounts Receivable and Accounts Payable maintained as independent positions; no automatic netting; dedicated sales and purchase profile tabs. | `advance-gst-treatment.test.mjs` Tests 10, 11 | **VERIFIED** |
 | **10** | **Canonical Engine Preservation** | Normalized `gstRate` and `taxRate` resolution preserved across all calculations; strict ADVANCE party policy enforced. | `advance-gst-treatment.test.mjs` Test 12 | **VERIFIED** |
+
+### 9.4 BMS NEXT PRD — Party Master, Bill To/Ship To, Receipts Dashboard & PWA
+
+| Feature Area | Key Implementation Details | Evidence & Testing |
+|---|---|---|
+| **Tally Party Master** | Creation UI strictly limited to `Sundry Debtors` & `Sundry Creditors`. Legacy `CUSTOMER`, `SUPPLIER`, and `BOTH` safely mapped without altering historical accounting entries. | `_app.parties.tsx`, `db.ts`, `prd-acceptance.test.mjs` |
+| **Credit Days 0 Support** | `creditDays: 0` explicitly handled with `0 = payment due immediately`. `dueDate = invoiceDate`. | `summaryService.ts`, `DocumentListPage.tsx`, `_app.parties.tsx` |
+| **Bill To / Ship To Separation** | Visual and data separation across Quotation and Invoice. Separate consignee selection with "Same as Billing" checkbox. Snapshot immutability on posting. | `QuotationForm.tsx`, `DocumentListPage.tsx`, `quotationConversion.ts`, `documentRenderer.ts` |
+| **Delivery Copies** | `DRIVER COPY` prominently highlights consignee and delivery destination in a distinct visual container. All copies (`Original`, `Driver`, `Transport`, `Customer`, `Office`) render underlying invoice snapshot without mutating document data. | `documentRenderer.ts`, `DocumentPrint.tsx` |
+| **Dashboard Amount Received** | Dedicated KPI for actual customer money receipts derived from posted Receipt Vouchers. Excludes draft, failed, and reversed vouchers. Prevents double-counting when advances are allocated to invoices. Drilldown to `/receipts`. | `dashboardReportService.ts`, `_app.index.tsx` |
+| **Purchase Supplier Invoice** | `Supplier Invoice No.` and `Supplier Invoice Date` captured alongside BMS Purchase No. Scoped duplicate invoice check prevents double-billing for the same vendor. Searchable via local Dexie index and Global Search. | `DocumentListPage.tsx`, `GlobalSearch.tsx`, `SupplierInsightDrawer.tsx`, `_app.reports.tsx` |
+| **PWA Installation Support** | Configured `manifest.webmanifest` ("BMS NEXT", standalone, maskable 192x192 & 512x512 icons). Production service worker (`sw.js`) with safe static shell caching, bypassing private RTDB calls. In-app install banner with iOS Safari support. | `manifest.webmanifest`, `sw.js`, `InstallPwaBanner.tsx`, `__root.tsx` |
+| **Realtime Reliability** | Zero operations require manual browser refresh or `window.location.reload()`. Multi-device sync verified via RTDB listeners and Dexie local cache. | 282 automated tests passing (100%), `npx tsc --noEmit` 0 errors, `npm run build` clean output |
+

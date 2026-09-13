@@ -230,7 +230,7 @@ export function CustomerInsightDrawer({ customerId, open, onOpenChange, onSelect
                     {formatMoney(summary.overdue)}
                   </div>
                   <div className="text-[10px] text-muted-foreground mt-0.5">
-                    {summary.creditDays > 0 ? `Terms: ${summary.creditDays} days` : "Standard terms"}
+                    {summary.creditDays === 0 ? "Terms: Due Immediately (0d)" : summary.creditDays > 0 ? `Terms: ${summary.creditDays} days` : "Standard terms"}
                   </div>
                 </Card>
               </div>

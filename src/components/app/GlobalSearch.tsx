@@ -117,11 +117,14 @@ export function GlobalSearch({
               } else if (m.entityType === "products") {
                 link = `/products?q=${encodeURIComponent(entity?.name || "")}&id=${m.entityId}`;
                 subtext = `Product · ₹${entity?.sellingPrice || 0}`;
+              } else if (m.entityType === "purchases") {
+                link = `/purchases?q=${encodeURIComponent(entity?.supplierInvoiceNumber || entity?.number || "")}&id=${m.entityId}`;
+                subtext = `Purchase · ${entity?.supplierSnapshot?.name || ""} ${entity?.supplierInvoiceNumber ? `· Inv #${entity.supplierInvoiceNumber}` : ""} · ₹${entity?.grandTotal || 0}`;
               }
               return (
                 <CommandItem
                   key={`cached-${m.entityType}-${m.entityId}`}
-                  value={`fast ${m.entityType} ${label} ${subtext}`}
+                  value={`fast ${m.entityType} ${label} ${entity?.supplierInvoiceNumber || ""} ${subtext}`}
                   onSelect={() => go(link)}
                 >
                   <Zap className="mr-2 h-4 w-4 text-amber-500" />
@@ -206,13 +209,18 @@ export function GlobalSearch({
             {purchases.map((pu) => (
               <CommandItem
                 key={pu.id}
-                value={`purchase ${pu.number} ${pu.supplierSnapshot?.name ?? ""}`}
+                value={`purchase ${pu.number} ${pu.supplierInvoiceNumber ?? ""} ${pu.supplierSnapshot?.name ?? ""}`}
                 onSelect={() =>
-                  go(`/purchases?q=${encodeURIComponent(pu.number)}&id=${pu.id}`)
+                  go(`/purchases?q=${encodeURIComponent(pu.supplierInvoiceNumber || pu.number)}&id=${pu.id}`)
                 }
               >
                 <ShoppingCart className="mr-2 h-4 w-4 text-indigo-600" />
                 <span className="font-mono font-medium">{pu.number}</span>
+                {pu.supplierInvoiceNumber && (
+                  <span className="ml-1.5 rounded bg-muted px-1.5 py-0.2 font-mono text-xs font-semibold text-primary">
+                    Inv: {pu.supplierInvoiceNumber}
+                  </span>
+                )}
                 <span className="ml-2 text-xs text-muted-foreground">
                   · {pu.supplierSnapshot?.name || "Vendor"} · ₹{pu.grandTotal}
                 </span>

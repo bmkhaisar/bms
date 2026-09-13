@@ -1,6 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell, PageHeader } from "@/components/app/AppShell";
-import { db, uid, type Party, type PartyType, type PaymentPolicy, type PartyAddress } from "@/lib/db";
+import {
+  db,
+  uid,
+  type Party,
+  type PartyType,
+  type PaymentPolicy,
+  type PartyAddress,
+  isSundryDebtor,
+  isSundryCreditor,
+  normalizePartyType,
+  getPartyTypeLabel,
+} from "@/lib/db";
 import { useLive } from "@/lib/useLive";
 import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
@@ -39,7 +50,7 @@ const emptyParty: Party = {
   id: "",
   name: "",
   tradingName: "",
-  partyType: "CUSTOMER",
+  partyType: "SUNDRY_DEBTORS",
   paymentPolicy: "CREDIT",
   mobile: "",
   phone: "",
@@ -59,7 +70,7 @@ const emptyParty: Party = {
   pincode: "",
   contactPerson: "",
   creditLimit: 0,
-  creditDays: 30,
+  creditDays: 0,
   openingBalance: 0,
   taxRegistrationType: "regular",
   active: true,
@@ -72,7 +83,7 @@ export function PartiesPage() {
   const dexieRows = useLive<Party>(() => db().parties.orderBy("name").toArray());
   const [cloudRows, setCloudRows] = useState<Party[]>([]);
   const [q, setQ] = useState("");
-  const [activeTab, setActiveTab] = useState<"ALL" | "CUSTOMER" | "SUPPLIER" | "ADVANCE" | "CREDIT" | "INACTIVE">("ALL");
+  const [activeTab, setActiveTab] = useState<"ALL" | "SUNDRY_DEBTORS" | "SUNDRY_CREDITORS" | "ADVANCE" | "CREDIT" | "INACTIVE">("ALL");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Party>(emptyParty);
   const [saving, setSaving] = useState(false);
@@ -126,10 +137,10 @@ export function PartiesPage() {
 
         for (const p of list) {
           db().parties.put(p);
-          if (p.partyType === "CUSTOMER" || p.partyType === "BOTH") {
+          if (isSundryDebtor(p.partyType)) {
             db().customers.put(p as any);
           }
-          if (p.partyType === "SUPPLIER" || p.partyType === "BOTH") {
+          if (isSundryCreditor(p.partyType)) {
             db().suppliers.put(p as any);
           }
         }
@@ -182,8 +193,8 @@ export function PartiesPage() {
       }
 
       // Tab filter
-      if (activeTab === "CUSTOMER" && r.partyType !== "CUSTOMER" && r.partyType !== "BOTH") return false;
-      if (activeTab === "SUPPLIER" && r.partyType !== "SUPPLIER" && r.partyType !== "BOTH") return false;
+      if (activeTab === "SUNDRY_DEBTORS" && !isSundryDebtor(r.partyType)) return false;
+      if (activeTab === "SUNDRY_CREDITORS" && !isSundryCreditor(r.partyType)) return false;
       if (activeTab === "ADVANCE" && r.paymentPolicy !== "ADVANCE") return false;
       if (activeTab === "CREDIT" && r.paymentPolicy !== "CREDIT") return false;
 
@@ -208,10 +219,12 @@ export function PartiesPage() {
 
   const pager = usePagination(filtered, 12);
 
-  function openNew() {
+  function openNew(defaultType: "SUNDRY_DEBTORS" | "SUNDRY_CREDITORS" = "SUNDRY_DEBTORS") {
     setEditing({
       ...emptyParty,
       id: uid(),
+      partyType: defaultType,
+      creditDays: 0,
       state: activeCompany?.state || "",
       country: activeCompany?.country || "India",
       createdAt: Date.now(),
@@ -224,7 +237,8 @@ export function PartiesPage() {
       ...r,
       country: r.country || activeCompany?.country || "India",
       paymentPolicy: r.paymentPolicy || "CREDIT",
-      partyType: r.partyType || "CUSTOMER",
+      partyType: normalizePartyType(r.partyType),
+      creditDays: typeof r.creditDays === "number" ? r.creditDays : 0,
       active: r.active !== false,
     });
     setOpen(true);
@@ -385,13 +399,16 @@ export function PartiesPage() {
         ...editing,
         name: editing.name.trim(),
         tradingName: editing.tradingName?.trim() || undefined,
-        partyType: editing.partyType || "CUSTOMER",
+        partyType: normalizePartyType(editing.partyType),
         paymentPolicy: editing.paymentPolicy || "CREDIT",
         country: editing.country.trim() || "India",
         pincode: editing.pincode?.trim() || undefined,
         gstin: editing.gstin?.trim() ? editing.gstin.trim().toUpperCase() : undefined,
         creditLimit: Number(editing.creditLimit) || 0,
-        creditDays: Number(editing.creditDays) || 30,
+        creditDays:
+          editing.creditDays !== undefined && editing.creditDays !== null && !isNaN(Number(editing.creditDays))
+            ? Math.max(0, Math.floor(Number(editing.creditDays)))
+            : 0,
         active: editing.active !== false,
         updatedAt: Date.now(),
       };
@@ -429,10 +446,10 @@ export function PartiesPage() {
         },
         syncDexie: async () => {
           await db().parties.put(partyData);
-          if (partyData.partyType === "CUSTOMER" || partyData.partyType === "BOTH") {
+          if (isSundryDebtor(partyData.partyType)) {
             await db().customers.put(partyData as any);
           }
-          if (partyData.partyType === "SUPPLIER" || partyData.partyType === "BOTH") {
+          if (isSundryCreditor(partyData.partyType)) {
             await db().suppliers.put(partyData as any);
           }
           if (activeCompany?.id && user?.uid) {
@@ -455,8 +472,8 @@ export function PartiesPage() {
             }
           } else if (prev) {
             await db().parties.put(prev);
-            if (prev.partyType === "CUSTOMER" || prev.partyType === "BOTH") await db().customers.put(prev as any);
-            if (prev.partyType === "SUPPLIER" || prev.partyType === "BOTH") await db().suppliers.put(prev as any);
+            if (isSundryDebtor(prev.partyType)) await db().customers.put(prev as any);
+            if (isSundryCreditor(prev.partyType)) await db().suppliers.put(prev as any);
           }
         },
         serverMutation: async () => {
@@ -495,25 +512,26 @@ export function PartiesPage() {
       <div className="space-y-4">
         <PageHeader
           title="Party Master"
-          description="Unified business ledger directory for Customers and Suppliers with Advance/Credit policy control and address reuse."
+          description="Unified Tally-grade ledger directory for Sundry Debtors and Sundry Creditors with credit control and multiple shipping destinations."
           actions={
-            <Button onClick={openNew} className="gap-1.5 shadow-sm">
-              <Plus className="h-4 w-4" /> Add Party
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => openNew("SUNDRY_DEBTORS")} className="gap-1.5 shadow-sm">
+                <Plus className="h-4 w-4" /> New Sundry Debtor
+              </Button>
+              <Button onClick={() => openNew("SUNDRY_CREDITORS")} variant="outline" className="gap-1.5 shadow-sm">
+                <Plus className="h-4 w-4" /> New Sundry Creditor
+              </Button>
+            </div>
           }
         />
 
         {/* Tab Filters */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full sm:w-auto">
-            <TabsList className="grid grid-cols-6 w-full sm:w-auto text-xs">
+            <TabsList className="grid grid-cols-4 w-full sm:w-auto text-xs">
               <TabsTrigger value="ALL">All ({activeCount})</TabsTrigger>
-              <TabsTrigger value="CUSTOMER">Customers</TabsTrigger>
-              <TabsTrigger value="SUPPLIER">Suppliers</TabsTrigger>
-              <TabsTrigger value="ADVANCE" className="text-emerald-600 dark:text-emerald-400">
-                Advance
-              </TabsTrigger>
-              <TabsTrigger value="CREDIT">Credit</TabsTrigger>
+              <TabsTrigger value="SUNDRY_DEBTORS">Sundry Debtors</TabsTrigger>
+              <TabsTrigger value="SUNDRY_CREDITORS">Sundry Creditors</TabsTrigger>
               <TabsTrigger value="INACTIVE">Inactive ({inactiveCount})</TabsTrigger>
             </TabsList>
           </Tabs>
@@ -585,17 +603,15 @@ export function PartiesPage() {
                       <TableCell className="py-2.5 text-xs">
                         <Badge
                           variant="outline"
-                          className={`text-[10px] uppercase font-semibold ${
-                            party.partyType === "BOTH"
-                              ? "border-purple-500 text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/30"
-                              : party.partyType === "SUPPLIER"
+                          className={`text-[10px] font-semibold ${
+                            isSundryCreditor(party.partyType) && !isSundryDebtor(party.partyType)
                               ? "border-sky-500 text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30"
+                              : party.partyType === "BOTH"
+                              ? "border-purple-500 text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/30"
                               : "border-emerald-500 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/30"
                           }`}
                         >
-                          {party.partyType === "BOTH"
-                            ? "Cust + Supp"
-                            : party.partyType || "Customer"}
+                          {getPartyTypeLabel(party.partyType)}
                         </Badge>
                       </TableCell>
 
@@ -608,7 +624,7 @@ export function PartiesPage() {
                         ) : (
                           <Badge variant="secondary" className="text-[10px] gap-1">
                             <ShieldCheck className="h-3 w-3 text-muted-foreground" />
-                            Credit ({party.creditDays || 30}d)
+                            Credit ({typeof party.creditDays === "number" ? party.creditDays : 0}d)
                           </Badge>
                         )}
                       </TableCell>
@@ -717,16 +733,15 @@ export function PartiesPage() {
               <div>
                 <Label className="text-xs">Party Type *</Label>
                 <Select
-                  value={editing.partyType || "CUSTOMER"}
+                  value={normalizePartyType(editing.partyType)}
                   onValueChange={(val: PartyType) => setEditing((p) => ({ ...p, partyType: val }))}
                 >
                   <SelectTrigger className="mt-1 h-8 text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="CUSTOMER">Customer (Accounts Receivable)</SelectItem>
-                    <SelectItem value="SUPPLIER">Supplier (Accounts Payable)</SelectItem>
-                    <SelectItem value="BOTH">Both (Customer & Supplier Linked)</SelectItem>
+                    <SelectItem value="SUNDRY_DEBTORS">Sundry Debtors (Customers / Accounts Receivable)</SelectItem>
+                    <SelectItem value="SUNDRY_CREDITORS">Sundry Creditors (Suppliers / Accounts Payable)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -852,14 +867,27 @@ export function PartiesPage() {
               </div>
 
               <div>
-                <Label className="text-xs">Credit Days</Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">Credit Days</Label>
+                  <span className="text-[10px] text-muted-foreground">0 = payment due immediately</span>
+                </div>
                 <Input
                   type="number"
-                  value={editing.creditDays || ""}
-                  onChange={(e) => setEditing((p) => ({ ...p, creditDays: Number(e.target.value) || 30 }))}
-                  placeholder="30"
+                  min="0"
+                  step="1"
+                  value={editing.creditDays !== undefined && editing.creditDays !== null ? editing.creditDays : 0}
+                  onChange={(e) => {
+                    const val = e.target.value === "" ? 0 : Number(e.target.value);
+                    setEditing((p) => ({ ...p, creditDays: isNaN(val) ? 0 : Math.max(0, Math.floor(val)) }));
+                  }}
+                  placeholder="0"
                   className="mt-1 h-8"
                 />
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {editing.creditDays === 0
+                    ? "Payment Due Immediately (Due Date = Invoice Date)"
+                    : `Payment due within ${editing.creditDays} days of invoice date`}
+                </p>
               </div>
             </div>
 

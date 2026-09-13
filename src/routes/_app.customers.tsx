@@ -619,10 +619,15 @@ function CustomersPage() {
               <Label className="text-xs">Credit Days</Label>
               <Input
                 type="number"
-                value={editing.creditDays || ""}
-                onChange={(e) => setEditing({ ...editing, creditDays: Number(e.target.value) || 0 })}
-                placeholder="30"
+                min="0"
+                value={typeof editing.creditDays === "number" ? editing.creditDays : 0}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  setEditing({ ...editing, creditDays: isNaN(val) ? 0 : Math.max(0, val) });
+                }}
+                placeholder="0"
               />
+              <p className="text-[10px] text-muted-foreground">0 = payment due immediately</p>
             </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0 mt-3">

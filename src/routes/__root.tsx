@@ -153,6 +153,16 @@ function RootComponent() {
 
     // Initialize connectivity listener & outbox sync
     const cleanupOutbox = outboxManager.init();
+
+    // Register PWA service worker
+    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js").catch((err) => {
+          console.warn("[SW] Registration error:", err);
+        });
+      });
+    }
+
     return () => cleanupOutbox();
   }, []);
 

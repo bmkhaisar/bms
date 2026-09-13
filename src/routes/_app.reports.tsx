@@ -118,10 +118,10 @@ function PurchaseReport({ from, to }: { from?: number; to?: number }) {
   return (
     <Card className="card-soft mt-4 p-4">
       <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">Purchase Report</h3><ExportBtn name="purchases.json" data={rows} /></div>
-      <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Bill</TableHead><TableHead>Supplier</TableHead><TableHead className="text-right">Total</TableHead></TableRow></TableHeader>
+      <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>BMS Bill #</TableHead><TableHead>Supplier Inv #</TableHead><TableHead>Supplier Inv Date</TableHead><TableHead>Supplier</TableHead><TableHead className="text-right">Total</TableHead></TableRow></TableHeader>
         <TableBody>
-          {rows.map(i => (<TableRow key={i.id}><TableCell>{formatDate(i.date)}</TableCell><TableCell className="font-mono text-xs">{i.number}</TableCell><TableCell>{suppliers.find(c => c.id === i.supplierId)?.name ?? "—"}</TableCell><TableCell className="text-right font-mono">{formatMoney(i.grandTotal)}</TableCell></TableRow>))}
-          {rows.length === 0 && <TableRow><TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">No purchases.</TableCell></TableRow>}
+          {rows.map(i => (<TableRow key={i.id}><TableCell>{formatDate(i.date)}</TableCell><TableCell className="font-mono text-xs">{i.number}</TableCell><TableCell className="font-mono text-xs font-semibold text-primary">{i.supplierInvoiceNumber || "—"}</TableCell><TableCell className="text-xs">{i.supplierInvoiceDate ? formatDate(i.supplierInvoiceDate) : "—"}</TableCell><TableCell>{suppliers.find(c => c.id === i.supplierId)?.name ?? i.supplierSnapshot?.name ?? "—"}</TableCell><TableCell className="text-right font-mono">{formatMoney(i.grandTotal)}</TableCell></TableRow>))}
+          {rows.length === 0 && <TableRow><TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">No purchases.</TableCell></TableRow>}
         </TableBody>
       </Table>
       <div className="mt-3 flex justify-end text-sm">Total Purchases: <b className="ml-2 font-mono">{formatMoney(total)}</b></div>
@@ -605,6 +605,8 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
     type: "Sale" | "Purchase";
     date: number;
     docNumber: string;
+    supplierInvoiceNumber?: string;
+    supplierInvoiceDate?: number | string;
     partyName: string;
     gstin: string;
     taxable: number;
@@ -646,6 +648,8 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
         type: "Purchase",
         date: p.date,
         docNumber: p.number,
+        supplierInvoiceNumber: p.supplierInvoiceNumber,
+        supplierInvoiceDate: p.supplierInvoiceDate,
         partyName: p.supplierSnapshot?.name || supp?.name || "Supplier",
         gstin: p.supplierSnapshot?.gstin || supp?.gstin || "—",
         taxable: p.subtotal - p.discountTotal,
@@ -653,7 +657,7 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
         sgst: s,
         igst: g,
         totalTax: p.gstTotal,
-        link: `/purchases?q=${encodeURIComponent(p.number)}`,
+        link: `/purchases?q=${encodeURIComponent(p.supplierInvoiceNumber || p.number)}`,
       };
     }),
   ].sort((a, b) => b.date - a.date);
@@ -729,6 +733,12 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
                     <Link to={tx.link as any} className="text-primary underline hover:text-primary/80">
                       {tx.docNumber}
                     </Link>
+                    {tx.supplierInvoiceNumber && (
+                      <div className="text-[10px] text-muted-foreground font-sans">
+                        Inv: <span className="font-mono font-semibold text-foreground">{tx.supplierInvoiceNumber}</span>
+                        {tx.supplierInvoiceDate ? ` (${formatDate(tx.supplierInvoiceDate)})` : ""}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="font-medium text-foreground">{tx.partyName}</TableCell>
                   <TableCell className="font-mono text-xs">{tx.gstin}</TableCell>

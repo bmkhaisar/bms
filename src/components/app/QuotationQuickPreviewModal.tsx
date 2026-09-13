@@ -97,26 +97,57 @@ export function QuotationQuickPreviewModal({
             </div>
           </div>
 
-          {/* Customer & Billing Address Snapshot */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3 rounded-lg bg-slate-50 border border-slate-200">
-            <div>
-              <div className="text-[11px] font-bold uppercase text-slate-500 tracking-wider mb-1">Customer Details</div>
-              <div className="font-bold text-slate-900">{cust?.name || "Valued Customer"}</div>
-              {cust?.company && <div className="text-slate-600">{cust.company}</div>}
-              {cust?.gstin && <div className="font-mono text-[11px] text-slate-700">GSTIN: {cust.gstin}</div>}
-              {cust?.mobile && <div className="text-slate-600">Mobile: {cust.mobile}</div>}
-              {cust?.email && <div className="text-slate-600">Email: {cust.email}</div>}
+          {/* Bill To & Ship To Split Blocks */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200">
+              <div className="text-[11px] font-bold uppercase text-primary tracking-wider mb-1.5 flex items-center gap-1">
+                <span>BILL TO (Customer)</span>
+              </div>
+              <div className="font-bold text-slate-900">{quotation.billToSnapshot?.partyName || cust?.name || "Valued Customer"}</div>
+              {cust?.company && <div className="text-slate-600 font-medium">{cust.company}</div>}
+              {(quotation.billToSnapshot?.gstin || cust?.gstin) && (
+                <div className="font-mono text-[11px] text-slate-700">GSTIN: {quotation.billToSnapshot?.gstin || cust?.gstin}</div>
+              )}
+              <div className="text-slate-700 whitespace-pre-line leading-relaxed mt-1">
+                {quotation.billToSnapshot
+                  ? formatAddressLines(quotation.billToSnapshot)
+                  : quotation.billingAddressSnapshot
+                  ? formatAddressLines(quotation.billingAddressSnapshot)
+                  : quotation.billingAddress || [cust?.billingAddress || cust?.address, cust?.city, [cust?.state, cust?.pincode].filter(Boolean).join(" - "), cust?.country || "India"].filter(Boolean).join(", ")}
+              </div>
+              {(quotation.contactPhone || cust?.mobile || cust?.phone) && (
+                <div className="text-slate-600 mt-1">
+                  Contact: {[quotation.contactPerson || cust?.contactPerson, quotation.contactPhone || cust?.mobile || cust?.phone].filter(Boolean).join(" · ")}
+                </div>
+              )}
             </div>
 
-            <div>
-              <div className="text-[11px] font-bold uppercase text-slate-500 tracking-wider mb-1">Billing & Shipping Address</div>
-              {quotation.billingAddressSnapshot ? (
-                <div className="text-slate-700 whitespace-pre-line leading-relaxed">
-                  {formatAddressLines(quotation.billingAddressSnapshot)}
-                </div>
-              ) : (
-                <div className="text-slate-700">
-                  {[cust?.billingAddress || cust?.address, cust?.city, [cust?.state, cust?.pincode].filter(Boolean).join(" - "), cust?.country || "India"].filter(Boolean).join(", ") || "Same as customer address"}
+            <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200">
+              <div className="text-[11px] font-bold uppercase text-primary tracking-wider mb-1.5 flex items-center justify-between">
+                <span>SHIP TO (Delivery Destination)</span>
+                {quotation.sameAsBilling !== false && (
+                  <Badge variant="outline" className="text-[9px] bg-white text-slate-600 font-normal">
+                    Same as Billing
+                  </Badge>
+                )}
+              </div>
+              <div className="font-bold text-slate-900">
+                {quotation.shipToPartySnapshot?.partyName || (quotation.sameAsBilling !== false ? (quotation.billToSnapshot?.partyName || cust?.name) : "Site Consignee")}
+              </div>
+              {quotation.shipToPartySnapshot?.gstin && (
+                <div className="font-mono text-[11px] text-slate-700">GSTIN: {quotation.shipToPartySnapshot.gstin}</div>
+              )}
+              <div className="text-slate-700 whitespace-pre-line leading-relaxed mt-1">
+                {quotation.shippingAddressSnapshot
+                  ? formatAddressLines(quotation.shippingAddressSnapshot)
+                  : quotation.shippingAddress || (quotation.sameAsBilling !== false
+                      ? (quotation.billingAddress || [cust?.billingAddress || cust?.address, cust?.city, [cust?.state, cust?.pincode].filter(Boolean).join(" - "), cust?.country || "India"].filter(Boolean).join(", "))
+                      : "Same as billing address")}
+              </div>
+              {quotation.siteLocation && (
+                <div className="text-slate-600 mt-1 flex items-center gap-1 font-medium">
+                  <MapPin className="h-3 w-3 text-slate-500" />
+                  Site: {quotation.siteLocation}
                 </div>
               )}
             </div>

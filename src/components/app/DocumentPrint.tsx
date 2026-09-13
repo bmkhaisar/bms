@@ -33,9 +33,24 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
         <div className="text-right">
           <div className="inline-block border border-black px-3 py-1 text-sm font-bold tracking-wider">{title}</div>
           <div className="mt-2 text-[11px]">
-            <div><b>No.</b> <span className="font-mono">{(doc as Invoice).number}</span></div>
-            <div><b>Date:</b> {formatDate((doc as Invoice).date)}</div>
-            {isInv && (doc as Invoice).dueDate && <div><b>Due:</b> {formatDate((doc as Invoice).dueDate)}</div>}
+            {kind === "purchase" ? (
+              <>
+                <div><b>BMS Purchase No:</b> <span className="font-mono">{(doc as Purchase).number}</span></div>
+                {(doc as Purchase).supplierInvoiceNumber && (
+                  <div><b>Supplier Invoice No:</b> <span className="font-mono font-bold">{(doc as Purchase).supplierInvoiceNumber}</span></div>
+                )}
+                {(doc as Purchase).supplierInvoiceDate && (
+                  <div><b>Supplier Inv Date:</b> {formatDate((doc as Purchase).supplierInvoiceDate!)}</div>
+                )}
+                <div><b>Purchase Date:</b> {formatDate((doc as Purchase).date)}</div>
+              </>
+            ) : (
+              <>
+                <div><b>No.</b> <span className="font-mono">{(doc as Invoice).number}</span></div>
+                <div><b>Date:</b> {formatDate((doc as Invoice).date)}</div>
+                {isInv && (doc as Invoice).dueDate && <div><b>Due:</b> {formatDate((doc as Invoice).dueDate)}</div>}
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -50,10 +65,34 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
             {party.mobile && <div>Mob: {party.mobile}</div>}
             {party.gstin && <div>GSTIN: <span className="font-mono">{party.gstin}</span></div>}
           </div>
-          {isInv && (doc as Invoice).shippingAddress && (
+          {(kind === "invoice" || kind === "quotation") && (
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Ship To</div>
-              <div className="whitespace-pre-line">{(doc as Invoice).shippingAddress}</div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Ship To (Consignee)</div>
+              {(doc as any).shipToPartySnapshot?.name ? (
+                <div className="font-semibold">{(doc as any).shipToPartySnapshot.name}</div>
+              ) : null}
+              {(() => {
+                const shipAddr = (doc as any).shippingAddressSnapshot?.address || (doc as any).shippingAddress || (doc as any).shipToPartySnapshot?.address;
+                const city = (doc as any).shippingAddressSnapshot?.city || (doc as any).shipToPartySnapshot?.city;
+                const state = (doc as any).shippingAddressSnapshot?.state || (doc as any).shipToPartySnapshot?.state;
+                const pincode = (doc as any).shippingAddressSnapshot?.pincode || (doc as any).shipToPartySnapshot?.pincode;
+                const phone = (doc as any).shippingAddressSnapshot?.phone || (doc as any).shipToPartySnapshot?.phone;
+                const gstin = (doc as any).shipToPartySnapshot?.gstin;
+                
+                if (!shipAddr && !city && !state && !phone && !gstin) {
+                  return <div className="italic text-gray-500">Same as Billing Address</div>;
+                }
+                return (
+                  <div className="space-y-0.5">
+                    {shipAddr && <div className="whitespace-pre-line">{shipAddr}</div>}
+                    {(city || state || pincode) && (
+                      <div>{[city, state, pincode].filter(Boolean).join(", ")}</div>
+                    )}
+                    {phone && <div>Mob: {phone}</div>}
+                    {gstin && <div>GSTIN: <span className="font-mono">{gstin}</span></div>}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </section>

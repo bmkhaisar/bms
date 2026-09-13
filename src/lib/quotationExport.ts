@@ -124,55 +124,136 @@ function pdfFooter(ctx: PdfContext, pageNum: number, totalPages: number) {
 
 async function drawCover(ctx: PdfContext): Promise<number> {
   const { doc, quotation, customer, template, accent, pageW, margin } = ctx;
-  let y = (await pdfHeader(ctx, true)) + 8;
+  let y = (await pdfHeader(ctx, true)) + 6;
 
-  // Customer + meta split
-  doc.setDrawColor(230);
+  // Quotation Metadata Bar
+  doc.setDrawColor(220, 225, 230);
   doc.setFillColor(248, 250, 252);
-  doc.rect(margin, y, pageW - margin * 2, 34, "FD");
+  doc.roundedRect(margin, y, pageW - margin * 2, 8, 1, 1, "FD");
 
   doc.setFont(template.fontFamily, "bold");
-  doc.setFontSize(9);
+  doc.setFontSize(8);
   doc.setTextColor(accent[0], accent[1], accent[2]);
-  doc.text("BILL TO", margin + 4, y + 6);
-  doc.text("QUOTATION DETAILS", pageW / 2 + 4, y + 6);
 
+  const colW = (pageW - margin * 2) / 4;
+  doc.text(`Quotation #: ${quotation.number}`, margin + 3, y + 5.5);
   doc.setFont(template.fontFamily, "normal");
-  doc.setFontSize(9);
-  doc.setTextColor(30, 30, 30);
-  let ly = y + 11;
-  if (customer) {
+  doc.setTextColor(50, 50, 50);
+  doc.text(`Date: ${formatDate(quotation.date)}`, margin + colW + 3, y + 5.5);
+  if (quotation.validity) {
+    doc.text(`Valid Until: ${formatDate(quotation.validity)}`, margin + colW * 2 + 3, y + 5.5);
+  }
+  if (quotation.preparedBy) {
+    doc.text(`Prepared By: ${quotation.preparedBy}`, margin + colW * 3 + 3, y + 5.5);
+  }
+
+  y += 11;
+
+  // Split: BILL TO & SHIP TO side-by-side boxes (PRD §§ 31, 38)
+  const boxW = (pageW - margin * 2 - 4) / 2;
+  const boxH = 34;
+
+  // Bill To Box
+  doc.setDrawColor(220, 225, 230);
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(margin, y, boxW, boxH, 1, 1, "FD");
+
+  doc.setFont(template.fontFamily, "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(accent[0], accent[1], accent[2]);
+  doc.text("BILL TO (CUSTOMER)", margin + 4, y + 5);
+
+  const billParty = quotation.billToSnapshot || (customer ? {
+    partyName: customer.name,
+    tradingName: customer.company,
+    address: quotation.billingAddress || customer.address,
+    city: customer.city,
+    state: customer.state,
+    pincode: customer.pincode,
+    gstin: customer.gstin,
+    phone: customer.mobile || customer.phone,
+    contactPerson: quotation.contactPerson || customer.contactPerson,
+  } : null);
+
+  let by = y + 10;
+  if (billParty) {
     doc.setFont(template.fontFamily, "bold");
-    doc.text(customer.name, margin + 4, ly); ly += 4;
+    doc.setFontSize(8.5);
+    doc.setTextColor(20, 20, 20);
+    doc.text(billParty.partyName || "Customer", margin + 4, by, { maxWidth: boxW - 8 });
+    by += 4;
     doc.setFont(template.fontFamily, "normal");
-    if (customer.company) { doc.text(customer.company, margin + 4, ly); ly += 4; }
-    if (customer.address) {
-      const lines = doc.splitTextToSize(customer.address, pageW / 2 - 10);
-      doc.text(lines, margin + 4, ly); ly += 4 * lines.length;
+    doc.setFontSize(7.5);
+    doc.setTextColor(70, 70, 70);
+    if (billParty.tradingName && billParty.tradingName !== billParty.partyName) {
+      doc.text(billParty.tradingName, margin + 4, by, { maxWidth: boxW - 8 });
+      by += 3.5;
     }
-    if (customer.mobile) { doc.text(`Mob: ${customer.mobile}`, margin + 4, ly); ly += 4; }
-    if (customer.gstin) { doc.text(`GSTIN: ${customer.gstin}`, margin + 4, ly); ly += 4; }
+    const billAddr = billParty.address || [billParty.city, [billParty.state, billParty.pincode].filter(Boolean).join(" - ")].filter(Boolean).join(", ");
+    if (billAddr) {
+      const lines = doc.splitTextToSize(billAddr, boxW - 8);
+      for (let i = 0; i < Math.min(lines.length, 2); i++) {
+        doc.text(lines[i], margin + 4, by);
+        by += 3.5;
+      }
+    }
+    if (billParty.gstin) {
+      doc.text(`GSTIN: ${billParty.gstin}`, margin + 4, by);
+      by += 3.5;
+    }
+    if (billParty.phone) {
+      doc.text(`Phone: ${billParty.phone}`, margin + 4, by);
+    }
   }
 
-  const rx = pageW / 2 + 4;
-  let ry = y + 11;
-  const meta: [string, string][] = [
-    ["Number", quotation.number],
-    ["Date", formatDate(quotation.date)],
-    ...(quotation.validity ? [["Valid Until", formatDate(quotation.validity)] as [string, string]] : []),
-    ...(quotation.preparedBy ? [["Prepared By", quotation.preparedBy] as [string, string]] : []),
-    ...(quotation.siteLocation ? [["Site/Location", quotation.siteLocation] as [string, string]] : []),
-    ...(quotation.contactPerson ? [["Contact", `${quotation.contactPerson}${quotation.contactPhone ? ` · ${quotation.contactPhone}` : ""}`] as [string, string]] : []),
-  ];
-  for (const [k, v] of meta) {
+  // Ship To Box
+  const shipX = margin + boxW + 4;
+  doc.setDrawColor(220, 225, 230);
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(shipX, y, boxW, boxH, 1, 1, "FD");
+
+  doc.setFont(template.fontFamily, "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(accent[0], accent[1], accent[2]);
+  doc.text("SHIP TO (DELIVERY DESTINATION)", shipX + 4, y + 5);
+
+  const isSame = quotation.sameAsBilling !== false;
+  const shipParty = isSame
+    ? billParty
+    : (quotation.shipToPartySnapshot || quotation.shippingAddressSnapshot || billParty);
+
+  let sy = y + 10;
+  if (shipParty) {
     doc.setFont(template.fontFamily, "bold");
-    doc.text(`${k}:`, rx, ry);
+    doc.setFontSize(8.5);
+    doc.setTextColor(20, 20, 20);
+    doc.text(shipParty.partyName || (isSame ? billParty?.partyName || "Customer" : "Site Consignee"), shipX + 4, sy, { maxWidth: boxW - 8 });
+    sy += 4;
     doc.setFont(template.fontFamily, "normal");
-    doc.text(v, rx + 28, ry, { maxWidth: pageW / 2 - 32 });
-    ry += 4;
+    doc.setFontSize(7.5);
+    doc.setTextColor(70, 70, 70);
+    
+    const shipAddr = isSame
+      ? (billParty?.address || quotation.billingAddress || "Same as billing address")
+      : (quotation.shippingAddress || shipParty.address || [shipParty.city, [shipParty.state, shipParty.pincode].filter(Boolean).join(" - ")].filter(Boolean).join(", "));
+    
+    if (shipAddr) {
+      const lines = doc.splitTextToSize(shipAddr, boxW - 8);
+      for (let i = 0; i < Math.min(lines.length, 2); i++) {
+        doc.text(lines[i], shipX + 4, sy);
+        sy += 3.5;
+      }
+    }
+    if (quotation.siteLocation) {
+      doc.text(`Site: ${quotation.siteLocation}`, shipX + 4, sy, { maxWidth: boxW - 8 });
+      sy += 3.5;
+    }
+    if (shipParty.phone && !isSame) {
+      doc.text(`Phone: ${shipParty.phone}`, shipX + 4, sy);
+    }
   }
 
-  y += 40;
+  y += boxH + 6;
 
   // Items table
   const head = [["#", "Item / Description", "Size", "Qty", "Unit", "Rate", "Disc%", "GST%", "Amount"]];

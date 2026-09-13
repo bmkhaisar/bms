@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { motion } from "framer-motion";
+import { InstallPwaBanner } from "./InstallPwaBanner";
 
 export function AppShell({ title, children }: { title: string; children: ReactNode }) {
   const [mounted, setMounted] = useState(false);
@@ -20,7 +21,12 @@ export function AppShell({ title, children }: { title: string; children: ReactNo
           transition={{ duration: 0.2 }}
           className="min-w-0 flex-1 p-3 sm:p-6"
         >
-          {mounted ? children : null}
+          {mounted ? (
+            <>
+              <InstallPwaBanner />
+              {children}
+            </>
+          ) : null}
         </motion.main>
       </div>
     </div>

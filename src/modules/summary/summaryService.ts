@@ -120,7 +120,7 @@ export async function computeCustomerSummary(
     if (inv.balance > 0) {
       if (inv.dueDate && inv.dueDate < now) {
         overdue += inv.balance;
-      } else if (!inv.dueDate && customer?.creditDays) {
+      } else if (!inv.dueDate && typeof customer?.creditDays === "number") {
         const calculatedDue = inv.date + customer.creditDays * 24 * 60 * 60 * 1000;
         if (calculatedDue < now) {
           overdue += inv.balance;
@@ -310,6 +310,8 @@ export interface SupplierFinancialSummary {
   recentPurchases: Array<{
     id: string;
     number: string;
+    supplierInvoiceNumber?: string;
+    supplierInvoiceDate?: number | string;
     date: number;
     amount: number;
     paid: number;
@@ -359,6 +361,8 @@ export async function computeSupplierSummary(
     .map((pu) => ({
       id: pu.id,
       number: pu.number,
+      supplierInvoiceNumber: pu.supplierInvoiceNumber,
+      supplierInvoiceDate: pu.supplierInvoiceDate,
       date: pu.date,
       amount: pu.grandTotal,
       paid: pu.amountPaid || 0,

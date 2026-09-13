@@ -1,15 +1,58 @@
 {
-  "name": "BMS NEXT — Business Management System",
+  "name": "BMS NEXT",
   "short_name": "BMS NEXT",
-  "description": "Connected cloud business management software for quotations, GST invoices, receipts, purchases, ledgers and reports. Built by MMA.",
+  "id": "/",
+  "description": "Connected cloud business management system for quotations, GST invoices, receipts, purchases, ledgers and reports.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#ffffff",
-  "theme_color": "#1e40af",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
   "icons": [
-    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/png"
+    }
+  ],
+  "categories": ["business", "finance", "productivity"],
+  "shortcuts": [
+    {
+      "name": "New Invoice",
+      "short_name": "Invoice",
+      "description": "Create a new GST Sales Invoice",
+      "url": "/invoices"
+    },
+    {
+      "name": "New Quotation",
+      "short_name": "Quotation",
+      "description": "Create a new Quotation",
+      "url": "/quotations"
+    },
+    {
+      "name": "New Receipt",
+      "short_name": "Receipt",
+      "description": "Record a customer receipt",
+      "url": "/receipts"
+    },
+    {
+      "name": "Purchases",
+      "short_name": "Purchases",
+      "description": "Record a vendor purchase bill",
+      "url": "/purchases"
+    }
   ]
 }

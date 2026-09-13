@@ -33,6 +33,7 @@ import {
   db, uid, type Quotation, type LineItem, type Customer, type Product, type ExtraCharge,
   type SizePreset, type TermsTemplate, type GeneralInfoTemplate, type TechSpecTemplate,
   type BankAccount, type QuotationTemplate, type TermItem, type GeneralInfoField, type TechSpecSection,
+  type AddressSnapshot,
 } from "@/lib/db";
 import { useLive } from "@/lib/useLive";
 import { computeLine, computeTotals, round2 } from "@/lib/calc";
@@ -183,13 +184,62 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
     if (!q.items.length) { toast.error("Add at least one item"); return; }
     setSaving(true);
     const cust = customers.find(c => c.id === q.customerId);
+    
+    // Resolve authoritative Bill To snapshot
+    const billToSnapshot: AddressSnapshot = (q as any).billToSnapshot || (q as any).billingAddressSnapshot || {
+      partyName: cust?.name || "",
+      tradingName: cust?.tradingName,
+      gstin: cust?.gstin,
+      pan: cust?.pan,
+      address: q.billingAddress || cust?.billingAddress || cust?.address || "",
+      addressLine1: q.billingAddress || cust?.billingAddress || cust?.address || "",
+      city: cust?.city,
+      district: cust?.district,
+      state: cust?.state,
+      stateCode: cust?.stateCode,
+      country: cust?.country || "India",
+      pincode: cust?.pincode,
+      phone: q.contactPhone || cust?.phone || cust?.mobile,
+      contactPerson: q.contactPerson || cust?.contactPerson,
+    };
+
+    const isSameAsBilling = q.sameAsBilling !== false;
+    const shipToPartyId = isSameAsBilling ? q.customerId : (q.shipToPartyId || q.customerId);
+    const shipToParty = shipToPartyId ? customers.find(c => c.id === shipToPartyId) || cust : cust;
+    
+    const shippingAddressSnapshot: AddressSnapshot | undefined = isSameAsBilling
+      ? billToSnapshot
+      : (q.shippingAddressSnapshot || {
+          partyName: shipToParty?.name || cust?.name || "",
+          tradingName: shipToParty?.tradingName,
+          gstin: shipToParty?.gstin,
+          address: q.shippingAddress || shipToParty?.billingAddress || shipToParty?.address || "",
+          addressLine1: q.shippingAddress || shipToParty?.billingAddress || shipToParty?.address || "",
+          city: shipToParty?.city || cust?.city,
+          district: shipToParty?.district,
+          state: shipToParty?.state || cust?.state,
+          stateCode: shipToParty?.stateCode,
+          country: shipToParty?.country || "India",
+          pincode: shipToParty?.pincode || cust?.pincode,
+          phone: shipToParty?.phone || cust?.phone,
+          contactPerson: shipToParty?.contactPerson || cust?.contactPerson,
+        });
+
     const finalQ: Quotation = {
       ...q,
+      customerId: q.customerId,
       customerSnapshot: cust,
+      billToPartyId: q.customerId,
+      billToSnapshot,
       billingAddressId: (q as any).billingAddressId,
-      billingAddressSnapshot: (q as any).billingAddressSnapshot,
-      billingAddress: q.billingAddress,
-      shippingAddress: q.shippingAddress,
+      billingAddressSnapshot: (q as any).billingAddressSnapshot || billToSnapshot,
+      billingAddress: q.billingAddress || formatAddressLines(billToSnapshot),
+      sameAsBilling: isSameAsBilling,
+      shipToPartyId,
+      shipToPartySnapshot: isSameAsBilling ? billToSnapshot : (q.shipToPartySnapshot || shippingAddressSnapshot),
+      shippingAddressId: isSameAsBilling ? (q as any).billingAddressId : q.shippingAddressId,
+      shippingAddressSnapshot,
+      shippingAddress: isSameAsBilling ? (q.billingAddress || formatAddressLines(billToSnapshot)) : (q.shippingAddress || formatAddressLines(shippingAddressSnapshot)),
       subtotal: totals.subtotal,
       discountTotal: totals.discountTotal,
       gstTotal: totals.gstTotal,
@@ -237,49 +287,189 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
 
 
           {/* ============ DETAILS ============ */}
-          <TabsContent value="details">
-            <Card className="p-4">
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">Customer *</Label>
-                    {q.customerId && (
-                      <button
-                        type="button"
-                        onClick={() => setInsightCustomerId(q.customerId)}
-                        className="text-[11px] text-primary hover:underline font-medium"
-                      >
-                        View Financial History
-                      </button>
-                    )}
+          <TabsContent value="details" className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              {/* BILL TO */}
+              <Card className="p-4 space-y-3 border-border/70 shadow-xs">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <div className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                    BILL TO (Customer / Sundry Debtor)
                   </div>
+                  {q.customerId && (
+                    <button
+                      type="button"
+                      onClick={() => setInsightCustomerId(q.customerId)}
+                      className="text-[11px] text-primary hover:underline font-medium"
+                    >
+                      Financial History
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">Party / Customer *</Label>
                   <PartySearchSelect
                     type="customer"
                     value={q.customerId || ""}
                     parties={customers}
                     onChange={(id: string) => {
                       const cust = customers.find(c => c.id === id);
-                      setQ({ ...q, customerId: id, customerSnapshot: cust || undefined });
+                      setQ(prev => ({
+                        ...prev,
+                        customerId: id,
+                        customerSnapshot: cust || undefined,
+                        billToPartyId: id,
+                        shipToPartyId: prev.sameAsBilling !== false ? id : prev.shipToPartyId || id,
+                      }));
                     }}
                     onAddNew={() => setQuickCustomerOpen(true)}
                   />
                 </div>
-                <div className="space-y-1.5 md:col-span-2">
+                <div className="space-y-1.5">
                   <PartyAddressSelect
                     party={customers.find(c => c.id === q.customerId)}
                     selectedAddressId={(q as any).billingAddressId}
                     onChange={(snapshot, addressId) => {
-                      setQ(prev => ({
-                        ...prev,
-                        billingAddressId: addressId,
-                        billingAddressSnapshot: snapshot,
-                        billingAddress: formatAddressLines(snapshot),
-                        shippingAddress: prev.shippingAddress || formatAddressLines(snapshot),
-                      }));
+                      setQ(prev => {
+                        const formatted = formatAddressLines(snapshot);
+                        const isSame = prev.sameAsBilling !== false;
+                        return {
+                          ...prev,
+                          billingAddressId: addressId,
+                          billingAddressSnapshot: snapshot,
+                          billingAddress: formatted,
+                          ...(isSame ? {
+                            shippingAddressId: addressId,
+                            shippingAddressSnapshot: snapshot,
+                            shippingAddress: formatted,
+                          } : {}),
+                        };
+                      });
                     }}
-                    label="Customer Billing Address (Saved Party Master)"
+                    label="Billing Address (Saved Party Master)"
                   />
                 </div>
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <Field label="Contact Person">
+                    <Input value={q.contactPerson || ""} placeholder="Contact person" onChange={e => setQ({ ...q, contactPerson: e.target.value })} />
+                  </Field>
+                  <Field label="Contact Phone">
+                    <Input value={q.contactPhone || ""} placeholder="Phone / Mobile" onChange={e => setQ({ ...q, contactPhone: e.target.value })} />
+                  </Field>
+                </div>
+                <Field label="Contact Email">
+                  <Input value={q.contactEmail || ""} placeholder="Billing / Accounts Email" onChange={e => setQ({ ...q, contactEmail: e.target.value })} />
+                </Field>
+              </Card>
+
+              {/* SHIP TO */}
+              <Card className="p-4 space-y-3 border-border/70 shadow-xs">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <div className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                    SHIP TO (Delivery Destination / Consignee)
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="quote-same-as-billing"
+                      checked={q.sameAsBilling !== false}
+                      onCheckedChange={(checked) => {
+                        const isChecked = checked === true;
+                        setQ(prev => {
+                          const billSnapshot = (prev as any).billingAddressSnapshot;
+                          const billAddr = prev.billingAddress;
+                          return {
+                            ...prev,
+                            sameAsBilling: isChecked,
+                            ...(isChecked ? {
+                              shipToPartyId: prev.customerId,
+                              shippingAddressId: (prev as any).billingAddressId,
+                              shippingAddressSnapshot: billSnapshot,
+                              shippingAddress: billAddr,
+                            } : {}),
+                          };
+                        });
+                      }}
+                    />
+                    <Label htmlFor="quote-same-as-billing" className="text-xs cursor-pointer select-none font-medium">
+                      Same as Billing Address
+                    </Label>
+                  </div>
+                </div>
+
+                {q.sameAsBilling !== false ? (
+                  <div className="rounded-lg border border-dashed border-border/80 bg-muted/20 p-4 text-center text-xs text-muted-foreground leading-relaxed">
+                    <p className="font-medium text-foreground mb-1">Shipping destination is identical to Billing Address.</p>
+                    <p className="text-[11px]">Uncheck "Same as Billing Address" if delivery goes to another site, warehouse, factory, or third-party consignee.</p>
+                    {q.billingAddress && (
+                      <div className="mt-3 rounded border border-border/50 bg-background/80 p-2 text-left text-[11px] font-mono text-muted-foreground whitespace-pre-line">
+                        {q.billingAddress}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium">Ship To Party / Consignee</Label>
+                      <PartySearchSelect
+                        type="customer"
+                        value={q.shipToPartyId || q.customerId || ""}
+                        parties={customers}
+                        onChange={(id: string) => {
+                          const p = customers.find(c => c.id === id);
+                          setQ(prev => ({
+                            ...prev,
+                            shipToPartyId: id,
+                            shipToPartySnapshot: p ? {
+                              partyName: p.name,
+                              tradingName: p.tradingName,
+                              gstin: p.gstin,
+                              address: p.billingAddress || p.address,
+                              city: p.city,
+                              state: p.state,
+                              country: p.country,
+                              pincode: p.pincode,
+                              phone: p.phone,
+                            } : undefined,
+                          }));
+                        }}
+                        onAddNew={() => setQuickCustomerOpen(true)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <PartyAddressSelect
+                        party={customers.find(c => c.id === (q.shipToPartyId || q.customerId))}
+                        selectedAddressId={q.shippingAddressId}
+                        onChange={(snapshot, addressId) => {
+                          setQ(prev => ({
+                            ...prev,
+                            shippingAddressId: addressId,
+                            shippingAddressSnapshot: snapshot,
+                            shippingAddress: formatAddressLines(snapshot),
+                          }));
+                        }}
+                        label="Shipping / Site Destination (Saved Party Master)"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Custom Shipping / Site Address Details</Label>
+                      <Textarea
+                        rows={2}
+                        value={q.shippingAddress || ""}
+                        onChange={e => setQ({ ...q, shippingAddress: e.target.value })}
+                        placeholder="Site / delivery address, gate no, contact person at site…"
+                        className="text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
+              </Card>
+            </div>
+
+            {/* Document Details Card */}
+            <Card className="p-4">
+              <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+                Document Details & Schedule
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
                 <Field label="Date">
                   <Input type="date" value={toDateInput(q.date)} onChange={e => setQ({ ...q, date: fromDateInput(e.target.value) })} />
                 </Field>
@@ -301,19 +491,10 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
                     </SelectContent>
                   </Select>
                 </Field>
-                <Field label="Contact Person">
-                  <Input value={q.contactPerson || ""} onChange={e => setQ({ ...q, contactPerson: e.target.value })} />
-                </Field>
-                <Field label="Contact Phone">
-                  <Input value={q.contactPhone || ""} onChange={e => setQ({ ...q, contactPhone: e.target.value })} />
-                </Field>
-                <Field label="Contact Email">
-                  <Input value={q.contactEmail || ""} onChange={e => setQ({ ...q, contactEmail: e.target.value })} />
-                </Field>
               </div>
               <div className="mt-3">
-                <Field label="Remarks">
-                  <Textarea rows={3} value={q.notes || ""} onChange={e => setQ({ ...q, notes: e.target.value })} />
+                <Field label="Remarks / Internal Notes">
+                  <Textarea rows={2} value={q.notes || ""} onChange={e => setQ({ ...q, notes: e.target.value })} placeholder="Internal notes, customer payment terms, special instructions…" />
                 </Field>
               </div>
             </Card>

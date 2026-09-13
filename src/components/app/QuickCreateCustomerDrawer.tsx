@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
-import { UserPlus, AlertTriangle, ShieldAlert, CheckCircle2, Loader2 } from "lucide-react";
+import { UserPlus, AlertTriangle, ShieldAlert, CheckCircle2, Loader2, Users } from "lucide-react";
 import { db, uid, type Customer } from "@/lib/db";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
@@ -46,7 +46,7 @@ export function QuickCreateCustomerDrawer({
     pincode: "",
     taxRegistrationType: "regular" as "regular" | "unregistered" | "composition",
     creditLimit: 0,
-    creditDays: 30,
+    creditDays: 0,
     openingBalance: 0,
   });
 
@@ -102,7 +102,11 @@ export function QuickCreateCustomerDrawer({
         pincode: form.pincode.trim() || undefined,
         openingBalance: Number(form.openingBalance) || 0,
         creditLimit: Number(form.creditLimit) || 0,
-        creditDays: Number(form.creditDays) || 30,
+        creditDays:
+          form.creditDays !== undefined && form.creditDays !== null && !isNaN(Number(form.creditDays))
+            ? Math.max(0, Math.floor(Number(form.creditDays)))
+            : 0,
+        partyType: "SUNDRY_DEBTORS",
         taxRegistrationType: form.taxRegistrationType,
         createdAt: Date.now(),
       };
@@ -138,7 +142,7 @@ export function QuickCreateCustomerDrawer({
       <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base font-bold">
-            <UserPlus className="h-5 w-5 text-primary" /> Quick Add Customer
+            <Users className="h-4 w-4 text-primary" /> New Sundry Debtor (Customer)
           </DialogTitle>
         </DialogHeader>
 
@@ -267,12 +271,19 @@ export function QuickCreateCustomerDrawer({
           </div>
 
           <div className="space-y-1">
-            <Label className="text-xs">Credit Terms (Days)</Label>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Credit Terms (Days)</Label>
+              <span className="text-[10px] text-muted-foreground">0 = due immediately</span>
+            </div>
             <Input
               type="number"
-              value={form.creditDays || ""}
-              onChange={(e) => setForm({ ...form, creditDays: Number(e.target.value) || 0 })}
-              placeholder="30"
+              min="0"
+              value={form.creditDays !== undefined && form.creditDays !== null ? form.creditDays : 0}
+              onChange={(e) => {
+                const val = e.target.value === "" ? 0 : Number(e.target.value);
+                setForm({ ...form, creditDays: isNaN(val) ? 0 : Math.max(0, Math.floor(val)) });
+              }}
+              placeholder="0"
             />
           </div>
         </div>

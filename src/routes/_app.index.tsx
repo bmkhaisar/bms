@@ -87,6 +87,17 @@ export function Dashboard() {
   const productsState = useLiveState<Product>(() => db().products.toArray());
   const customersState = useLiveState<Customer>(() => db().customers.toArray());
   const suppliersState = useLiveState<Supplier>(() => db().suppliers.toArray());
+  const receiptsState = useLiveState<Receipt>(() => {
+    if (activeFinancialYear?.startDate && activeFinancialYear?.endDate) {
+      return db().receipts
+        .where("date")
+        .between(activeFinancialYear.startDate, activeFinancialYear.endDate, true, true)
+        .limit(300)
+        .toArray();
+    }
+    return db().receipts.orderBy("createdAt").reverse().limit(300).toArray();
+  }, [activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
+
   const recentInvoices = useLive<Invoice>(() =>
     db().invoices.orderBy("createdAt").reverse().limit(5).toArray()
   );
@@ -95,6 +106,7 @@ export function Dashboard() {
   const purchases = purchasesState.data;
   const products = productsState.data;
   const customers = customersState.data;
+  const receipts = receiptsState.data;
 
   // Cloud Realtime Ledgers for authoritative accounting calculations
   const [ledgers, setLedgers] = useState<Ledger[]>([]);
@@ -129,7 +141,7 @@ export function Dashboard() {
     };
   }, [activeCompany?.id]);
 
-  const isDexieLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded;
+  const isDexieLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded && receiptsState.isLoaded;
   const cacheKey = `${activeCompany?.id || "default"}_${activeFinancialYear?.id || "all"}`;
 
   // Compute authoritative metrics using formal double-entry and transaction data
@@ -142,6 +154,7 @@ export function Dashboard() {
       invoices,
       purchases,
       products,
+      receipts,
       financialYearStart: activeFinancialYear?.startDate,
       financialYearEnd: activeFinancialYear?.endDate,
     });
@@ -149,7 +162,7 @@ export function Dashboard() {
       dashboardMetricsMemoryCache[cacheKey] = computed;
     }
     return computed;
-  }, [isDexieLoaded, ledgers, invoices, purchases, products, activeFinancialYear?.startDate, activeFinancialYear?.endDate, cacheKey]);
+  }, [isDexieLoaded, ledgers, invoices, purchases, products, receipts, activeFinancialYear?.startDate, activeFinancialYear?.endDate, cacheKey]);
 
   // If Dexie is still querying its initial tick and no memory cache exists yet, show skeleton rather than flashing ₹0 (PRD #22, #23)
   if (!isDexieLoaded && !dashboardMetricsMemoryCache[cacheKey]) {
@@ -170,11 +183,35 @@ export function Dashboard() {
       href: "/invoices",
     },
     {
+      label: "Amount Received",
+      value: formatMoney(metrics.totalAmountReceived),
+      icon: HandCoins,
+      tint: "text-emerald-600 dark:text-emerald-400",
+      subtext: "Posted customer receipts",
+      href: "/receipts",
+    },
+    {
+      label: "Accounts Receivable",
+      value: formatMoney(metrics.totalReceivables),
+      icon: ArrowUpRight,
+      tint: "text-amber-600 dark:text-amber-400",
+      subtext: "Pending customer dues",
+      href: "/invoices",
+    },
+    {
       label: "Total Purchases",
       value: formatMoney(metrics.totalPurchases),
       icon: ShoppingBag,
       tint: "text-sky-600 dark:text-sky-400",
       subtext: "Raw materials & COGS",
+      href: "/purchases",
+    },
+    {
+      label: "Accounts Payable",
+      value: formatMoney(metrics.totalPayables),
+      icon: ArrowDownRight,
+      tint: "text-rose-600 dark:text-rose-400",
+      subtext: "Vendor liabilities",
       href: "/purchases",
     },
     {
@@ -192,22 +229,6 @@ export function Dashboard() {
       tint: "text-emerald-600 dark:text-emerald-400",
       subtext: "After operating expenses",
       href: "/reports",
-    },
-    {
-      label: "Accounts Receivable",
-      value: formatMoney(metrics.totalReceivables),
-      icon: ArrowUpRight,
-      tint: "text-amber-600 dark:text-amber-400",
-      subtext: "Pending customer dues",
-      href: "/invoices",
-    },
-    {
-      label: "Accounts Payable",
-      value: formatMoney(metrics.totalPayables),
-      icon: ArrowDownRight,
-      tint: "text-rose-600 dark:text-rose-400",
-      subtext: "Vendor liabilities",
-      href: "/purchases",
     },
     {
       label: "Cash & Bank",
@@ -372,6 +393,89 @@ export function Dashboard() {
               </div>
               <div className="mt-1 text-[10px] text-muted-foreground">
                 {metrics.netGst >= 0 ? "Output GST exceeds Input ITC" : "Accumulated credit forward"}
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Customer Receipts & Payment Mode Breakdown (PRD § 40-49) */}
+      <div className="mt-4">
+        <Card className="rounded-2xl border border-border/70 bg-gradient-to-r from-card/90 via-card/75 to-card/90 backdrop-blur shadow-sm p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <HandCoins className="h-5 w-5 text-emerald-500" />
+                <h3 className="text-base font-semibold tracking-tight text-foreground">
+                  Customer Collections & Payment Methods
+                </h3>
+                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                  Posted Receipts Only
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Actual cash and bank inflows from posted customer vouchers. Advances and invoice settlements counted strictly once.
+              </p>
+            </div>
+            <Link to="/receipts">
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs hover:bg-muted">
+                Open Receipt Register &rarr;
+              </Button>
+            </Link>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                Total Received
+              </div>
+              <div className="mt-1 text-base sm:text-lg font-bold font-mono text-emerald-800 dark:text-emerald-300">
+                {formatMoney(metrics.totalAmountReceived)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Bank / Transfer
+              </div>
+              <div className="mt-1 text-base font-bold font-mono text-foreground">
+                {formatMoney(metrics.receivedByPaymentMode.bank)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                UPI
+              </div>
+              <div className="mt-1 text-base font-bold font-mono text-foreground">
+                {formatMoney(metrics.receivedByPaymentMode.upi)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Cash
+              </div>
+              <div className="mt-1 text-base font-bold font-mono text-foreground">
+                {formatMoney(metrics.receivedByPaymentMode.cash)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Cheque
+              </div>
+              <div className="mt-1 text-base font-bold font-mono text-foreground">
+                {formatMoney(metrics.receivedByPaymentMode.cheque)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Card / Other
+              </div>
+              <div className="mt-1 text-base font-bold font-mono text-foreground">
+                {formatMoney(metrics.receivedByPaymentMode.card + metrics.receivedByPaymentMode.other)}
               </div>
             </div>
           </div>

@@ -192,13 +192,17 @@ export function PartySearchSelect({
         )}
       </div>
 
-      {/* Credit Limit Alert if Customer */}
-      {isCustomer && creditLimit > 0 && (
+      {/* Credit Limit & Terms if Customer */}
+      {isCustomer && (creditLimit > 0 || typeof custRecord?.creditDays === "number") && (
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <span>Credit Limit:</span>
-          <span className="font-mono font-medium text-foreground">{formatMoney(creditLimit)}</span>
-          {custRecord?.creditDays && (
-            <span>· Terms: {custRecord.creditDays} days</span>
+          {creditLimit > 0 && (
+            <>
+              <span>Credit Limit:</span>
+              <span className="font-mono font-medium text-foreground">{formatMoney(creditLimit)}</span>
+            </>
+          )}
+          {typeof custRecord?.creditDays === "number" && (
+            <span>{creditLimit > 0 ? "·" : ""} Terms: {custRecord.creditDays === 0 ? "Due Immediately (0d)" : `${custRecord.creditDays} days`}</span>
           )}
         </div>
       )}

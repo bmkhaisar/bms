@@ -151,8 +151,13 @@ export function SupplierInsightDrawer({ supplierId, open, onOpenChange, onSelect
                       className="group flex items-center justify-between p-2.5 rounded-lg border border-border/50 bg-card hover:bg-accent/40 cursor-pointer transition-colors"
                     >
                       <div className="space-y-0.5">
-                        <div className="font-mono font-semibold flex items-center gap-1.5 text-foreground">
-                          {pu.number}
+                        <div className="font-mono font-semibold flex items-center gap-1.5 text-foreground flex-wrap">
+                          <span>{pu.number}</span>
+                          {pu.supplierInvoiceNumber && (
+                            <span className="rounded bg-primary/10 text-primary px-1.5 py-0.5 text-[9px] font-mono">
+                              Inv: {pu.supplierInvoiceNumber}
+                            </span>
+                          )}
                           <Badge
                             variant={pu.balance <= 0.01 ? "secondary" : "outline"}
                             className="text-[9px] px-1 py-0"
@@ -161,7 +166,8 @@ export function SupplierInsightDrawer({ supplierId, open, onOpenChange, onSelect
                           </Badge>
                         </div>
                         <div className="text-[10px] text-muted-foreground">
-                          {formatDate(pu.date)} · Bal: {formatMoney(pu.balance)}
+                          {formatDate(pu.date)}
+                          {pu.supplierInvoiceDate ? ` (Inv Date: ${formatDate(pu.supplierInvoiceDate)})` : ""} · Bal: {formatMoney(pu.balance)}
                         </div>
                       </div>
                       <div className="text-right">

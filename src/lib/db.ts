@@ -40,10 +40,69 @@ export interface CompanySettings {
   advancePartyPolicy?: "STRICT" | "WARN_AND_ALLOW" | "MANAGER_OVERRIDE";
   creditLimitPolicy?: "WARN" | "BLOCK" | "MANAGER_APPROVAL";
   sessionPolicy?: "persistent" | "idle" | "strict";
+  supplierInvoiceNumberPolicy?: "OPTIONAL" | "REQUIRED";
 }
 
-export type PartyType = "CUSTOMER" | "SUPPLIER" | "BOTH";
+export type PartyType =
+  | "SUNDRY_DEBTORS"
+  | "SUNDRY_CREDITORS"
+  | "SUNDRY_DEBTOR"
+  | "SUNDRY_CREDITOR"
+  | "CUSTOMER"
+  | "SUPPLIER"
+  | "BOTH";
+
 export type PaymentPolicy = "ADVANCE" | "CREDIT";
+
+export function isSundryDebtor(partyType?: PartyType | string): boolean {
+  if (!partyType) return true;
+  return (
+    partyType === "SUNDRY_DEBTORS" ||
+    partyType === "SUNDRY_DEBTOR" ||
+    partyType === "CUSTOMER" ||
+    partyType === "BOTH"
+  );
+}
+
+export function isSundryCreditor(partyType?: PartyType | string): boolean {
+  if (!partyType) return false;
+  return (
+    partyType === "SUNDRY_CREDITORS" ||
+    partyType === "SUNDRY_CREDITOR" ||
+    partyType === "SUPPLIER" ||
+    partyType === "BOTH"
+  );
+}
+
+export function normalizePartyType(
+  partyType?: PartyType | string
+): "SUNDRY_DEBTORS" | "SUNDRY_CREDITORS" | "BOTH" {
+  if (
+    partyType === "SUNDRY_CREDITORS" ||
+    partyType === "SUNDRY_CREDITOR" ||
+    partyType === "SUPPLIER"
+  ) {
+    return "SUNDRY_CREDITORS";
+  }
+  if (partyType === "BOTH") {
+    return "BOTH";
+  }
+  return "SUNDRY_DEBTORS";
+}
+
+export function getPartyTypeLabel(partyType?: PartyType | string): string {
+  if (
+    partyType === "SUNDRY_CREDITORS" ||
+    partyType === "SUNDRY_CREDITOR" ||
+    partyType === "SUPPLIER"
+  ) {
+    return "Sundry Creditors";
+  }
+  if (partyType === "BOTH") {
+    return "Sundry Debtors & Creditors";
+  }
+  return "Sundry Debtors";
+}
 
 export interface PartyAddress {
   id: string;
@@ -64,10 +123,12 @@ export interface PartyAddress {
 
 export interface AddressSnapshot {
   name?: string;
+  partyName?: string;
   tradingName?: string;
   gstin?: string;
   addressLine1?: string;
   addressLine2?: string;
+  address?: string;
   city?: string;
   district?: string;
   state?: string;
@@ -203,6 +264,12 @@ export interface Quotation {
   notes?: string; terms?: string;
   status: "draft" | "sent" | "accepted" | "converted" | "rejected";
   createdAt: number;
+  billToPartyId?: string;
+  billToSnapshot?: AddressSnapshot;
+  shipToPartyId?: string;
+  shipToPartySnapshot?: AddressSnapshot;
+  shippingAddressId?: string;
+  sameAsBilling?: boolean;
   billingAddressId?: string;
   billingAddress?: string;
   shippingAddress?: string;
@@ -234,6 +301,12 @@ export interface Invoice {
   signatoryOverride?: any;
   signatorySnapshot?: any;
   placeOfSupply?: string;
+  billToPartyId?: string;
+  billToSnapshot?: AddressSnapshot;
+  shipToPartyId?: string;
+  shipToPartySnapshot?: AddressSnapshot;
+  shippingAddressId?: string;
+  sameAsBilling?: boolean;
   billingAddress?: string; shippingAddress?: string;
   billingAddressId?: string;
   billingAddressSnapshot?: AddressSnapshot;
@@ -349,6 +422,8 @@ export interface Payment {
 
 export interface Purchase {
   id: ID; number: string; date: number; supplierId: ID;
+  supplierInvoiceNumber?: string;
+  supplierInvoiceDate?: number | string;
   supplierSnapshot?: Partial<Supplier>;
   companySnapshot?: any;
   signatoryOverride?: any;
@@ -452,6 +527,10 @@ class BizDB extends Dexie {
     });
     this.version(4).stores({
       payments: "id, number, date, supplierId, createdAt",
+    });
+    this.version(5).stores({
+      purchases: "id, number, date, supplierId, supplierInvoiceNumber, createdAt",
+      parties: "id, name, partyType, paymentPolicy, createdAt",
     });
   }
 }

@@ -98,6 +98,7 @@ In `src/modules/company/context/ActiveCompanyContext.tsx`:
 
 ---
 
+
 ## 5. Verification & Test Evidence
 
 ### Automated Test Suite Results
@@ -123,9 +124,16 @@ In `src/modules/company/context/ActiveCompanyContext.tsx`:
 ✔ optimistic-update.test (PASS)
 ✔ mutation-rollback.test (PASS)
 ✔ realtime-mutation-reconcile.test (PASS)
+✔ 1. Party Master: Tally Terminology & Safe Mapping (PASS)
+✔ 2. Credit Days: 0 days means 'Payment Due Immediately' (PASS)
+✔ 3. Bill To / Ship To Separation & Snapshot Persistence (PASS)
+✔ 4. PDF Bill To and Ship To Rendering & Driver Copy Highlight (PASS)
+✔ 5. Dashboard Amount Received KPI & Deduplication (PASS)
+✔ 6. Purchase Supplier Invoice No & Supplier Invoice Date (PASS)
+✔ 7. PWA Installation & Service Worker Offline Shell (PASS)
 
-Total Tests: 275 passed, 0 failed, 0 skipped
-Duration: 1.04s
+Total Tests: 282 passed, 0 failed, 0 skipped
+Duration: 1.13s
 ```
 
 ### TypeScript Compilation
@@ -150,7 +158,7 @@ HTTP Status: 200 Content-Type: text/html; charset=utf-8
 
 ---
 
-## 6. Final Acceptance Statuses
+## 6. Core Acceptance Statuses
 
 All twelve core criteria from PRD § 70 have been validated and certified:
 
@@ -170,4 +178,21 @@ All twelve core criteria from PRD § 70 have been validated and certified:
 | **PRODUCTION_BROWSER_QA** | **VERIFIED** | Dev server verified serving HTTP 200 HTML; clean production build tested. |
 
 ---
-*Report Generated: 2026-09-12 for BMS NEXT Production Release.*
+
+## 7. Accounting & Operations Production Hardening Audit
+
+The following operational hardening items based on direct accounting feedback have been certified:
+
+| Hardening Focus | Audit Result | Architectural & UX Detail |
+| :--- | :---: | :--- |
+| **Party Master Tally Alignment** | **VERIFIED** | Creation dialog strictly exposes `SUNDRY DEBTORS` (Customers) and `SUNDRY CREDITORS` (Suppliers). Legacy `CUSTOMER`, `SUPPLIER`, and `BOTH` records are safely mapped without altering stored data or auto-netting AR/AP accounts. |
+| **Credit Days = 0 Support** | **VERIFIED** | 0 is treated as a valid integer meaning "Payment Due Immediately" (`dueDate = invoiceDate`). Fixed falsy `0 \|\| 30` bugs across `summaryService.ts`, party forms, and search selects. |
+| **Bill To / Ship To Separation** | **VERIFIED** | Side-by-side cards in Quotation and Invoice entry with independent party selectors and shipping address dropdowns. "Same as Billing" toggle defaults to customer address but unlinks cleanly for multi-branch consignees. Address snapshots (`billToSnapshot`, `shippingAddressSnapshot`) are frozen on save. |
+| **PDF Bill To & Ship To Rendering** | **VERIFIED** | Side-by-side BILL TO and SHIP TO boxes with GSTIN, State, and complete address. On `DRIVER COPY`, the delivery destination is prominently highlighted in a high-contrast container. Quotations use the tenant company logo (never fallback BMS logo). |
+| **Dashboard Amount Received** | **VERIFIED** | Added dedicated `Amount Received` KPI card linking to `/receipts`. Calculates actual money received from posted customer receipts within selected date range. Excludes drafts, failed, and reversed vouchers; eliminates double-counting on advance allocations. Includes payment mode breakdown (Cash, Bank, UPI, Cheque, Card). |
+| **Purchase Supplier Invoice Details** | **VERIFIED** | Purchase vouchers record `Supplier Invoice No.` and `Supplier Invoice Date` separate from internal `BMS Purchase No.` Includes scoped duplicate check (`companyId` + `supplierPartyId` + normalized `supplierInvoiceNumber`) with friendly warning modal. Searchable in Global Search, Supplier profile, and Purchase reports. |
+| **Zero Reload & Immediate UI** | **VERIFIED** | No `window.location.reload()`. State updates locally in Dexie and React immediately upon create, edit, or delete with RTDB synchronizing in background. |
+| **PWA & Offline Shell** | **VERIFIED** | Valid `manifest.webmanifest` ("BMS NEXT", standalone, 192x192 and 512x512 maskable icons). Service worker caches app shell (`bms-next-shell-v1`) while strictly bypassing CacheStorage for Firebase RTDB and Auth. In-app install banner with iOS Safari instructions and 7-day cooldown. |
+
+---
+*Report Certified: 2026-09-13 for BMS NEXT Production Hardening Release.*

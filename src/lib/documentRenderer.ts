@@ -21,6 +21,13 @@ export interface DocumentParty {
   email?: string;
   placeOfSupply?: string;
   shippingAddress?: string;
+  shipToName?: string;
+  shipToAddress?: string;
+  shipToCity?: string;
+  shipToState?: string;
+  shipToPincode?: string;
+  shipToGstin?: string;
+  shipToPhone?: string;
 }
 
 export type DocumentCopyType =
@@ -62,6 +69,8 @@ export interface NormalizedDocument {
   signatoryOverride?: Partial<SignatoryConfig>;
   signatorySnapshot?: Partial<SignatorySnapshot>;
   copyLabel?: DocumentCopyType;
+  supplierInvoiceNumber?: string;
+  supplierInvoiceDate?: number;
   receiptDetails?: {
     receiptVoucherNumber?: string;
     natureOfSupply?: string;
@@ -243,6 +252,19 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   doc.text(`${docData.title} #: ${docData.number}`, metaX, metaY, { align: "right" });
   metaY += 4.5;
 
+  if (docData.supplierInvoiceNumber) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.text(`Supplier Invoice #: ${docData.supplierInvoiceNumber}`, metaX, metaY, { align: "right" });
+    metaY += 4.5;
+  }
+  if (docData.supplierInvoiceDate) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(`Supplier Inv Date: ${formatDate(docData.supplierInvoiceDate)}`, metaX, metaY, { align: "right" });
+    metaY += 4;
+  }
+
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
   doc.setTextColor(75, 85, 99);
@@ -272,8 +294,11 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   doc.line(margin, y, pageW - margin, y);
   y += 5;
 
-  // 4. Party Details Box (Customer or Supplier)
+  // 4. Party Details Box (Bill To & Ship To side-by-side per PRD §§ 31-36)
   const party = docData.party;
+  const isInvoiceOrQuote = docData.kind === "invoice" || docData.kind === "quotation";
+  const hasShipping = isInvoiceOrQuote || Boolean(party.shippingAddress) || Boolean(party.shipToName) || docData.copyLabel === "DRIVER COPY" || docData.copyLabel === "TRANSPORT COPY";
+
   const partyLabel =
     docData.kind === "purchase"
       ? "SUPPLIER / VENDOR DETAILS"
@@ -281,51 +306,169 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       ? "BILL TO / TAXPAYER DETAILS"
       : "BILL TO / CUSTOMER DETAILS";
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  doc.setTextColor(107, 114, 128);
-  doc.text(partyLabel, margin, y);
-  y += 4.5;
+  if (hasShipping) {
+    const colW = (pageW - margin * 2 - 6) / 2;
+    const isDriverCopy = docData.copyLabel === "DRIVER COPY";
+    const isTransportCopy = docData.copyLabel === "TRANSPORT COPY";
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(9.5);
-  doc.setTextColor(17, 24, 39);
-  doc.text(party.name || "Walk-in Customer", margin, y);
-  if (party.company) {
+    // Left Column: BILL TO
+    let leftY = y;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(107, 114, 128);
+    doc.text(partyLabel, margin, leftY);
+    leftY += 4.5;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(17, 24, 39);
+    doc.text(party.name || "Customer", margin, leftY, { maxWidth: colW });
+    if (party.company && party.company !== party.name) {
+      leftY += 4;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(`(${party.company})`, margin, leftY, { maxWidth: colW });
+    }
+    leftY += 4.5;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(75, 85, 99);
+
+    if (party.address) {
+      const addrLines = doc.splitTextToSize(party.address, colW);
+      for (let i = 0; i < Math.min(addrLines.length, 3); i++) {
+        doc.text(addrLines[i], margin, leftY);
+        leftY += 3.5;
+      }
+    }
+    if (party.city || party.state) {
+      doc.text(
+        `${party.city || ""} ${party.state || ""} ${party.pincode || ""}`.trim(),
+        margin,
+        leftY
+      );
+      leftY += 3.5;
+    }
+    if (isTaxDoc && party.gstin) {
+      doc.setFont("helvetica", "bold");
+      doc.text(`GSTIN: ${party.gstin}`, margin, leftY);
+      doc.setFont("helvetica", "normal");
+      leftY += 3.5;
+    }
+    if (party.phone) {
+      doc.text(`Contact: ${party.phone}`, margin, leftY);
+      leftY += 3.5;
+    }
+
+    // Right Column: SHIP TO
+    const shipX = margin + colW + 6;
+    let rightY = y;
+
+    // Driver Copy Highlight Box (PRD § 33: Display destination prominently)
+    if (isDriverCopy) {
+      doc.setDrawColor(30, 64, 175);
+      doc.setFillColor(239, 246, 255);
+      doc.roundedRect(shipX - 2, y - 2, colW + 4, 30, 1, 1, "FD");
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(isDriverCopy ? 30 : 107, isDriverCopy ? 64 : 114, isDriverCopy ? 175 : 128);
+    const shipTitle = isDriverCopy
+      ? "DELIVERY DESTINATION (DRIVER COPY)"
+      : isTransportCopy
+      ? "CONSIGNEE / TRANSPORT DESTINATION"
+      : "SHIP TO / CONSIGNEE DETAILS";
+    doc.text(shipTitle, shipX, rightY);
+    rightY += 4.5;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(17, 24, 39);
+    const consigneeName = party.shipToName || party.name || "Customer / Consignee";
+    doc.text(consigneeName, shipX, rightY, { maxWidth: colW });
+    rightY += 4.5;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(75, 85, 99);
+
+    const shipAddress = party.shipToAddress || party.shippingAddress || party.address || "Same as billing address";
+    const shipAddrLines = doc.splitTextToSize(shipAddress, colW);
+    for (let i = 0; i < Math.min(shipAddrLines.length, 3); i++) {
+      doc.text(shipAddrLines[i], shipX, rightY);
+      rightY += 3.5;
+    }
+
+    if (party.shipToCity || party.shipToState || party.shipToPincode) {
+      doc.text(
+        `${party.shipToCity || ""} ${party.shipToState || ""} ${party.shipToPincode || ""}`.trim(),
+        shipX,
+        rightY
+      );
+      rightY += 3.5;
+    }
+    if (party.shipToGstin) {
+      doc.setFont("helvetica", "bold");
+      doc.text(`GSTIN: ${party.shipToGstin}`, shipX, rightY);
+      doc.setFont("helvetica", "normal");
+      rightY += 3.5;
+    }
+    if (party.shipToPhone) {
+      doc.text(`Contact: ${party.shipToPhone}`, shipX, rightY);
+      rightY += 3.5;
+    }
+
+    y = Math.max(leftY, rightY) + 3;
+  } else {
+    // Single Column (Receipt, Purchase without separate shipping, etc.)
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(107, 114, 128);
+    doc.text(partyLabel, margin, y);
+    y += 4.5;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(17, 24, 39);
+    doc.text(party.name || "Walk-in Customer", margin, y);
+    if (party.company) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.text(`(${party.company})`, margin + doc.getTextWidth(party.name || "") + 2, y);
+    }
+    y += 4.5;
+
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
-    doc.text(`(${party.company})`, margin + doc.getTextWidth(party.name || "") + 2, y);
-  }
-  y += 4.5;
+    doc.setTextColor(75, 85, 99);
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.5);
-  doc.setTextColor(75, 85, 99);
+    if (party.address) {
+      doc.text(party.address, margin, y);
+      y += 4;
+    }
+    if (party.city || party.state) {
+      doc.text(
+        `${party.city || ""} ${party.state || ""} ${party.pincode || ""}`.trim(),
+        margin,
+        y
+      );
+      y += 4;
+    }
+    if (isTaxDoc && party.gstin) {
+      doc.setFont("helvetica", "bold");
+      doc.text(`GSTIN: ${party.gstin}`, margin, y);
+      doc.setFont("helvetica", "normal");
+      y += 4;
+    }
+    if (party.phone) {
+      doc.text(`Contact: ${party.phone}`, margin, y);
+      y += 4;
+    }
 
-  if (party.address) {
-    doc.text(party.address, margin, y);
-    y += 4;
+    y += 3;
   }
-  if (party.city || party.state) {
-    doc.text(
-      `${party.city || ""} ${party.state || ""} ${party.pincode || ""}`.trim(),
-      margin,
-      y
-    );
-    y += 4;
-  }
-  if (isTaxDoc && party.gstin) {
-    doc.setFont("helvetica", "bold");
-    doc.text(`GSTIN: ${party.gstin}`, margin, y);
-    doc.setFont("helvetica", "normal");
-    y += 4;
-  }
-  if (party.phone) {
-    doc.text(`Contact: ${party.phone}`, margin, y);
-    y += 4;
-  }
-
-  y += 3;
 
   // 5. Line Items Table (jspdf-autotable)
   let tableHeaders: string[];
