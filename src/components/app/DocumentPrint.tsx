@@ -204,7 +204,7 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
               <div>
                 <span className="text-gray-500">Account Holder:</span>{" "}
                 <span className="font-medium">
-                  {(doc as any).bankDetailsSnapshot?.accountHolderName || (doc as any).bankSnapshot?.accountHolderName || company.bankAccountHolderName || (company as any).accountHolderName || compAddr.companyName}
+                  {(doc as any).bankDetailsSnapshot?.accountHolderName || (doc as any).bankSnapshot?.accountHolderName || (doc as any).bankDetailsSnapshot?.accountName || (doc as any).bankSnapshot?.accountName || (company as any).accountHolderName || company.bankAccountHolderName || compAddr.companyName}
                 </span>
               </div>
               <div>

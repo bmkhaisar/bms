@@ -1,0 +1,123 @@
+import type { Quotation, BankAccount } from "@/lib/db";
+import { createCompanySnapshot } from "@/modules/company/types";
+import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
+import { extractTableRowsFromMarkdown, extractTermsFromMarkdown } from "@/lib/markdownDoc";
+
+/**
+ * Freezes immutable master snapshots at Quotation Issue/Finalization (PRD §§ 7-9, 28, 78-82)
+ * Ensures historical quotation reprints never depend on current Company Settings.
+ */
+export function freezeQuotationSnapshots(
+  quotation: Quotation,
+  company?: any,
+  banks?: BankAccount[],
+  force = false
+): Quotation {
+  const isFinalized = force || Boolean(quotation.status && quotation.status !== "draft");
+  if (!isFinalized) {
+    return quotation;
+  }
+
+  const comp = quotation.companySnapshot || company;
+  const defaultBank =
+    banks && banks.length > 0
+      ? banks.find((b) => b.isDefault) || banks[0]
+      : undefined;
+
+  const resolvedBank =
+    quotation.bankDetailsSnapshot ||
+    quotation.bankSnapshot ||
+    defaultBank ||
+    (comp && comp.bankName
+      ? {
+          id: comp.bankAccountId || "comp_bank",
+          bankName: comp.bankName,
+          accountHolderName:
+            comp.accountHolderName ||
+            comp.bankAccountHolderName ||
+            comp.legalName ||
+            comp.name ||
+            "Business Entity",
+          accountName:
+            comp.accountHolderName ||
+            comp.bankAccountHolderName ||
+            comp.legalName ||
+            comp.name ||
+            "Business Entity",
+          accountNo: comp.bankAccount || comp.bankAccountNo || "—",
+          ifsc: comp.bankIfsc || "—",
+          branch: comp.bankBranch,
+          accountType: comp.bankAccountType,
+          upi: comp.upiId,
+          swift: comp.bankSwiftCode,
+          createdAt: Date.now(),
+        }
+      : undefined);
+
+  const resolvedTerms =
+    quotation.termsSnapshot ||
+    (quotation.terms
+      ? quotation.terms
+          .split(/\r?\n+/)
+          .map((l) => l.trim())
+          .filter(Boolean)
+      : comp?.quotationTermsMarkdown
+      ? extractTermsFromMarkdown(comp.quotationTermsMarkdown)
+      : comp?.terms
+      ? comp.terms
+          .split(/\r?\n+/)
+          .map((l: string) => l.trim())
+          .filter(Boolean)
+      : undefined);
+
+  const resolvedStructuredTerms =
+    quotation.structuredTermsSnapshot ||
+    (quotation.structuredTerms && quotation.structuredTerms.length > 0
+      ? [{ title: "Terms & Conditions", format: "numbered", items: quotation.structuredTerms }]
+      : undefined);
+
+  const resolvedGeneralInfo =
+    quotation.generalInformationSnapshot ||
+    (quotation.structuredSections?.filter((s) => s.type === "GENERAL_INFO")?.length
+      ? quotation.structuredSections.filter((s) => s.type === "GENERAL_INFO")
+      : comp?.quotationGeneralInfoMarkdown
+      ? extractTableRowsFromMarkdown(comp.quotationGeneralInfoMarkdown)
+      : undefined);
+
+  const resolvedTechSpecs =
+    quotation.technicalSpecificationSnapshot ||
+    (quotation.structuredSections?.filter((s) => s.type === "SPEC_TABLE")?.length
+      ? quotation.structuredSections.filter((s) => s.type === "SPEC_TABLE")
+      : comp?.quotationTechnicalSpecsMarkdown
+      ? extractTableRowsFromMarkdown(comp.quotationTechnicalSpecsMarkdown)
+      : undefined);
+
+  const resolvedVisibility =
+    quotation.visibilitySnapshot || {
+      showGeneralInfo:
+        quotation.includeGeneralInfo ?? (comp?.showQuotationGeneralInfo !== false),
+      showTechSpecs:
+        quotation.includeTechSpecs ?? (comp?.showQuotationTechnicalSpecs !== false),
+      showTerms:
+        quotation.includeTerms ?? (comp?.showQuotationTerms !== false),
+      showBankDetails:
+        quotation.includeBankDetails ?? (comp?.showQuotationBankDetails !== false),
+    };
+
+  return {
+    ...quotation,
+    companySnapshot: quotation.companySnapshot || (comp ? createCompanySnapshot(comp) : undefined),
+    signatorySnapshot:
+      quotation.signatorySnapshot ||
+      (comp
+        ? createSignatorySnapshot(comp, quotation.signatoryOverride, quotation.date)
+        : undefined),
+    bankDetailsSnapshot: resolvedBank,
+    bankSnapshot: quotation.bankSnapshot || (resolvedBank as any),
+    termsSnapshot: resolvedTerms,
+    structuredTermsSnapshot: resolvedStructuredTerms,
+    generalInformationSnapshot: resolvedGeneralInfo,
+    technicalSpecificationSnapshot: resolvedTechSpecs,
+    visibilitySnapshot: resolvedVisibility,
+  };
+}

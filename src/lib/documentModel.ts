@@ -339,10 +339,23 @@ export function resolveDocumentModel(
   const overallGstRate = doc.overallGstRate;
 
   // 5. Supplementary Sections (Quotation Only)
-  const includeGeneralInfo = isQuotation && doc.includeGeneralInfo !== false;
+  const includeGeneralInfo = isQuotation && (
+    doc.visibilitySnapshot?.showGeneralInfo !== undefined
+      ? doc.visibilitySnapshot.showGeneralInfo
+      : doc.includeGeneralInfo !== false
+  );
   let generalInfoRows: ResolvedGeneralInfoRow[] = [];
   if (includeGeneralInfo) {
-    if (doc.structuredSections) {
+    if (doc.generalInformationSnapshot && doc.generalInformationSnapshot.length > 0) {
+      const sec: any = doc.generalInformationSnapshot.find((s: any) => s.type === "GENERAL_INFO") || { rows: doc.generalInformationSnapshot };
+      if (sec && sec.rows) {
+        generalInfoRows = sec.rows.map((r: any) => ({
+          label: r.label,
+          value: r.value,
+          bullets: r.bullets || (r.valueType === "BULLET_LIST" ? r.value.split(/\r?\n+/).map((b: string) => b.trim()).filter(Boolean) : undefined),
+        }));
+      }
+    } else if (doc.structuredSections) {
       const genSec = doc.structuredSections.find((s: QuotationSection) => s.type === "GENERAL_INFO");
       if (genSec && genSec.rows) {
         generalInfoRows = genSec.rows.map((r: SectionRow) => ({
@@ -360,10 +373,21 @@ export function resolveDocumentModel(
     }
   }
 
-  const includeTechSpecs = isQuotation && doc.includeTechSpecs !== false;
+  const includeTechSpecs = isQuotation && (
+    doc.visibilitySnapshot?.showTechSpecs !== undefined
+      ? doc.visibilitySnapshot.showTechSpecs
+      : doc.includeTechSpecs !== false
+  );
   let techSpecSections: ResolvedTechSpecSection[] = [];
   if (includeTechSpecs) {
-    if (doc.structuredSections) {
+    if (doc.technicalSpecificationSnapshot && doc.technicalSpecificationSnapshot.length > 0) {
+      const specs = doc.technicalSpecificationSnapshot.filter((s: any) => s.type === "SPEC_TABLE");
+      techSpecSections = specs.map((s: any) => ({
+        title: s.title,
+        subtitle: s.subtitle,
+        rows: (s.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
+      }));
+    } else if (doc.structuredSections) {
       const specSecs = doc.structuredSections.filter((s: QuotationSection) => s.type === "SPEC_TABLE");
       techSpecSections = specSecs.map((s: QuotationSection) => ({
         title: s.title,
@@ -391,22 +415,33 @@ export function resolveDocumentModel(
   }
 
   // 6. Structured Terms & Conditions
-  const includeTerms = doc.includeTerms !== false;
+  const includeTerms = doc.visibilitySnapshot?.showTerms !== undefined
+    ? doc.visibilitySnapshot.showTerms
+    : doc.includeTerms !== false;
   let terms: StructuredTermItem[] = [];
   if (includeTerms) {
     terms = parseLegacyTermsToStructured(
-      doc.structuredTerms || doc.termsSnapshot || doc.terms || comp.terms
+      doc.structuredTermsSnapshot || doc.structuredTerms || doc.termsSnapshot || doc.terms || comp.terms
     );
   }
 
   // 7. Bank Details
-  const includeBankDetails = doc.includeBankDetails !== false;
+  const includeBankDetails = doc.visibilitySnapshot?.showBankDetails !== undefined
+    ? doc.visibilitySnapshot.showBankDetails
+    : doc.includeBankDetails !== false;
   let bankDetails: ResolvedBankDetails | null = null;
   if (includeBankDetails) {
     const rawBank = doc.bankDetailsSnapshot || doc.bankSnapshot || (comp.bankName ? comp : null);
     if (rawBank && (rawBank.bankName || rawBank.accountNo || rawBank.bankAccountNo)) {
       bankDetails = {
-        accountHolderName: rawBank.accountName || rawBank.accountHolderName || comp.legalName || comp.name || "Business Entity",
+        accountHolderName:
+          rawBank.accountHolderName ||
+          rawBank.accountName ||
+          comp.accountHolderName ||
+          comp.bankAccountHolderName ||
+          comp.legalName ||
+          comp.name ||
+          "Business Entity",
         accountNumber: rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || "—",
         bankName: rawBank.bankName || "Bank",
         ifsc: rawBank.ifsc || rawBank.bankIfsc || "—",

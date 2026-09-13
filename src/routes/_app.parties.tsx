@@ -956,6 +956,7 @@ export function PartiesPage() {
                 addresses: [...(partyForAddressDrawer.addresses || []), addr],
               };
               setPartyForAddressDrawer(updated);
+              setCloudRows((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
             }
           }}
         />

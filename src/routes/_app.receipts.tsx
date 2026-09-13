@@ -38,6 +38,7 @@ import { calculateAdvanceTax } from "@/modules/tax/taxEngine";
 import { downloadDocumentPDF, type NormalizedDocument } from "@/lib/documentRenderer";
 import { createCompanySnapshot } from "@/modules/company/types";
 import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
+import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
 
 export const Route = createFileRoute("/_app/receipts")({
   head: () => ({ meta: [{ title: "Receipts & Payments — BMS NEXT" }] }),
@@ -369,7 +370,24 @@ export function ReceiptsAndPaymentsPage() {
           inv.balance = balance;
           inv.status = balance <= 0.01 ? "paid" : "partial";
           await db().invoices.put(inv);
+          if (activeCompany?.id) {
+            reconcileDocumentPostSuccess({
+              entityType: "invoice",
+              companyId: activeCompany.id,
+              document: inv,
+              action: "update",
+            });
+          }
         }
+      }
+
+      if (activeCompany?.id) {
+        reconcileDocumentPostSuccess({
+          entityType: "receipt",
+          companyId: activeCompany.id,
+          document: editingReceipt,
+          action: "create",
+        });
       }
 
       toast.success("Receipt posted & ledger updated");
@@ -411,6 +429,17 @@ export function ReceiptsAndPaymentsPage() {
           idToken,
           uid: user.uid,
         });
+      } else {
+        await db().payments.put(editingPayment);
+      }
+
+      if (activeCompany?.id) {
+        reconcileDocumentPostSuccess({
+          entityType: "payment",
+          companyId: activeCompany.id,
+          document: editingPayment,
+          action: "create",
+        });
       }
 
       toast.success("Payment voucher posted & ledger updated");
@@ -433,9 +462,24 @@ export function ReceiptsAndPaymentsPage() {
         inv.balance = Math.max(0, inv.grandTotal - inv.amountPaid);
         inv.status = inv.balance <= 0.01 ? "paid" : inv.amountPaid > 0 ? "partial" : "unpaid";
         await db().invoices.put(inv);
+        if (activeCompany?.id) {
+          reconcileDocumentPostSuccess({
+            entityType: "invoice",
+            companyId: activeCompany.id,
+            document: inv,
+            action: "update",
+          });
+        }
       }
     }
     await db().receipts.delete(id);
+    if (activeCompany?.id) {
+      reconcileDocumentPostSuccess({
+        entityType: "receipt",
+        companyId: activeCompany.id,
+        action: "delete",
+      });
+    }
     toast.success("Receipt removed");
   }
 

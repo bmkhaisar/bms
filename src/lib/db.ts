@@ -277,7 +277,7 @@ export interface Quotation {
   extraChargesTotal?: number;
   roundOff: number; grandTotal: number;
   notes?: string; terms?: string;
-  status: "draft" | "sent" | "accepted" | "converted" | "rejected";
+  status: "draft" | "sent" | "accepted" | "converted" | "rejected" | "cancelled" | "voided" | "deleted";
   createdAt: number;
   billToPartyId?: string;
   billToSnapshot?: AddressSnapshot;
@@ -314,6 +314,12 @@ export interface Quotation {
   structuredTermsSnapshot?: any[];
   generalInformationSnapshot?: any[];
   technicalSpecificationSnapshot?: any[];
+  visibilitySnapshot?: {
+    showGeneralInfo?: boolean;
+    showTechSpecs?: boolean;
+    showTerms?: boolean;
+    showBankDetails?: boolean;
+  };
   generalInformationMarkdown?: string;
   technicalSpecsMarkdown?: string;
   termsMarkdown?: string;
@@ -376,9 +382,13 @@ export interface Invoice {
   bankAccountId?: ID;
   bankSnapshot?: BankAccount;
   bankDetailsSnapshot?: BankAccount;
+  visibilitySnapshot?: {
+    showTerms?: boolean;
+    showBankDetails?: boolean;
+  };
   gstCalculationMode?: "item_wise" | "overall";
   overallGstRate?: number;
-  status: "draft" | "unpaid" | "partial" | "paid" | "posted" | "cancelled";
+  status: "draft" | "unpaid" | "partial" | "paid" | "posted" | "cancelled" | "voided" | "deleted";
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
   voucherId?: string;
   convertedFromQuotationId?: ID;
@@ -481,7 +491,7 @@ export interface Purchase {
   extraCharges?: ExtraCharge[];
   extraChargesTotal?: number;
   amountPaid: number; balance: number;
-  notes?: string; status: "unpaid" | "partial" | "paid" | "cancelled";
+  notes?: string; status: "draft" | "unpaid" | "partial" | "paid" | "cancelled" | "voided" | "deleted";
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
   voucherId?: string;
   version?: number;

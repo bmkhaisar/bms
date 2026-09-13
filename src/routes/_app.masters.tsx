@@ -464,7 +464,7 @@ function BanksMaster() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   function fresh(): BankAccount {
-    return { id: uid(), bankName: "", accountName: "", accountNo: "", ifsc: "", createdAt: Date.now() };
+    return { id: uid(), bankName: "", accountHolderName: "", accountName: "", accountNo: "", ifsc: "", createdAt: Date.now() };
   }
   async function setDefault(id: string) {
     for (const b of items) await db().bankAccounts.put({ ...b, isDefault: b.id === id });
@@ -505,7 +505,7 @@ function BanksMaster() {
           {editing && (
             <div className="grid gap-3 sm:grid-cols-2">
               <F label="Bank Name *"><Input value={editing.bankName} onChange={e => setEditing({ ...editing, bankName: e.target.value })} /></F>
-              <F label="Account Holder Name *"><Input value={editing.accountHolderName || editing.accountName} onChange={e => setEditing({ ...editing, accountHolderName: e.target.value, accountName: e.target.value })} /></F>
+              <F label="Account Holder Name *"><Input value={editing.accountHolderName ?? editing.accountName ?? ""} onChange={e => setEditing({ ...editing, accountHolderName: e.target.value })} /></F>
               <F label="Account No. *"><Input value={editing.accountNo} onChange={e => setEditing({ ...editing, accountNo: e.target.value })} /></F>
               <F label="IFSC Code *"><Input value={editing.ifsc} onChange={e => setEditing({ ...editing, ifsc: e.target.value.toUpperCase() })} /></F>
               <F label="Branch (Optional)"><Input value={editing.branch || ""} onChange={e => setEditing({ ...editing, branch: e.target.value })} /></F>
@@ -518,10 +518,11 @@ function BanksMaster() {
             <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
             <Button onClick={async () => {
               if (!editing?.bankName || !editing?.accountNo) { toast.error("Bank & account number required"); return; }
+              const holder = (editing.accountHolderName || editing.accountName || "").trim();
               const payload = {
                 ...editing,
-                accountHolderName: editing.accountHolderName || editing.accountName,
-                accountName: editing.accountHolderName || editing.accountName,
+                accountHolderName: holder,
+                accountName: holder, // backward-compatible alias
               };
               await db().bankAccounts.put(payload);
               setEditing(null);

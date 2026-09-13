@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -27,14 +27,16 @@ import { useAuth } from "@/modules/auth/context/AuthContext";
 import { getNextDocumentNumber } from "@/lib/numberingClient";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, set, onValue } from "firebase/database";
-import { cacheEntity } from "@/modules/sync/dexieCache";
-import { createCompanySnapshot } from "@/modules/company/types";
-import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
+import { cacheEntity, removeCachedEntity } from "@/modules/sync/dexieCache";
+import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
+import { appQueryClient } from "@/lib/queryClient";
+import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
 
 export function QuotationsPage() {
   const rows = useLive<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const templates = useLive<QuotationTemplate>(() => db().quotationTemplates.orderBy("name").toArray());
+  const [optimisticOverrides, setOptimisticOverrides] = useState<Map<string, Quotation | null>>(new Map());
   const [company, setCompany] = useState<CompanySettings | null>(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("all");
@@ -92,7 +94,33 @@ export function QuotationsPage() {
   const cust = (id: string) => customers.find(c => c.id === id);
   const tpl = (id?: string) => templates.find(t => t.id === id) || templates.find(t => t.isDefault);
 
-  let filtered = rows.filter(r => {
+  const effectiveRows = useMemo(() => {
+    const list: Quotation[] = [];
+    const seen = new Set<string>();
+
+    for (const r of rows) {
+      if (optimisticOverrides.has(r.id)) {
+        const over = optimisticOverrides.get(r.id);
+        if (over) {
+          list.push(over);
+          seen.add(r.id);
+        }
+      } else {
+        list.push(r);
+        seen.add(r.id);
+      }
+    }
+
+    for (const [id, over] of optimisticOverrides.entries()) {
+      if (over && !seen.has(id)) {
+        list.unshift(over);
+      }
+    }
+
+    return list;
+  }, [rows, optimisticOverrides]);
+
+  let filtered = effectiveRows.filter(r => {
     if (status !== "all" && r.status !== status) return false;
     if (!q) return true;
     const s = q.toLowerCase();
@@ -138,55 +166,74 @@ export function QuotationsPage() {
   }
   async function saveQuotation(next: Quotation) {
     const comp = activeCompany || company;
-    const toSave: Quotation = {
+    const toSave: Quotation = freezeQuotationSnapshots({
       ...next,
-      companySnapshot:
-        next.status !== "draft"
-          ? next.companySnapshot || (comp ? createCompanySnapshot(comp as any) : undefined)
-          : next.companySnapshot,
-      signatorySnapshot:
-        next.status !== "draft"
-          ? next.signatorySnapshot ||
-            (comp ? createSignatorySnapshot(comp as any, next.signatoryOverride, next.date) : undefined)
-          : next.signatorySnapshot,
-    };
+      createdAt: next.createdAt || Date.now(),
+    }, comp);
+
+    // 1. Immediate Dexie update
     await db().quotations.put(toSave);
-    if (activeCompany?.id && firebaseDb) {
-      try {
-        const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${toSave.id}`);
-        await set(qRef, sanitizeForFirebase({
-          ...toSave,
-          companyId: activeCompany.id,
-          financialYearId: activeFinancialYear?.id,
-          updatedAt: Date.now(),
-        }));
-        await cacheEntity({
-          uid: user?.uid || "",
-          companyId: activeCompany.id,
-          entityType: "quotations",
-          entityId: toSave.id,
-          data: toSave,
-          financialYearId: activeFinancialYear?.id,
-          name: toSave.number,
-        });
-      } catch (e) {
-        console.warn("Quotation RTDB sync error:", e);
-      }
+
+    // 2. Immediate visible React state update
+    setOptimisticOverrides(prev => new Map(prev).set(toSave.id, toSave));
+
+    // 3. Immediate query cache reconciliation
+    if (activeCompany?.id) {
+      reconcileDocumentPostSuccess({
+        entityType: "quotation",
+        companyId: activeCompany.id,
+        document: toSave,
+        action: "update",
+      });
     }
+
+    // 4. Non-blocking background sync to Firebase RTDB and local entity cache
+    if (activeCompany?.id && firebaseDb) {
+      const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${toSave.id}`);
+      set(qRef, sanitizeForFirebase({
+        ...toSave,
+        companyId: activeCompany.id,
+        financialYearId: activeFinancialYear?.id,
+        updatedAt: Date.now(),
+      })).catch(e => console.warn("Quotation RTDB sync error:", e));
+
+      cacheEntity({
+        uid: user?.uid || "",
+        companyId: activeCompany.id,
+        entityType: "quotations",
+        entityId: toSave.id,
+        data: toSave,
+        financialYearId: activeFinancialYear?.id,
+        name: toSave.number,
+      }).catch(e => console.warn("Quotation cacheEntity sync error:", e));
+    }
+
     toast.success("Quotation saved");
     setEditing(null);
   }
   async function remove(id: string) {
+    // 1. Immediate optimistic UI removal
+    setOptimisticOverrides(prev => new Map(prev).set(id, null));
+
+    // 2. Immediate Dexie delete
     await db().quotations.delete(id);
-    if (activeCompany?.id && firebaseDb) {
-      try {
-        const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${id}`);
-        await set(qRef, null);
-      } catch (e) {
-        console.warn("Quotation RTDB delete error:", e);
-      }
+
+    // 3. Immediate query cache reconciliation
+    if (activeCompany?.id) {
+      reconcileDocumentPostSuccess({
+        entityType: "quotation",
+        companyId: activeCompany.id,
+        action: "delete",
+      });
     }
-    toast.success("Deleted");
+
+    // 4. Non-blocking RTDB delete
+    if (activeCompany?.id && firebaseDb) {
+      const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${id}`);
+      set(qRef, null).catch(e => console.warn("Quotation RTDB delete error:", e));
+      removeCachedEntity({ companyId: activeCompany.id, entityType: "quotations", entityId: id }).catch(console.warn);
+    }
+    toast.success("Quotation deleted");
   }
 
   async function handleConvert(r: Quotation) {

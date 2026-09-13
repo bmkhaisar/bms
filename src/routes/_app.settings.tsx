@@ -158,7 +158,7 @@ export function SettingsPage() {
       bankAccountNo: form.bankAccountNo?.trim() || "",
       bankIfsc: form.bankIfsc?.trim().toUpperCase() || "",
       accountHolderName: form.accountHolderName?.trim() || form.bankAccountHolderName?.trim() || form.name?.trim() || "",
-      bankAccountHolderName: form.bankAccountHolderName?.trim() || form.accountHolderName?.trim() || form.name?.trim() || "",
+      bankAccountHolderName: form.accountHolderName?.trim() || form.bankAccountHolderName?.trim() || form.name?.trim() || "",
       bankAccountType: form.bankAccountType?.trim() || "",
       bankSwiftCode: form.bankSwiftCode?.trim() || "",
       upiId: form.upiId?.trim() || "",
@@ -1174,8 +1174,8 @@ export function SettingsPage() {
               <Input
                 value={form.accountHolderName ?? form.bankAccountHolderName ?? ""}
                 disabled={!canEdit}
-                onChange={(e) => setForm({ ...form, accountHolderName: e.target.value, bankAccountHolderName: e.target.value })}
-                placeholder="e.g. KH Portable Cabins"
+                onChange={(e) => setForm({ ...form, accountHolderName: e.target.value })}
+                placeholder="e.g. Registered Business / Account Holder Name"
               />
             </Field>
             <Field label="Account Number *">

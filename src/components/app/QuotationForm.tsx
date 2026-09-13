@@ -51,6 +51,11 @@ import {
 import { useLive } from "@/lib/useLive";
 import { computeLine, computeTotals, round2 } from "@/lib/calc";
 import { formatMoney, toDateInput, fromDateInput } from "@/lib/format";
+import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { createCompanySnapshot } from "@/modules/company/types";
+import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
+import { extractTableRowsFromMarkdown, extractTermsFromMarkdown } from "@/lib/markdownDoc";
+import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
 
 interface Props {
   initial: Quotation;
@@ -67,6 +72,7 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
   const techTemplates = useLive<TechSpecTemplate>(() => db().techSpecTemplates.orderBy("name").toArray());
   const banks = useLive<BankAccount>(() => db().bankAccounts.orderBy("bankName").toArray());
   const quoteTemplates = useLive<QuotationTemplate>(() => db().quotationTemplates.orderBy("name").toArray());
+  const { activeCompany } = useActiveCompany();
 
   const [q, setQ] = useState<Quotation>(initial);
   const [saving, setSaving] = useState(false);
@@ -201,6 +207,9 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
     if (!q.items.length) { toast.error("Add at least one item"); return; }
     setSaving(true);
     const cust = customers.find(c => c.id === q.customerId);
+    const comp = activeCompany;
+    const isFinalized = Boolean(q.status && q.status !== "draft");
+    const defaultBank = (banks || []).find(b => b.isDefault) || (banks || [])[0];
     
     // Resolve authoritative Bill To snapshot
     const billToSnapshot: AddressSnapshot = (q as any).billToSnapshot || (q as any).billingAddressSnapshot || {
@@ -274,18 +283,22 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
       includeBankDetails: q.includeBankDetails,
       bankAccountId: q.bankAccountId,
       bankSnapshot: q.bankSnapshot,
-      bankDetailsSnapshot: (q.status && q.status !== "draft") ? (q.bankSnapshot || q.bankDetailsSnapshot) : q.bankDetailsSnapshot,
-      termsSnapshot: (q.status && q.status !== "draft") ? (q.termsSnapshot || (q.terms ? q.terms.split(/\r?\n+/).map(l => l.trim()).filter(Boolean) : undefined)) : q.termsSnapshot,
+      companySnapshot: q.companySnapshot,
+      signatorySnapshot: q.signatorySnapshot,
+      bankDetailsSnapshot: q.bankDetailsSnapshot,
+      termsSnapshot: q.termsSnapshot,
       structuredTerms: q.structuredTerms,
-      structuredTermsSnapshot: (q.status && q.status !== "draft") ? (q.structuredTerms && q.structuredTerms.length > 0 ? [{ title: "Terms & Conditions", format: "numbered", items: q.structuredTerms }] : q.structuredTermsSnapshot) : q.structuredTermsSnapshot,
+      structuredTermsSnapshot: q.structuredTermsSnapshot,
       structuredSections: q.structuredSections,
-      generalInformationSnapshot: (q.status && q.status !== "draft") ? (q.structuredSections?.filter(s => s.type === "GENERAL_INFO") || q.generalInformationSnapshot) : q.generalInformationSnapshot,
-      technicalSpecificationSnapshot: (q.status && q.status !== "draft") ? (q.structuredSections?.filter(s => s.type === "SPEC_TABLE") || q.technicalSpecificationSnapshot) : q.technicalSpecificationSnapshot,
+      generalInformationSnapshot: q.generalInformationSnapshot,
+      technicalSpecificationSnapshot: q.technicalSpecificationSnapshot,
+      visibilitySnapshot: (q as any).visibilitySnapshot,
     };
+    const frozenQ = freezeQuotationSnapshots(finalQ, comp, banks);
     // Save any custom sizes typed in items
-    for (const it of finalQ.items) if (it.size) await saveSizeIfNew(it.size);
+    for (const it of frozenQ.items) if (it.size) await saveSizeIfNew(it.size);
     try {
-      await onSave(finalQ);
+      await onSave(frozenQ);
     } finally {
       setSaving(false);
     }

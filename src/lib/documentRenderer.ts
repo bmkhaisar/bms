@@ -772,7 +772,8 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       }
     } else {
       const rawBank: any = docData.bankDetailsSnapshot || docData.bankSnapshot || (comp.bankName ? {
-        accountName: (comp as any).bankAccountHolderName || (comp as any).accountHolderName || (comp as any).bankAccountName || comp.legalName || comp.name,
+        accountHolderName: (comp as any).accountHolderName || (comp as any).bankAccountHolderName || (comp as any).bankAccountName || comp.legalName || comp.name,
+        accountName: (comp as any).accountHolderName || (comp as any).bankAccountHolderName || (comp as any).bankAccountName || comp.legalName || comp.name,
         accountNo: comp.bankAccountNo || (comp as any).bankAccount,
         bankName: comp.bankName,
         ifsc: comp.bankIfsc,
@@ -782,7 +783,7 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
 
       if (rawBank && (rawBank.bankName || rawBank.accountNo)) {
         const bankRows: [string, string][] = [
-          ["Account Holder Name", rawBank.accountHolderName || rawBank.accountName || (comp as any).bankAccountHolderName || (comp as any).accountHolderName || comp.legalName || comp.name || "Business Entity"],
+          ["Account Holder Name", rawBank.accountHolderName || rawBank.accountName || (comp as any).accountHolderName || (comp as any).bankAccountHolderName || comp.legalName || comp.name || "Business Entity"],
           ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || "—"],
           ["Bank Name", rawBank.bankName || "—"],
           ["IFSC Code", rawBank.ifsc || rawBank.bankIfsc || "—"],

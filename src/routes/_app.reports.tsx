@@ -94,7 +94,11 @@ function ExportBtn({ name, data }: { name: string; data: unknown }) {
 function SalesReport({ from, to }: { from?: number; to?: number }) {
   const invoices = useLive<Invoice>(() => db().invoices.toArray());
   const customers = useLive<Customer>(() => db().customers.toArray());
-  const rows = useRange(invoices, from, to);
+  const activeInvoices = useMemo(
+    () => invoices.filter((i) => i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed"),
+    [invoices]
+  );
+  const rows = useRange(activeInvoices, from, to);
   const total = rows.reduce((s, i) => s + i.grandTotal, 0);
   return (
     <Card className="card-soft mt-4 p-4">
@@ -113,7 +117,11 @@ function SalesReport({ from, to }: { from?: number; to?: number }) {
 function PurchaseReport({ from, to }: { from?: number; to?: number }) {
   const purchases = useLive<Purchase>(() => db().purchases.toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
-  const rows = useRange(purchases, from, to);
+  const activePurchases = useMemo(
+    () => purchases.filter((p) => p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed"),
+    [purchases]
+  );
+  const rows = useRange(activePurchases, from, to);
   const total = rows.reduce((s, i) => s + i.grandTotal, 0);
   return (
     <Card className="card-soft mt-4 p-4">
@@ -138,7 +146,7 @@ function OutstandingReport() {
   const recv = useMemo(() => {
     const now = Date.now();
     return invoices
-      .filter((i) => i.balance > 0.01 && i.status !== "cancelled")
+      .filter((i) => i.balance > 0.01 && i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed")
       .map((i) => {
         const cust = customers.find((c) => c.id === i.customerId);
         const refDate = i.dueDate || i.date;
@@ -153,7 +161,10 @@ function OutstandingReport() {
       });
   }, [invoices, customers]);
 
-  const pay = purchases.filter((p) => p.balance > 0.01);
+  const pay = useMemo(
+    () => purchases.filter((p) => p.balance > 0.01 && p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed"),
+    [purchases]
+  );
 
   // Aging buckets (PRD § 94)
   const aging = useMemo(() => {
@@ -548,8 +559,16 @@ function ProfitReport({ from, to }: { from?: number; to?: number }) {
   const invoices = useLive<Invoice>(() => db().invoices.toArray());
   const purchases = useLive<Purchase>(() => db().purchases.toArray());
   const products = useLive<Product>(() => db().products.toArray());
-  const invRange = useRange(invoices, from, to);
-  const purRange = useRange(purchases, from, to);
+  const activeInvoices = useMemo(
+    () => invoices.filter((i) => i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed"),
+    [invoices]
+  );
+  const activePurchases = useMemo(
+    () => purchases.filter((p) => p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed"),
+    [purchases]
+  );
+  const invRange = useRange(activeInvoices, from, to);
+  const purRange = useRange(activePurchases, from, to);
 
   const revenue = invRange.reduce((s, i) => s + (i.subtotal - i.discountTotal), 0);
   const cost = invRange.reduce((s, i) => s + i.items.reduce((ss, it) => ss + (products.find(p => p.id === it.productId)?.purchasePrice ?? 0) * it.quantity, 0), 0);
@@ -576,13 +595,13 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
   const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
 
   // PRD Correction 12: GST registers must derive strictly from authoritative POSTED documents
-  // Exclude Drafts, Pending Sync, and Cancelled unposted documents
+  // Exclude Drafts, Pending Sync, Cancelled, Voided, and Reversed documents
   const postedInvoices = useMemo(
-    () => invoices.filter((i) => i.postingStatus === "posted" || (i.status as string) === "posted" || i.status === "paid" || i.status === "partial"),
+    () => invoices.filter((i) => (i.postingStatus === "posted" || (i.status as string) === "posted" || i.status === "paid" || i.status === "partial") && i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed"),
     [invoices]
   );
   const postedPurchases = useMemo(
-    () => purchases.filter((p) => p.postingStatus === "posted" || (p.status as string) === "posted" || p.status === "paid" || p.status === "partial"),
+    () => purchases.filter((p) => (p.postingStatus === "posted" || (p.status as string) === "posted" || p.status === "paid" || p.status === "partial") && p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed"),
     [purchases]
   );
 

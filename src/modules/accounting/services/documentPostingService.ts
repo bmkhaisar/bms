@@ -28,6 +28,8 @@ export interface PostingResult {
   documentId?: string;
   invoice?: Invoice;
   purchase?: Purchase;
+  receipt?: Receipt;
+  payment?: Payment;
   error?: string;
   recomputedGrandTotal?: number;
   discrepancy?: boolean;
@@ -58,6 +60,7 @@ export async function postInvoiceTransaction(params: {
   customerLedgerId: string;
   idToken?: string;
   uid: string;
+  clientMutationId?: string;
 }): Promise<PostingResult> {
   const { companyId, financialYearId, invoice, company, customerLedgerId, idToken, uid } = params;
 
@@ -142,8 +145,13 @@ export async function postInvoiceTransaction(params: {
         : []),
     ];
 
-    // 5. Post voucher through authoritative server engine
+    // 5. Post voucher through authoritative server engine with stable clientMutationId (idempotent)
     let voucherId: string | undefined = undefined;
+    const clientMutationId =
+      params.clientMutationId?.trim() ||
+      (invoice as any).clientMutationId?.trim() ||
+      `mut-inv-${invoice.id}`;
+
     if (idToken) {
       const voucherRes = await postVoucherServerFn({
         data: {
@@ -153,7 +161,7 @@ export async function postInvoiceTransaction(params: {
           voucherType: "journal",
           date: toCanonicalDate(invoice.date),
           narration: `Sales Invoice ${invoice.number} posted`,
-          clientMutationId: `mut-inv-${invoice.id}-${Date.now()}`,
+          clientMutationId,
           lines,
         },
       });
@@ -163,7 +171,7 @@ export async function postInvoiceTransaction(params: {
       }
     }
 
-    // 6. Attach frozen company snapshot, signatory snapshot, and immutable historical tax snapshot (Correction 11)
+    // 6. Attach frozen company snapshot, signatory snapshot, and immutable historical tax snapshot
     const companySnapshot = invoice.companySnapshot || createCompanySnapshot(company);
     const signatorySnapshot =
       invoice.signatorySnapshot ||
@@ -248,73 +256,73 @@ export async function postInvoiceTransaction(params: {
       updatedAt: Date.now(),
     };
 
-    // 7. Save to local Dexie database
+    // 7. Save immediately to local Dexie database
     await db().invoices.put(updatedInvoice);
 
-    // 8. Save to Firebase RTDB if available
-    if (firebaseDb) {
-      const invRef = ref(firebaseDb, `companyData/${companyId}/invoices/${invoice.id}`);
-      await set(invRef, sanitizeForFirebase(updatedInvoice));
-    }
-
-    // 9. Cache in bms_cache_v1
-    await cacheEntity({
-      uid,
-      companyId,
-      financialYearId,
-      entityType: "invoices",
-      entityId: invoice.id,
-      data: updatedInvoice,
-    });
-
-    // 10. Record Authoritative Stock OUT Movements, Price History and Product lastSalesRatePaise
-    for (const it of frozenLines) {
-      if (it.productId) {
-        try {
-          await recordStockMovement({
-            companyId,
-            productId: it.productId,
-            movementType: "out",
-            documentKind: "invoice",
-            documentId: invoice.id,
-            documentNumber: invoice.number,
-            date: invoice.date,
-            enteredQuantity: it.quantity,
-            enteredUom: it.unit || it.uomLabel || "NOS",
-            ratePaise: it.ratePaise,
-          });
-        } catch (smErr) {
-          console.warn("Stock movement recording failed non-fatally:", smErr);
+    // 8. Non-blocking asynchronous sync for Firebase RTDB, cacheEntity, stock movements, and price history
+    (async () => {
+      try {
+        if (firebaseDb) {
+          const invRef = ref(firebaseDb, `companyData/${companyId}/invoices/${invoice.id}`);
+          await set(invRef, sanitizeForFirebase(updatedInvoice));
         }
-      }
-    }
 
-    try {
-      recordInvoicePriceHistory({
-        companyId,
-        customerId: invoice.customerId,
-        invoiceId: invoice.id,
-        invoiceNumber: invoice.number,
-        date: invoice.date,
-        items: frozenLines.map((it) => ({
-          productId: it.productId,
-          rate: it.rate,
-          quantity: it.quantity,
-          unit: it.unit,
-        })),
-      });
-      for (const it of frozenLines) {
-        if (it.productId) {
-          const p = await db().products.get(it.productId);
-          if (p) {
-            p.lastSalesRatePaise = it.ratePaise || Math.round(it.rate * 100);
-            await db().products.put(p);
+        await cacheEntity({
+          uid,
+          companyId,
+          financialYearId,
+          entityType: "invoices",
+          entityId: invoice.id,
+          data: updatedInvoice,
+        });
+
+        // Parallel stock movements
+        await Promise.all(
+          frozenLines
+            .filter((it) => it.productId)
+            .map((it) =>
+              recordStockMovement({
+                companyId,
+                productId: it.productId,
+                movementType: "out",
+                documentKind: "invoice",
+                documentId: invoice.id,
+                documentNumber: invoice.number,
+                date: invoice.date,
+                enteredQuantity: it.quantity,
+                enteredUom: it.unit || it.uomLabel || "NOS",
+                ratePaise: it.ratePaise,
+              }).catch((smErr) => console.warn("Stock movement recording failed non-fatally:", smErr))
+            )
+        );
+
+        recordInvoicePriceHistory({
+          companyId,
+          customerId: invoice.customerId,
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.number,
+          date: invoice.date,
+          items: frozenLines.map((it) => ({
+            productId: it.productId,
+            rate: it.rate,
+            quantity: it.quantity,
+            unit: it.unit,
+          })),
+        });
+
+        for (const it of frozenLines) {
+          if (it.productId) {
+            const p = await db().products.get(it.productId);
+            if (p) {
+              p.lastSalesRatePaise = it.ratePaise || Math.round(it.rate * 100);
+              await db().products.put(p);
+            }
           }
         }
+      } catch (bgErr) {
+        console.warn("Background invoice post sync warning:", bgErr);
       }
-    } catch (phErr) {
-      console.warn("Price history logging failed non-fatally:", phErr);
-    }
+    })();
 
     return { success: true, voucherId, documentId: invoice.id, invoice: updatedInvoice };
   } catch (err: unknown) {
@@ -338,6 +346,7 @@ export async function postPurchaseTransaction(params: {
   supplierLedgerId: string;
   idToken?: string;
   uid: string;
+  clientMutationId?: string;
 }): Promise<PostingResult> {
   const { companyId, financialYearId, purchase, company, supplierLedgerId, idToken, uid } = params;
 
@@ -371,8 +380,13 @@ export async function postPurchaseTransaction(params: {
       },
     ];
 
-    // 1. Post voucher through authoritative server engine
+    // 1. Post voucher through authoritative server engine with stable clientMutationId
     let voucherId: string | undefined = undefined;
+    const clientMutationId =
+      params.clientMutationId?.trim() ||
+      (purchase as any).clientMutationId?.trim() ||
+      `mut-pur-${purchase.id}`;
+
     if (idToken) {
       const voucherRes = await postVoucherServerFn({
         data: {
@@ -382,7 +396,7 @@ export async function postPurchaseTransaction(params: {
           voucherType: "journal",
           date: toCanonicalDate(purchase.date),
           narration: `Purchase Bill ${purchase.number} from supplier`,
-          clientMutationId: `mut-pur-${purchase.id}-${Date.now()}`,
+          clientMutationId,
           lines,
         },
       });
@@ -456,74 +470,73 @@ export async function postPurchaseTransaction(params: {
       updatedAt: Date.now(),
     };
 
-    // 4. Save to local Dexie database
+    // 4. Save immediately to local Dexie database
     await db().purchases.put(updatedPurchase);
 
-    // 5. Save to Firebase RTDB
-    if (firebaseDb) {
-      const puRef = ref(firebaseDb, `companyData/${companyId}/purchases/${purchase.id}`);
-      await set(puRef, sanitizeForFirebase(updatedPurchase));
-    }
-
-    // 6. Cache in bms_cache_v1
-    await cacheEntity({
-      uid,
-      companyId,
-      financialYearId,
-      entityType: "purchase",
-      entityId: purchase.id,
-      data: updatedPurchase,
-    });
-
-    // 7. Record Authoritative Stock IN Movements
-    for (const it of frozenLines) {
-      if (it.productId) {
-        try {
-          await recordStockMovement({
-            companyId,
-            productId: it.productId,
-            movementType: "in",
-            documentKind: "purchase",
-            documentId: purchase.id,
-            documentNumber: purchase.number,
-            date: purchase.date,
-            enteredQuantity: it.quantity,
-            enteredUom: it.unit || it.uomLabel || "NOS",
-            ratePaise: it.ratePaise,
-          });
-        } catch (smErr) {
-          console.warn("Stock movement recording failed non-fatally:", smErr);
+    // 5. Non-blocking asynchronous sync for Firebase RTDB, cacheEntity, stock movements, and price history
+    (async () => {
+      try {
+        if (firebaseDb) {
+          const puRef = ref(firebaseDb, `companyData/${companyId}/purchases/${purchase.id}`);
+          await set(puRef, sanitizeForFirebase(updatedPurchase));
         }
-      }
-    }
 
-    // 8. Record Price History and Product lastPurchaseRatePaise
-    try {
-      recordPurchasePriceHistory({
-        companyId,
-        supplierId: purchase.supplierId,
-        purchaseId: purchase.id,
-        purchaseNumber: purchase.number,
-        date: purchase.date,
-        items: frozenLines.map((it) => ({
-          productId: it.productId,
-          rate: it.rate,
-          quantity: it.quantity,
-          unit: it.unit,
-        })),
-      });
-      for (const it of frozenLines) {
-        if (it.productId) {
-          const p = await db().products.get(it.productId);
-          if (p) {
-            p.lastPurchaseRatePaise = it.ratePaise || Math.round(it.rate * 100);
-            await db().products.put(p);
+        await cacheEntity({
+          uid,
+          companyId,
+          financialYearId,
+          entityType: "purchase",
+          entityId: purchase.id,
+          data: updatedPurchase,
+        });
+
+        // Parallel stock movements
+        await Promise.all(
+          frozenLines
+            .filter((it) => it.productId)
+            .map((it) =>
+              recordStockMovement({
+                companyId,
+                productId: it.productId,
+                movementType: "in",
+                documentKind: "purchase",
+                documentId: purchase.id,
+                documentNumber: purchase.number,
+                date: purchase.date,
+                enteredQuantity: it.quantity,
+                enteredUom: it.unit || it.uomLabel || "NOS",
+                ratePaise: it.ratePaise,
+              }).catch((smErr) => console.warn("Stock movement recording failed non-fatally:", smErr))
+            )
+        );
+
+        recordPurchasePriceHistory({
+          companyId,
+          supplierId: purchase.supplierId,
+          purchaseId: purchase.id,
+          purchaseNumber: purchase.number,
+          date: purchase.date,
+          items: frozenLines.map((it) => ({
+            productId: it.productId,
+            rate: it.rate,
+            quantity: it.quantity,
+            unit: it.unit,
+          })),
+        });
+
+        for (const it of frozenLines) {
+          if (it.productId) {
+            const p = await db().products.get(it.productId);
+            if (p) {
+              p.lastPurchaseRatePaise = it.ratePaise || Math.round(it.rate * 100);
+              await db().products.put(p);
+            }
           }
         }
+      } catch (bgErr) {
+        console.warn("Background purchase sync warning:", bgErr);
       }
-    } catch (phErr) {
-      console.warn("Purchase price history logging failed non-fatally:", phErr);
-    }
+    })();
 
     return { success: true, voucherId, documentId: purchase.id, purchase: updatedPurchase };
   } catch (err: unknown) {
@@ -547,6 +560,7 @@ export async function postReceiptTransaction(params: {
   settlementLedgerId?: string;
   idToken?: string;
   uid: string;
+  clientMutationId?: string;
 }): Promise<PostingResult> {
   const { companyId, financialYearId, receipt, company, customerLedgerId, settlementLedgerId, idToken, uid } = params;
 
@@ -606,7 +620,13 @@ export async function postReceiptTransaction(params: {
           ]),
     ];
 
+    // 1. Post voucher through authoritative server engine with stable clientMutationId
     let voucherId: string | undefined = undefined;
+    const clientMutationId =
+      params.clientMutationId?.trim() ||
+      (receipt as any).clientMutationId?.trim() ||
+      `mut-rec-${receipt.id}`;
+
     if (idToken) {
       const voucherRes = await postVoucherServerFn({
         data: {
@@ -618,7 +638,7 @@ export async function postReceiptTransaction(params: {
           narration: receipt.allocationType === "ADVANCE"
             ? `Customer Advance Receipt ${receipt.number} [Supply: ${advanceTaxRes?.supplyType || "GOODS"}, Tax: ${advanceTaxRes?.taxTreatment || "NO_ADVANCE_GST"}] [Ref: ${receipt.reference || receipt.number}]`
             : `Receipt ${receipt.number} against receivables`,
-          clientMutationId: `mut-rec-${receipt.id}-${Date.now()}`,
+          clientMutationId,
           lines,
         },
       });
@@ -656,23 +676,31 @@ export async function postReceiptTransaction(params: {
         : undefined,
     };
 
+    // Save immediately to local Dexie database
     await db().receipts.put(updatedReceipt);
 
-    if (firebaseDb) {
-      const recRef = ref(firebaseDb, `companyData/${companyId}/receipts/${receipt.id}`);
-      await set(recRef, sanitizeForFirebase(updatedReceipt));
-    }
+    // Non-blocking asynchronous sync for Firebase RTDB and cacheEntity
+    (async () => {
+      try {
+        if (firebaseDb) {
+          const recRef = ref(firebaseDb, `companyData/${companyId}/receipts/${receipt.id}`);
+          await set(recRef, sanitizeForFirebase(updatedReceipt));
+        }
 
-    await cacheEntity({
-      uid,
-      companyId,
-      financialYearId,
-      entityType: "receipt",
-      entityId: receipt.id,
-      data: updatedReceipt,
-    });
+        await cacheEntity({
+          uid,
+          companyId,
+          financialYearId,
+          entityType: "receipt",
+          entityId: receipt.id,
+          data: updatedReceipt,
+        });
+      } catch (bgErr) {
+        console.warn("Background receipt sync warning:", bgErr);
+      }
+    })();
 
-    return { success: true, voucherId, documentId: receipt.id };
+    return { success: true, voucherId, documentId: receipt.id, receipt: updatedReceipt };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Failed to post receipt voucher:", err);
@@ -694,6 +722,7 @@ export async function postPaymentTransaction(params: {
   settlementLedgerId?: string;
   idToken?: string;
   uid: string;
+  clientMutationId?: string;
 }): Promise<PostingResult> {
   const { companyId, financialYearId, payment, company, supplierLedgerId, settlementLedgerId, idToken, uid } = params;
 
@@ -715,6 +744,11 @@ export async function postPaymentTransaction(params: {
     ];
 
     let voucherId: string | undefined = undefined;
+    const clientMutationId =
+      params.clientMutationId?.trim() ||
+      (payment as any).clientMutationId?.trim() ||
+      `mut-pay-${payment.id}`;
+
     if (idToken) {
       const voucherRes = await postVoucherServerFn({
         data: {
@@ -724,7 +758,7 @@ export async function postPaymentTransaction(params: {
           voucherType: "payment",
           date: toCanonicalDate(payment.date),
           narration: `Payment ${payment.number} to supplier`,
-          clientMutationId: `mut-pay-${payment.id}-${Date.now()}`,
+          clientMutationId,
           lines,
         },
       });
@@ -749,21 +783,31 @@ export async function postPaymentTransaction(params: {
       signatorySnapshot,
     };
 
-    if (firebaseDb) {
-      const payRef = ref(firebaseDb, `companyData/${companyId}/payments/${payment.id}`);
-      await set(payRef, sanitizeForFirebase(updatedPayment));
-    }
+    // Save immediately to local Dexie database
+    await db().payments.put(updatedPayment);
 
-    await cacheEntity({
-      uid,
-      companyId,
-      financialYearId,
-      entityType: "payment",
-      entityId: payment.id,
-      data: updatedPayment,
-    });
+    // Non-blocking asynchronous sync for Firebase RTDB and cacheEntity
+    (async () => {
+      try {
+        if (firebaseDb) {
+          const payRef = ref(firebaseDb, `companyData/${companyId}/payments/${payment.id}`);
+          await set(payRef, sanitizeForFirebase(updatedPayment));
+        }
 
-    return { success: true, voucherId, documentId: payment.id };
+        await cacheEntity({
+          uid,
+          companyId,
+          financialYearId,
+          entityType: "payment",
+          entityId: payment.id,
+          data: updatedPayment,
+        });
+      } catch (bgErr) {
+        console.warn("Background payment sync warning:", bgErr);
+      }
+    })();
+
+    return { success: true, voucherId, documentId: payment.id, payment: updatedPayment };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Failed to post payment voucher:", err);
@@ -788,6 +832,7 @@ export async function amendPostedInvoiceTransaction(params: {
   idToken?: string;
   uid: string;
   amendmentReason: string;
+  clientMutationId?: string;
 }): Promise<PostingResult> {
   const {
     companyId,
@@ -802,6 +847,10 @@ export async function amendPostedInvoiceTransaction(params: {
   } = params;
 
   try {
+    const clientMutationId =
+      params.clientMutationId?.trim() ||
+      `mut-amend-${correctedInvoice.id}`;
+
     // 1. Reverse original voucher if present
     if (originalInvoice.voucherId && idToken) {
       const revRes = await reverseVoucherServerFn({
@@ -810,7 +859,7 @@ export async function amendPostedInvoiceTransaction(params: {
           companyId,
           voucherId: originalInvoice.voucherId,
           reversalReason: `Amendment to Invoice ${originalInvoice.number}: ${amendmentReason}`,
-          clientMutationId: `mut-amend-rev-${originalInvoice.id}-${Date.now()}`,
+          clientMutationId: `rev-${clientMutationId}`,
         },
       });
 
@@ -835,6 +884,7 @@ export async function amendPostedInvoiceTransaction(params: {
       customerLedgerId,
       idToken,
       uid,
+      clientMutationId,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

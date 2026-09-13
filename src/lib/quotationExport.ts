@@ -501,14 +501,15 @@ async function drawTermsPage(ctx: PdfContext) {
   y += 6;
 
   // 1. Terms & Conditions Section (Hanging Indent, Auto-Pagination, Markdown & Structured Support)
-  const showTerms = quotation.includeTerms !== false &&
-    ((quotation as any).showTerms !== false) &&
-    ((company as any).showQuotationTerms !== false || !!quotation.structuredTermsSnapshot?.length || !!quotation.termsSnapshot?.length || !!quotation.termsMarkdown);
+  const showTerms = quotation.visibilitySnapshot?.showTerms !== undefined
+    ? quotation.visibilitySnapshot.showTerms
+    : quotation.includeTerms !== false &&
+      ((quotation as any).showTerms !== false) &&
+      ((company as any).showQuotationTerms !== false || !!quotation.structuredTermsSnapshot?.length || !!quotation.termsSnapshot?.length || !!quotation.termsMarkdown);
 
   if (showTerms) {
     let termItems: Array<{ text: string; format?: string; title?: string }> = [];
 
-    const rawMd = quotation.termsMarkdown || quotation.terms || (company as any).quotationTermsMarkdown || company.terms || "";
     if (quotation.structuredTermsSnapshot?.length) {
       for (const sec of quotation.structuredTermsSnapshot) {
         if (sec.title) termItems.push({ text: sec.title, title: sec.title });
@@ -518,15 +519,18 @@ async function drawTermsPage(ctx: PdfContext) {
       }
     } else if (quotation.termsSnapshot?.length) {
       termItems = quotation.termsSnapshot.map(t => ({ text: t, format: "numbered" }));
-    } else if (rawMd) {
-      const extracted = extractTermsFromMarkdown(rawMd);
-      termItems = extracted.map(t => {
-        const isBullet = t.startsWith("- ") || t.startsWith("* ");
-        return {
-          text: t.replace(/^(\d+[.)]|[-*])\s*/, ""),
-          format: isBullet ? "bullet" : "numbered",
-        };
-      });
+    } else {
+      const rawMd = quotation.termsMarkdown || quotation.terms || (company as any).quotationTermsMarkdown || company.terms || "";
+      if (rawMd) {
+        const extracted = extractTermsFromMarkdown(rawMd);
+        termItems = extracted.map(t => {
+          const isBullet = t.startsWith("- ") || t.startsWith("* ");
+          return {
+            text: t.replace(/^(\d+[.)]|[-*])\s*/, ""),
+            format: isBullet ? "bullet" : "numbered",
+          };
+        });
+      }
     }
 
     if (termItems.length > 0) {
@@ -597,15 +601,18 @@ async function drawTermsPage(ctx: PdfContext) {
   }
 
   // 2. Bank Details Section (PRD §§ 8-9, 78, 79 — Clean bordered table)
-  const showBank = quotation.includeBankDetails !== false &&
-    ((quotation as any).showBankDetails !== false) &&
-    ((company as any).showQuotationBankDetails !== false || !!quotation.bankDetailsSnapshot || !!quotation.bankSnapshot);
+  const showBank = quotation.visibilitySnapshot?.showBankDetails !== undefined
+    ? quotation.visibilitySnapshot.showBankDetails
+    : quotation.includeBankDetails !== false &&
+      ((quotation as any).showBankDetails !== false) &&
+      ((company as any).showQuotationBankDetails !== false || !!quotation.bankDetailsSnapshot || !!quotation.bankSnapshot);
 
   if (showBank) {
     const rawBank: any = quotation.bankDetailsSnapshot || quotation.bankSnapshot || (
       company.bankName ? {
         bankName: company.bankName,
-        accountName: (company as any).bankAccountHolderName || (company as any).accountHolderName || (company as any).bankAccountName || (company as any).legalName || company.name,
+        accountHolderName: (company as any).accountHolderName || (company as any).bankAccountHolderName || (company as any).legalName || company.name,
+        accountName: (company as any).accountHolderName || (company as any).bankAccountHolderName || (company as any).legalName || company.name,
         accountNo: company.bankAccount || (company as any).bankAccountNo,
         ifsc: company.bankIfsc,
         branch: (company as any).bankBranch,
@@ -628,7 +635,7 @@ async function drawTermsPage(ctx: PdfContext) {
       y += 3.5;
 
       const bankRows: [string, string][] = [
-        ["Account Holder Name", rawBank.accountHolderName || rawBank.accountName || (company as any).bankAccountHolderName || (company as any).accountHolderName || (company as any).legalName || company.name || "Business Entity"],
+        ["Account Holder Name", rawBank.accountHolderName || rawBank.accountName || (company as any).accountHolderName || (company as any).bankAccountHolderName || (company as any).legalName || company.name || "Business Entity"],
         ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || "—"],
         ["Bank Name", rawBank.bankName || "—"],
         ["IFSC Code", rawBank.ifsc || rawBank.bankIfsc || "—"],
@@ -677,11 +684,17 @@ async function drawTermsPage(ctx: PdfContext) {
   doc.setTextColor(30, 30, 30);
   doc.text(`For ${company.name || "Business Entity"}`, sigX, y);
 
-  if (company.signature) {
-    try { doc.addImage(company.signature, "PNG", sigX, y + 3, 38, 13); } catch { /* ignore */ }
+  const sig = quotation.signatorySnapshot;
+  const sigName = sig?.signatoryName || company.authorizedSignatory || "Authorized Signatory";
+  const sigDesignation = sig?.designation || (company as any).designation;
+  const sigImg = sig?.signatureUrl || company.signature;
+  const stampImg = sig?.stampUrl || company.stamp;
+
+  if (sigImg) {
+    try { doc.addImage(sigImg, "PNG", sigX, y + 3, 38, 13); } catch { /* ignore */ }
   }
-  if (company.stamp) {
-    try { doc.addImage(company.stamp, "PNG", sigX + 40, y + 2, 18, 18); } catch { /* ignore */ }
+  if (stampImg) {
+    try { doc.addImage(stampImg, "PNG", sigX + 40, y + 2, 18, 18); } catch { /* ignore */ }
   }
 
   doc.setDrawColor(180, 180, 180);
@@ -690,11 +703,11 @@ async function drawTermsPage(ctx: PdfContext) {
 
   doc.setFontSize(8);
   doc.setTextColor(60, 60, 60);
-  doc.text(company.authorizedSignatory || "Authorized Signatory", sigX, y + 26);
-  if ((company as any).designation) {
+  doc.text(sigName, sigX, y + 26);
+  if (sigDesignation) {
     doc.setFontSize(7.5);
     doc.setTextColor(100, 100, 100);
-    doc.text((company as any).designation, sigX, y + 30);
+    doc.text(sigDesignation, sigX, y + 30);
   }
 }
 
@@ -707,10 +720,13 @@ export async function exportQuotationPDF(
   const jsPDFConstructor: any = typeof jsPDF === "function" ? jsPDF : (jsPDF as any).jsPDF || (jsPDF as any).default || jsPDF;
   const doc = new jsPDFConstructor({ unit: "mm", format: "a4", orientation: "portrait" });
   const tpl = template || defaultTemplate();
+  const effectiveCompany = quotation.companySnapshot
+    ? ({ ...company, ...quotation.companySnapshot } as CompanySettings)
+    : company;
   const logoData = await getLogoDataUrl();
-  const companyLogoData = company.logo || null;
+  const companyLogoData = effectiveCompany.logo || null;
   const ctx: PdfContext = {
-    doc, company, quotation, customer, template: tpl,
+    doc, company: effectiveCompany, quotation, customer, template: tpl,
     accent: hexToRgb(tpl.accent),
     logoData, companyLogoData,
     pageW: doc.internal.pageSize.getWidth(),
@@ -722,27 +738,17 @@ export async function exportQuotationPDF(
   await drawCover(ctx);
 
   // 2. Supplementary Section: General Information (PRD §§ 8, 9, 81 — Quotation only)
-  const showGenInfo = quotation.includeGeneralInfo !== false &&
-    ((quotation as any).showGeneralInfo !== false) &&
-    ((company as any).showQuotationGeneralInfo !== false || !!quotation.generalInformationSnapshot?.length || !!quotation.generalInfoSnapshot?.length || !!(quotation as any).generalInfoMarkdown);
+  const showGenInfo = quotation.visibilitySnapshot?.showGeneralInfo !== undefined
+    ? quotation.visibilitySnapshot.showGeneralInfo
+    : quotation.includeGeneralInfo !== false &&
+      ((quotation as any).showGeneralInfo !== false) &&
+      ((company as any).showQuotationGeneralInfo !== false || !!quotation.generalInformationSnapshot?.length || !!quotation.generalInfoSnapshot?.length || !!(quotation as any).generalInfoMarkdown);
 
   if (showGenInfo) {
     let genRows: Array<{ label: string; value: string; bullets?: string[] }> = [];
-    const genMd = (quotation as any).generalInfoMarkdown || (company as any).quotationGeneralInfoMarkdown;
 
-    if (genMd) {
-      genRows = extractTableRowsFromMarkdown(genMd);
-    } else if (quotation.structuredSections) {
-      const sec = quotation.structuredSections.find(s => s.type === "GENERAL_INFO");
-      if (sec && sec.rows) {
-        genRows = sec.rows.map(r => ({
-          label: r.label,
-          value: r.value,
-          bullets: r.bullets || (r.valueType === "BULLET_LIST" ? r.value.split(/\r?\n+/).map(b => b.trim()).filter(Boolean) : undefined),
-        }));
-      }
-    } else if (quotation.generalInformationSnapshot?.length) {
-      const sec: any = quotation.generalInformationSnapshot.find((s: any) => s.type === "GENERAL_INFO");
+    if (quotation.generalInformationSnapshot?.length) {
+      const sec: any = quotation.generalInformationSnapshot.find((s: any) => s.type === "GENERAL_INFO") || { rows: quotation.generalInformationSnapshot };
       if (sec && sec.rows) {
         genRows = sec.rows.map((r: any) => ({
           label: r.label,
@@ -756,6 +762,20 @@ export async function exportQuotationPDF(
         value: f.value,
         bullets: f.value && f.value.includes("•") ? f.value.split("•").map((b: string) => b.trim()).filter(Boolean) : undefined,
       }));
+    } else {
+      const genMd = (quotation as any).generalInfoMarkdown || (company as any).quotationGeneralInfoMarkdown;
+      if (genMd) {
+        genRows = extractTableRowsFromMarkdown(genMd);
+      } else if (quotation.structuredSections) {
+        const sec = quotation.structuredSections.find(s => s.type === "GENERAL_INFO");
+        if (sec && sec.rows) {
+          genRows = sec.rows.map(r => ({
+            label: r.label,
+            value: r.value,
+            bullets: r.bullets || (r.valueType === "BULLET_LIST" ? r.value.split(/\r?\n+/).map(b => b.trim()).filter(Boolean) : undefined),
+          }));
+        }
+      }
     }
 
     if (genRows.length > 0) {
@@ -766,56 +786,23 @@ export async function exportQuotationPDF(
   }
 
   // 3. Supplementary Section: Technical / Fabrication Specifications (PRD §§ 8, 9, 82 — Quotation only)
-  const showTechSpecs = quotation.includeTechSpecs !== false &&
-    ((quotation as any).showTechSpecs !== false) &&
-    ((company as any).showQuotationTechnicalSpecs !== false || !!quotation.technicalSpecificationSnapshot?.length || !!quotation.techSpecSnapshot?.length || !!quotation.technicalSpecsMarkdown);
+  const showTechSpecs = quotation.visibilitySnapshot?.showTechSpecs !== undefined
+    ? quotation.visibilitySnapshot.showTechSpecs
+    : quotation.includeTechSpecs !== false &&
+      ((quotation as any).showTechSpecs !== false) &&
+      ((company as any).showQuotationTechnicalSpecs !== false || !!quotation.technicalSpecificationSnapshot?.length || !!quotation.techSpecSnapshot?.length || !!quotation.technicalSpecsMarkdown);
 
   if (showTechSpecs) {
     let specSections: Array<{ heading: string; subtitle?: string; rows: Array<{ label: string; value: string }> }> = [];
-    const techMd = quotation.technicalSpecsMarkdown || (company as any).quotationTechnicalSpecsMarkdown;
 
-    if (techMd) {
-      const blocks = parseMarkdownToBlocks(techMd);
-      let currentSection: { heading: string; rows: Array<{ label: string; value: string }> } = {
-        heading: "Technical Specifications",
-        rows: [],
-      };
-      for (const b of blocks) {
-        if (b.type === "HEADING") {
-          if (currentSection.rows.length > 0) {
-            specSections.push(currentSection);
-          }
-          currentSection = { heading: b.text, rows: [] };
-        } else if (b.type === "TABLE") {
-          for (const r of b.rows) {
-            if (r.length >= 2) {
-              currentSection.rows.push({ label: r[0], value: r[1] });
-            }
-          }
-        } else if (b.type === "BULLET_LIST" || b.type === "NUMBERED_LIST") {
-          for (const item of (b as any).items) {
-            currentSection.rows.push({ label: "Specification", value: item.text });
-          }
-        }
-      }
-      if (currentSection.rows.length > 0) {
-        specSections.push(currentSection);
-      }
-    } else if (quotation.structuredSections) {
-      const specs = quotation.structuredSections.filter(s => s.type === "SPEC_TABLE");
-      specSections = specs.map(s => ({
-        heading: s.title,
-        subtitle: s.subtitle,
-        rows: s.rows.map((r: any) => ({ label: r.label, value: r.value })),
-      }));
-    } else if (quotation.technicalSpecificationSnapshot?.length) {
+    if (quotation.technicalSpecificationSnapshot?.length) {
       const specs = quotation.technicalSpecificationSnapshot.filter((s: any) => s.type === "SPEC_TABLE");
       specSections = specs.map((s: any) => ({
         heading: s.title,
         subtitle: s.subtitle,
         rows: (s.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
       }));
-    } else {
+    } else if (quotation.techSpecSnapshot?.length || quotation.electricalSnapshot?.length) {
       if (quotation.techSpecSnapshot?.length) {
         specSections.push(...quotation.techSpecSnapshot.map((sec: any) => ({
           heading: sec.title,
@@ -827,6 +814,43 @@ export async function exportQuotationPDF(
           heading: sec.title,
           rows: sec.rows.map(r => ({ label: r.label, value: r.value })),
         })));
+      }
+    } else {
+      const techMd = quotation.technicalSpecsMarkdown || (company as any).quotationTechnicalSpecsMarkdown;
+      if (techMd) {
+        const blocks = parseMarkdownToBlocks(techMd);
+        let currentSection: { heading: string; rows: Array<{ label: string; value: string }> } = {
+          heading: "Technical Specifications",
+          rows: [],
+        };
+        for (const b of blocks) {
+          if (b.type === "HEADING") {
+            if (currentSection.rows.length > 0) {
+              specSections.push(currentSection);
+            }
+            currentSection = { heading: b.text, rows: [] };
+          } else if (b.type === "TABLE") {
+            for (const r of b.rows) {
+              if (r.length >= 2) {
+                currentSection.rows.push({ label: r[0], value: r[1] });
+              }
+            }
+          } else if (b.type === "BULLET_LIST" || b.type === "NUMBERED_LIST") {
+            for (const item of (b as any).items) {
+              currentSection.rows.push({ label: "Specification", value: item.text });
+            }
+          }
+        }
+        if (currentSection.rows.length > 0) {
+          specSections.push(currentSection);
+        }
+      } else if (quotation.structuredSections) {
+        const specs = quotation.structuredSections.filter(s => s.type === "SPEC_TABLE");
+        specSections = specs.map(s => ({
+          heading: s.title,
+          subtitle: s.subtitle,
+          rows: s.rows.map((r: any) => ({ label: r.label, value: r.value })),
+        }));
       }
     }
 
@@ -921,8 +945,11 @@ export async function exportQuotationDOCX(
   company: CompanySettings,
   customer?: Customer,
 ): Promise<Blob> {
-  const logoBytes = (company.logo?.startsWith("data:")
-    ? Uint8Array.from(atob(company.logo.split(",")[1]), c => c.charCodeAt(0))
+  const effectiveCompany = quotation.companySnapshot
+    ? ({ ...company, ...quotation.companySnapshot } as CompanySettings)
+    : company;
+  const logoBytes = (effectiveCompany.logo?.startsWith("data:")
+    ? Uint8Array.from(atob(effectiveCompany.logo.split(",")[1]), c => c.charCodeAt(0))
     : await getLogoBytes());
 
   const headerChildren: Paragraph[] = [];
@@ -941,7 +968,7 @@ export async function exportQuotationDOCX(
       new Paragraph({
         alignment: AlignmentType.RIGHT,
         children: [
-          new TextRun({ text: company.name || "Company", bold: true, size: 22, color: ACCENT_HEX, font: "Calibri" }),
+          new TextRun({ text: effectiveCompany.name || "Company", bold: true, size: 22, color: ACCENT_HEX, font: "Calibri" }),
         ],
       }),
     ],
@@ -1149,7 +1176,13 @@ export async function exportQuotationDOCX(
   // Terms/bank/signature
   extras.push(new Paragraph({ children: [new TextRun({ break: 1 })], pageBreakBefore: true }));
   extras.push(sectionHeading("Terms, Conditions & Payment"));
-  const terms = quotation.termsSnapshot?.length ? quotation.termsSnapshot : (company.terms ? company.terms.split(/\n+/) : []);
+  const terms = quotation.termsSnapshot?.length
+    ? quotation.termsSnapshot
+    : quotation.structuredTermsSnapshot?.length
+    ? quotation.structuredTermsSnapshot.flatMap(s => (s.items || []).map((it: any) => it.text))
+    : effectiveCompany.terms
+    ? effectiveCompany.terms.split(/\n+/)
+    : [];
   if (terms.length) {
     extras.push(P("Terms & Conditions", { bold: true, size: 22 }));
     terms.forEach((t, i) => {
@@ -1165,26 +1198,30 @@ export async function exportQuotationDOCX(
     extras.push(P(""));
   }
 
-  if (quotation.bankSnapshot) {
-    const b = quotation.bankSnapshot;
+  const rawDocxBank = quotation.bankDetailsSnapshot || quotation.bankSnapshot;
+  if (rawDocxBank) {
+    const b = rawDocxBank as any;
     extras.push(P("Bank Details", { bold: true, size: 22, color: ACCENT_HEX }));
     extras.push(kvTable([
-      ["Bank", b.bankName],
-      ["A/C Name", b.accountName],
-      ["A/C No.", b.accountNo],
-      ["IFSC", b.ifsc],
+      ["Bank", b.bankName || "—"],
+      ["Account Holder Name", b.accountHolderName || b.accountName || "—"],
+      ["Account No.", b.accountNo || b.accountNumber || "—"],
+      ["IFSC", b.ifsc || "—"],
       ...(b.branch ? [["Branch", b.branch] as [string, string]] : []),
       ...(b.upi ? [["UPI", b.upi] as [string, string]] : []),
     ]));
     extras.push(P(""));
   }
 
+  const sig = quotation.signatorySnapshot;
+  const sigName = sig?.signatoryName || effectiveCompany.authorizedSignatory || "Authorized Signatory";
+
   extras.push(P("Thank you for your business.", { size: 18, color: "555555" }));
   extras.push(P(""));
-  extras.push(P(`For ${company.name}`, { bold: true, size: 20 }));
+  extras.push(P(`For ${effectiveCompany.name || "Business Entity"}`, { bold: true, size: 20 }));
   extras.push(P(""));
   extras.push(P(""));
-  extras.push(P(company.authorizedSignatory || "Authorized Signatory", { size: 18, color: "555555" }));
+  extras.push(P(sigName, { size: 18, color: "555555" }));
 
   const docx = new Document({
     creator: "BMS",

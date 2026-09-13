@@ -11,7 +11,7 @@ import { LineItemsEditor } from "./LineItemsEditor";
 import { computeLine, computeTotals, applyStockDelta } from "@/lib/calc";
 import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge, AddressSnapshot, BankAccount, TermsTemplate, StructuredTermItem } from "@/lib/db";
 import { db, nextNumber, uid, getCompany } from "@/lib/db";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useLive } from "@/lib/useLive";
 import { toDateInput, fromDateInput, formatDate, formatMoney } from "@/lib/format";
 import { toast } from "sonner";
@@ -19,6 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Copy, Download, FileText, Pencil, Plus, Printer, Trash2, UserPlus, Truck, HandCoins, Loader2, AlertTriangle } from "lucide-react";
 import { ListToolbar, EmptyState, usePagination, Pager } from "./ListHelpers";
+import { cn } from "@/lib/utils";
 import { DocumentPrint, type DocumentKind } from "./DocumentPrint";
 import { printElement } from "@/lib/pdf";
 import { downloadDocumentPDF, type NormalizedDocument } from "@/lib/documentRenderer";
@@ -46,10 +47,13 @@ import { CalculationReconciliationModal } from "./CalculationReconciliationModal
 import { getPartyFinancialInsight } from "@/modules/accounting/services/partyAdvanceService";
 import { validateDocumentTotals } from "@/modules/tax/canonicalCalculation";
 import { formatAddressLines } from "./AddressDrawer";
-import { firebaseDb } from "@/config/firebase";
-import { ref, remove as rtdbRemove, onValue } from "firebase/database";
+import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
+import { ref, set, remove as rtdbRemove, onValue } from "firebase/database";
 import { removeCachedEntity } from "@/modules/sync/dexieCache";
 import { saveDraft, loadDraft, clearDraft } from "@/lib/draftAutosave";
+import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
+import { reverseVoucherServerFn } from "@/functions/reverseVoucherFn";
+import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
 
 type AnyDoc = Invoice | Quotation | Purchase;
 
@@ -80,8 +84,14 @@ export function DocumentListPage<T extends AnyDoc>({
   const [editing, setEditing] = useState<T | null>(null);
   const [preview, setPreview] = useState<T | null>(null);
   const [deleteTargetDoc, setDeleteTargetDoc] = useState<{ doc: T; isPosted: boolean } | null>(null);
+  const [isDeletingDoc, setIsDeletingDoc] = useState<boolean>(false);
   const [recoverableDraft, setRecoverableDraft] = useState<{ data: T; savedAt: number } | null>(null);
   const [company, setCompany] = useState<CompanySettings | null>(null);
+
+  // Optimistic row overrides for instant local state sync without waiting for Dexie/Firebase
+  const [optimisticOverrides, setOptimisticOverrides] = useState<Map<string, T | null>>(new Map());
+  // Active document list filter (PRD § 4: Active (default), Draft, Voided / Deleted, All)
+  const [statusFilter, setStatusFilter] = useState<"active" | "draft" | "voided" | "all">("active");
 
   // Document copy export modal
   const [copyModalDoc, setCopyModalDoc] = useState<T | null>(null);
@@ -256,19 +266,68 @@ export function DocumentListPage<T extends AnyDoc>({
   const parties = tableFor === "customer" ? customers : suppliers;
   const partyById = (id: string) => parties.find(p => p.id === id);
 
-  const filtered = rows.filter(r => {
-    if (!q) return true;
-    const s = q.toLowerCase();
-    const p = partyById((r as any).customerId ?? (r as Purchase).supplierId);
-    const suppInv = (r as Purchase).supplierInvoiceNumber?.toLowerCase() ?? "";
-    const gstin = p?.gstin?.toLowerCase() ?? "";
-    return (
-      (r as AnyDoc).number.toLowerCase().includes(s) ||
-      (p?.name.toLowerCase().includes(s) ?? false) ||
-      gstin.includes(s) ||
-      suppInv.includes(s)
-    );
-  });
+  const effectiveRows: T[] = useMemo(() => {
+    const list: T[] = [];
+    const seen = new Set<string>();
+
+    for (const r of rows) {
+      if (optimisticOverrides.has(r.id)) {
+        const over = optimisticOverrides.get(r.id);
+        if (over) {
+          list.push(over);
+          seen.add(r.id);
+        }
+      } else {
+        list.push(r);
+        seen.add(r.id);
+      }
+    }
+
+    // Prepend newly created items from overrides if not yet emitted by Dexie
+    for (const [id, over] of optimisticOverrides.entries()) {
+      if (over && !seen.has(id)) {
+        list.unshift(over);
+      }
+    }
+
+    return list;
+  }, [rows, optimisticOverrides]);
+
+  const filtered: T[] = useMemo(() => {
+    return effectiveRows.filter((r: T) => {
+      const docStatus = ((r as any).status || "").toLowerCase();
+      const docPosting = ((r as any).postingStatus || "").toLowerCase();
+      const isVoidedOrCancelled =
+        docStatus === "cancelled" ||
+        docStatus === "voided" ||
+        docStatus === "deleted" ||
+        docPosting === "reversed";
+      const isDraft =
+        docStatus === "draft" ||
+        docPosting === "draft";
+
+      if (statusFilter === "active") {
+        if (isVoidedOrCancelled) return false;
+      } else if (statusFilter === "draft") {
+        if (!isDraft || isVoidedOrCancelled) return false;
+      } else if (statusFilter === "voided") {
+        if (!isVoidedOrCancelled) return false;
+      }
+      // "all" includes everything
+
+      if (!q) return true;
+      const s = q.toLowerCase().trim();
+      const p = partyById((r as any).customerId ?? (r as Purchase).supplierId);
+      const suppInv = (r as Purchase).supplierInvoiceNumber?.toLowerCase() ?? "";
+      const gstin = p?.gstin?.toLowerCase() ?? "";
+      return (
+        (r as AnyDoc).number.toLowerCase().includes(s) ||
+        (p?.name.toLowerCase().includes(s) ?? false) ||
+        gstin.includes(s) ||
+        suppInv.includes(s)
+      );
+    });
+  }, [effectiveRows, statusFilter, q, customers, suppliers]);
   const pager = usePagination(filtered, 12);
 
   const { user } = useAuth();
@@ -606,10 +665,16 @@ export function DocumentListPage<T extends AnyDoc>({
       setPostingPhase("posting");
       inv.balance = Math.max(0, inv.grandTotal - inv.amountPaid);
       inv.status = inv.balance <= 0.01 ? "paid" : inv.amountPaid > 0 ? "partial" : "unpaid";
+      inv.postingStatus = "posted";
+
+      const clientMutationId = (inv as any).clientMutationId || uid();
+      (inv as any).clientMutationId = clientMutationId;
 
       const prev = await db().invoices.get(inv.id);
       if (prev) await applyStockDelta(prev.items, 1); // revert old
       await applyStockDelta(inv.items, -1);
+
+      let authoritativeInvoice: Invoice = inv;
 
       if (activeCompany?.id && activeFinancialYear?.id && user) {
         const custLedger = await ensureCustomerLedger({
@@ -629,13 +694,14 @@ export function DocumentListPage<T extends AnyDoc>({
             idToken,
             uid: user.uid,
             amendmentReason: "Invoice edit and amendment",
+            clientMutationId,
           });
           if (!res.success) {
             setPostingPhase("idle");
             toast.error(mapFriendlyError(res.error));
             return;
           }
-          await db().invoices.put((res as any).invoice || inv);
+          authoritativeInvoice = (res as any).invoice || inv;
         } else {
           const res = await postInvoiceTransaction({
             companyId: activeCompany.id,
@@ -645,17 +711,30 @@ export function DocumentListPage<T extends AnyDoc>({
             customerLedgerId: custLedger,
             idToken,
             uid: user.uid,
+            clientMutationId,
           });
           if (!res.success) {
             setPostingPhase("idle");
             toast.error(mapFriendlyError(res.error));
             return;
           }
-          await db().invoices.put(res.invoice || inv);
+          authoritativeInvoice = res.invoice || inv;
         }
-      } else {
-        await db().invoices.put(inv);
       }
+
+      // Immediately upsert returned invoice into Dexie & optimistic React list
+      await db().invoices.put(authoritativeInvoice);
+      setOptimisticOverrides(prevMap => new Map(prevMap).set(authoritativeInvoice.id, authoritativeInvoice as unknown as T));
+
+      if (activeCompany?.id) {
+        reconcileDocumentPostSuccess({
+          entityType: "invoice",
+          companyId: activeCompany.id,
+          document: authoritativeInvoice,
+          action: prev ? "update" : "create",
+        });
+      }
+
       setPostingPhase("posted");
     } else if (kind === "purchase") {
       const pu = patched as Purchase;
@@ -693,10 +772,16 @@ export function DocumentListPage<T extends AnyDoc>({
 
       pu.balance = Math.max(0, pu.grandTotal - pu.amountPaid);
       pu.status = pu.balance <= 0.01 ? "paid" : pu.amountPaid > 0 ? "partial" : "unpaid";
+      pu.postingStatus = "posted";
+
+      const clientMutationId = (pu as any).clientMutationId || uid();
+      (pu as any).clientMutationId = clientMutationId;
 
       const prev = await db().purchases.get(pu.id);
       if (prev) await applyStockDelta(prev.items, -1);
       await applyStockDelta(pu.items, 1);
+
+      let authoritativePurchase: Purchase = pu;
 
       if (activeCompany?.id && activeFinancialYear?.id && user) {
         const suppLedger = await ensureSupplierLedger({
@@ -713,14 +798,25 @@ export function DocumentListPage<T extends AnyDoc>({
           supplierLedgerId: suppLedger,
           idToken,
           uid: user.uid,
+          clientMutationId,
         });
         if (!res.success) {
           toast.error(`Posting failed: ${res.error}`);
           return;
         }
-        await db().purchases.put((res as any).purchase || pu);
-      } else {
-        await db().purchases.put(pu);
+        authoritativePurchase = (res as any).purchase || pu;
+      }
+
+      await db().purchases.put(authoritativePurchase);
+      setOptimisticOverrides(prevMap => new Map(prevMap).set(authoritativePurchase.id, authoritativePurchase as unknown as T));
+
+      if (activeCompany?.id) {
+        reconcileDocumentPostSuccess({
+          entityType: "purchase",
+          companyId: activeCompany.id,
+          document: authoritativePurchase,
+          action: prev ? "update" : "create",
+        });
       }
     } else {
       const q = patched as Quotation;
@@ -738,11 +834,21 @@ export function DocumentListPage<T extends AnyDoc>({
             : q.signatorySnapshot,
       };
       await db().quotations.put(toSave);
+      setOptimisticOverrides(prevMap => new Map(prevMap).set(toSave.id, toSave as unknown as T));
+
+      if (activeCompany?.id) {
+        reconcileDocumentPostSuccess({
+          entityType: "quotation",
+          companyId: activeCompany.id,
+          document: toSave,
+          action: "update",
+        });
+      }
     }
 
       clearDraft(kind);
       setRecoverableDraft(null);
-      toast.success("Document saved successfully");
+      toast.success(kind === "invoice" ? "Invoice posted" : kind === "purchase" ? "Purchase posted" : "Quotation saved");
       setOpen(false);
       setEditing(null);
     } catch (err: any) {
@@ -756,56 +862,79 @@ export function DocumentListPage<T extends AnyDoc>({
     const id = doc.id;
     if (kind === "invoice") {
       const inv = doc as unknown as Invoice;
-      await applyStockDelta(inv.items, 1);
       const updated: Invoice = {
         ...inv,
         status: "cancelled",
         postingStatus: "reversed",
       };
+
+      // Immediate optimistic update (removes from active list instantly)
+      setOptimisticOverrides(prevMap => new Map(prevMap).set(id, updated as unknown as T));
       await db().invoices.put(updated);
-      if (activeCompany?.id && user?.uid && activeFinancialYear?.id) {
-        try {
-          let idToken: string | undefined;
-          try { idToken = await user.getIdToken(); } catch {}
-          await amendPostedInvoiceTransaction({
-            companyId: activeCompany.id,
-            financialYearId: activeFinancialYear.id,
-            originalInvoice: inv,
-            correctedInvoice: updated,
-            company: activeCompany,
-            customerLedgerId: inv.customerId,
-            idToken,
-            uid: user.uid,
-            amendmentReason: "Invoice cancelled and voided",
-          });
-        } catch (e) {
-          console.warn("Failed to post reversal:", e);
-        }
+      await applyStockDelta(inv.items, 1);
+
+      if (activeCompany?.id) {
+        reconcileDocumentPostSuccess({
+          entityType: "invoice",
+          companyId: activeCompany.id,
+          document: updated,
+          action: "void",
+        });
       }
-      toast.success(`Invoice ${inv.number} cancelled`);
+
+      if (activeCompany?.id && user?.uid && activeFinancialYear?.id) {
+        let idToken: string | undefined;
+        try { idToken = await user.getIdToken(); } catch {}
+        amendPostedInvoiceTransaction({
+          companyId: activeCompany.id,
+          financialYearId: activeFinancialYear.id,
+          originalInvoice: inv,
+          correctedInvoice: updated,
+          company: activeCompany,
+          customerLedgerId: inv.customerId,
+          idToken,
+          uid: user.uid,
+          amendmentReason: "Invoice cancelled and voided with reversal accounting",
+        }).catch(e => console.warn("Failed to post reversal voucher:", e));
+      }
+      toast.success("Invoice deleted from active records");
     } else if (kind === "purchase") {
       const pu = doc as unknown as Purchase;
-      await applyStockDelta(pu.items, -1);
       const updated: Purchase = {
         ...pu,
         status: "cancelled",
         postingStatus: "reversed",
       };
+
+      setOptimisticOverrides(prevMap => new Map(prevMap).set(id, updated as unknown as T));
       await db().purchases.put(updated);
-      toast.success(`Purchase ${pu.number} cancelled`);
+      await applyStockDelta(pu.items, -1);
+
+      if (activeCompany?.id) {
+        reconcileDocumentPostSuccess({
+          entityType: "purchase",
+          companyId: activeCompany.id,
+          document: updated,
+          action: "void",
+        });
+      }
+      toast.success("Purchase deleted from active records");
     }
   }
 
   async function removeDraftDoc(doc: T) {
     const id = doc.id;
+    // Immediate optimistic removal
+    setOptimisticOverrides(prevMap => new Map(prevMap).set(id, null));
+
     if (kind === "invoice") {
       const prev = await db().invoices.get(id);
       if (prev) await applyStockDelta(prev.items, 1);
       await db().invoices.delete(id);
       if (activeCompany?.id) {
-        await removeCachedEntity({ companyId: activeCompany.id, entityType: "invoice", entityId: id });
+        removeCachedEntity({ companyId: activeCompany.id, entityType: "invoice", entityId: id }).catch(console.warn);
         if (firebaseDb) {
-          await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/invoices/${id}`));
+          rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/invoices/${id}`)).catch(console.warn);
         }
       }
     } else if (kind === "purchase") {
@@ -813,20 +942,29 @@ export function DocumentListPage<T extends AnyDoc>({
       if (prev) await applyStockDelta(prev.items, -1);
       await db().purchases.delete(id);
       if (activeCompany?.id) {
-        await removeCachedEntity({ companyId: activeCompany.id, entityType: "purchase", entityId: id });
+        removeCachedEntity({ companyId: activeCompany.id, entityType: "purchase", entityId: id });
         if (firebaseDb) {
-          await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/purchases/${id}`));
+          rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/purchases/${id}`)).catch(console.warn);
         }
       }
     } else {
       await db().quotations.delete(id);
       if (activeCompany?.id) {
-        await removeCachedEntity({ companyId: activeCompany.id, entityType: "quotation", entityId: id });
+        removeCachedEntity({ companyId: activeCompany.id, entityType: "quotation", entityId: id }).catch(console.warn);
         if (firebaseDb) {
-          await rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${id}`));
+          rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${id}`)).catch(console.warn);
         }
       }
     }
+
+    if (activeCompany?.id) {
+      reconcileDocumentPostSuccess({
+        entityType: kind,
+        companyId: activeCompany.id,
+        action: "delete",
+      });
+    }
+
     toast.success(`${kind === "invoice" ? "Invoice" : kind === "quotation" ? "Quotation" : "Purchase"} deleted`);
   }
 
@@ -999,7 +1137,51 @@ export function DocumentListPage<T extends AnyDoc>({
       {initialLoading ? (
         <ListSkeleton columns={kind === "quotation" ? 6 : 7} />
       ) : (
-        <div className="animate-fade-in">
+        <div className="animate-fade-in space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex items-center rounded-lg bg-muted/60 p-1 text-xs">
+              <button
+                type="button"
+                onClick={() => setStatusFilter("active")}
+                className={cn(
+                  "rounded-md px-3 py-1.5 font-medium transition-all",
+                  statusFilter === "active" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Active
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("draft")}
+                className={cn(
+                  "rounded-md px-3 py-1.5 font-medium transition-all",
+                  statusFilter === "draft" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Draft
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("voided")}
+                className={cn(
+                  "rounded-md px-3 py-1.5 font-medium transition-all",
+                  statusFilter === "voided" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Voided / Deleted
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("all")}
+                className={cn(
+                  "rounded-md px-3 py-1.5 font-medium transition-all",
+                  statusFilter === "all" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                All
+              </button>
+            </div>
+          </div>
           <ListToolbar query={q} onQuery={setQ} placeholder="Search by number, party name, or details…" />
 
           {rows.length === 0 ? (
@@ -1049,9 +1231,38 @@ export function DocumentListPage<T extends AnyDoc>({
                             </TableCell>
                           )}
                           <TableCell>
-                            <span className="rounded-md bg-muted/60 px-2 py-0.5 text-[10px] uppercase font-semibold">
-                              {(r as unknown as Invoice).status}
-                            </span>
+                            {(() => {
+                              const docStatus = ((r as any).status || "").toLowerCase();
+                              const docPosting = ((r as any).postingStatus || "").toLowerCase();
+                              const isVoidedOrCancelled =
+                                docStatus === "cancelled" ||
+                                docStatus === "voided" ||
+                                docStatus === "deleted" ||
+                                docPosting === "reversed";
+                              const isDraft =
+                                docStatus === "draft" ||
+                                docPosting === "draft";
+
+                              if (isVoidedOrCancelled) {
+                                return (
+                                  <span className="rounded-md bg-destructive/10 text-destructive border border-destructive/20 px-2 py-0.5 text-[10px] uppercase font-semibold">
+                                    Deleted / Voided
+                                  </span>
+                                );
+                              }
+                              if (isDraft) {
+                                return (
+                                  <span className="rounded-md bg-amber-500/10 text-amber-600 border border-amber-500/20 px-2 py-0.5 text-[10px] uppercase font-semibold">
+                                    Draft
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span className="rounded-md bg-muted/60 px-2 py-0.5 text-[10px] uppercase font-semibold">
+                                  {(r as unknown as Invoice).status}
+                                </span>
+                              );
+                            })()}
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
@@ -1091,9 +1302,9 @@ export function DocumentListPage<T extends AnyDoc>({
                                 variant="ghost"
                                 title={
                                   kind === "invoice" && (r as unknown as Invoice).postingStatus === "posted"
-                                    ? "Cancel / Void Posted Invoice"
+                                    ? "Delete Invoice"
                                     : kind === "purchase" && (r as unknown as Purchase).postingStatus === "posted"
-                                    ? "Cancel / Void Posted Purchase"
+                                    ? "Delete Purchase"
                                     : "Delete Draft"
                                 }
                                 onClick={() => {
@@ -1932,6 +2143,7 @@ export function DocumentListPage<T extends AnyDoc>({
                   uid: user.uid,
                 });
 
+                let finalSaved = inv;
                 if (prev && prev.postingStatus === "posted") {
                   const res = await amendPostedInvoiceTransaction({
                     companyId: activeCompany.id,
@@ -1948,6 +2160,7 @@ export function DocumentListPage<T extends AnyDoc>({
                     toast.error(mapFriendlyError(res.error));
                     return;
                   }
+                  finalSaved = (res as any).invoice || inv;
                 } else {
                   const res = await postInvoiceTransaction({
                     companyId: activeCompany.id,
@@ -1962,9 +2175,19 @@ export function DocumentListPage<T extends AnyDoc>({
                     toast.error(mapFriendlyError(res.error));
                     return;
                   }
+                  finalSaved = res.invoice || inv;
                 }
+                await db().invoices.put(finalSaved);
+                setOptimisticOverrides(prevMap => new Map(prevMap).set(finalSaved.id, finalSaved as unknown as T));
+                reconcileDocumentPostSuccess({
+                  entityType: "invoice",
+                  companyId: activeCompany.id,
+                  document: finalSaved,
+                  action: prev ? "update" : "create",
+                });
               } else {
                 await db().invoices.put(inv);
+                setOptimisticOverrides(prevMap => new Map(prevMap).set(inv.id, inv as unknown as T));
               }
 
               toast.success("Invoice posted successfully with verified totals");
@@ -2030,17 +2253,17 @@ export function DocumentListPage<T extends AnyDoc>({
         onOpenChange={(o) => !o && setDeleteTargetDoc(null)}
         title={
           deleteTargetDoc?.isPosted
-            ? `Cancel / Void ${kind === "invoice" ? "Invoice" : "Purchase"} "${deleteTargetDoc?.doc.number}"?`
+            ? `Delete ${kind === "invoice" ? "Invoice" : "Purchase"} "${deleteTargetDoc?.doc.number}"?`
             : `Delete Draft ${kind === "invoice" ? "Invoice" : kind === "quotation" ? "Quotation" : "Purchase"} "${deleteTargetDoc?.doc.number}"?`
         }
         description={
           deleteTargetDoc?.isPosted
-            ? `Posted ${kind === "invoice" ? "invoices" : "purchases"} cannot be deleted per statutory GST and accounting requirements. Cancelling will void the document and post reversal accounting adjustments.`
+            ? `This posted ${kind === "invoice" ? "invoice" : "purchase"} will be removed from the active list and voided with reversal accounting. Audit history will be retained.`
             : `This draft document has not been posted to accounting ledgers and will be permanently removed.`
         }
-        destructive={!deleteTargetDoc?.isPosted}
-        confirmText={deleteTargetDoc?.isPosted ? "Cancel Document" : "Delete Document"}
-        busyText={deleteTargetDoc?.isPosted ? "Cancelling…" : "Deleting…"}
+        destructive={true}
+        confirmText={deleteTargetDoc?.isPosted ? `Delete ${kind === "invoice" ? "Invoice" : "Purchase"}` : "Delete Draft"}
+        busyText={deleteTargetDoc?.isPosted ? "Voiding…" : "Deleting…"}
         onConfirm={async () => {
           if (!deleteTargetDoc) return;
           if (deleteTargetDoc.isPosted) {
