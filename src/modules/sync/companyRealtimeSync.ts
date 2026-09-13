@@ -9,7 +9,7 @@
 import { firebaseDb } from "@/config/firebase";
 import { ref, onValue, off, type Unsubscribe } from "firebase/database";
 import { db } from "@/lib/db";
-import { cacheEntitiesBulk } from "./dexieCache";
+import { cacheEntitiesBulk, removeCachedEntity } from "./dexieCache";
 
 export interface CompanyRealtimeSyncOptions {
   companyId: string;
@@ -34,6 +34,7 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     { name: "receipts", table: db().receipts, entityType: "receipt" },
     { name: "payments", table: db().payments, entityType: "payment" },
     { name: "quotations", table: db().quotations, entityType: "quotation" },
+    { name: "products", table: db().products, entityType: "product" },
   ];
 
   for (const col of collections) {
@@ -41,18 +42,45 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     const unsub = onValue(
       colRef,
       async (snapshot) => {
-        if (!snapshot.exists()) return;
-        const val = snapshot.val();
-        if (!val) return;
-
-        const records = Object.values(val) as any[];
-        if (records.length === 0) return;
-
         try {
-          // 1. Update application Dexie table (triggers reactive UI updates across all useLive hooks)
+          if (!snapshot.exists() || !snapshot.val()) {
+            // Cloud collection is completely empty: purge Dexie table & cache for this collection
+            const localRows = await (col.table as any).toArray();
+            if (localRows.length > 0) {
+              const idsToDelete = localRows.map((r: any) => r.id).filter(Boolean);
+              if (idsToDelete.length > 0) {
+                await (col.table as any).bulkDelete(idsToDelete);
+                for (const id of idsToDelete) {
+                  await removeCachedEntity({ companyId, entityType: col.entityType, entityId: id });
+                }
+              }
+            }
+            return;
+          }
+
+          const val = snapshot.val();
+          const records = Object.values(val) as any[];
+          const cloudIds = new Set(records.map((r: any) => r.id));
+
+          // 1. Authoritative Deletion Reconciliation: purge local rows no longer present in Firebase cloud
+          const localRows = await (col.table as any).toArray();
+          const idsToDelete = localRows
+            .filter((r: any) => r.id && !cloudIds.has(r.id))
+            .map((r: any) => r.id);
+
+          if (idsToDelete.length > 0) {
+            await (col.table as any).bulkDelete(idsToDelete);
+            for (const id of idsToDelete) {
+              await removeCachedEntity({ companyId, entityType: col.entityType, entityId: id });
+            }
+          }
+
+          if (records.length === 0) return;
+
+          // 2. Update application Dexie table (triggers reactive UI updates across all useLive hooks on all devices)
           await (col.table as any).bulkPut(records);
 
-          // 2. Mirror into bms_cache_v1 for multi-tenant indexed offline retrieval
+          // 3. Mirror into bms_cache_v1 for multi-tenant indexed offline retrieval
           const cacheItems = records.map((r) => ({
             uid,
             companyId,

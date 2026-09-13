@@ -16,6 +16,7 @@ import { createCustomerWithLedger } from "@/modules/accounting/services/partyLed
 import { detectCustomerDuplicates, type DuplicateMatch } from "@/modules/sync/searchNormalization";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, set } from "firebase/database";
+import { authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
 
 interface QuickCreateCustomerProps {
   open: boolean;
@@ -135,15 +136,17 @@ export function QuickCreateCustomerDrawer({
         shippingAddress: newCustomer.address,
       };
 
-      await db().parties.put(newParty);
-      await db().customers.put(newCustomer);
-
-      if (activeCompany?.id && firebaseDb) {
-        try {
-          await set(ref(firebaseDb, `companyData/${activeCompany.id}/parties/${newParty.id}`), sanitizeForFirebase(newParty));
-        } catch (rtdbErr) {
-          console.warn("RTDB party sync non-fatal:", rtdbErr);
-        }
+      if (activeCompany?.id) {
+        await authoritativeSaveEntity({
+          companyId: activeCompany.id,
+          kind: "party",
+          entity: newParty,
+          uid: user?.uid,
+          action: "create",
+        });
+      } else {
+        await db().parties.put(newParty);
+        await db().customers.put(newCustomer);
       }
 
       toast.success(`Customer "${newCustomer.name}" created and selected`);

@@ -31,6 +31,7 @@ import { cacheEntity, removeCachedEntity } from "@/modules/sync/dexieCache";
 import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
 import { appQueryClient } from "@/lib/queryClient";
 import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
+import { authoritativeDeleteDraft, authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
 
 export function QuotationsPage() {
   const rows = useLive<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
@@ -171,69 +172,62 @@ export function QuotationsPage() {
       createdAt: next.createdAt || Date.now(),
     }, comp);
 
-    // 1. Immediate Dexie update
-    await db().quotations.put(toSave);
-
-    // 2. Immediate visible React state update
+    // Optimistic UI update
     setOptimisticOverrides(prev => new Map(prev).set(toSave.id, toSave));
 
-    // 3. Immediate query cache reconciliation
-    if (activeCompany?.id) {
-      reconcileDocumentPostSuccess({
-        entityType: "quotation",
-        companyId: activeCompany.id,
-        document: toSave,
-        action: "update",
+    try {
+      if (activeCompany?.id) {
+        await authoritativeSaveEntity({
+          companyId: activeCompany.id,
+          financialYearId: activeFinancialYear?.id,
+          kind: "quotation",
+          entity: toSave,
+          uid: user?.uid,
+          action: rows.find(r => r.id === toSave.id) ? "update" : "create",
+        });
+      } else {
+        await db().quotations.put(toSave);
+      }
+
+      toast.success("Quotation saved");
+      setEditing(null);
+    } catch (err: any) {
+      setOptimisticOverrides(prev => {
+        const nextMap = new Map(prev);
+        nextMap.delete(toSave.id);
+        return nextMap;
       });
+      console.error("[saveQuotation] Failed to save quotation:", err);
+      toast.error(err?.message || "Failed to save quotation to cloud");
     }
-
-    // 4. Non-blocking background sync to Firebase RTDB and local entity cache
-    if (activeCompany?.id && firebaseDb) {
-      const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${toSave.id}`);
-      set(qRef, sanitizeForFirebase({
-        ...toSave,
-        companyId: activeCompany.id,
-        financialYearId: activeFinancialYear?.id,
-        updatedAt: Date.now(),
-      })).catch(e => console.warn("Quotation RTDB sync error:", e));
-
-      cacheEntity({
-        uid: user?.uid || "",
-        companyId: activeCompany.id,
-        entityType: "quotations",
-        entityId: toSave.id,
-        data: toSave,
-        financialYearId: activeFinancialYear?.id,
-        name: toSave.number,
-      }).catch(e => console.warn("Quotation cacheEntity sync error:", e));
-    }
-
-    toast.success("Quotation saved");
-    setEditing(null);
   }
+
   async function remove(id: string) {
-    // 1. Immediate optimistic UI removal
+    // Immediate optimistic UI removal
     setOptimisticOverrides(prev => new Map(prev).set(id, null));
 
-    // 2. Immediate Dexie delete
-    await db().quotations.delete(id);
+    try {
+      if (activeCompany?.id) {
+        await authoritativeDeleteDraft({
+          companyId: activeCompany.id,
+          kind: "quotation",
+          id,
+          uid: user?.uid,
+        });
+      } else {
+        await db().quotations.delete(id);
+      }
 
-    // 3. Immediate query cache reconciliation
-    if (activeCompany?.id) {
-      reconcileDocumentPostSuccess({
-        entityType: "quotation",
-        companyId: activeCompany.id,
-        action: "delete",
+      toast.success("Quotation deleted");
+    } catch (err: any) {
+      setOptimisticOverrides(prev => {
+        const nextMap = new Map(prev);
+        nextMap.delete(id);
+        return nextMap;
       });
+      console.error("[removeQuotation] Failed to delete quotation:", err);
+      toast.error(err?.message || "Failed to delete quotation from cloud. Restored.");
     }
-
-    // 4. Non-blocking RTDB delete
-    if (activeCompany?.id && firebaseDb) {
-      const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${id}`);
-      set(qRef, null).catch(e => console.warn("Quotation RTDB delete error:", e));
-      removeCachedEntity({ companyId: activeCompany.id, entityType: "quotations", entityId: id }).catch(console.warn);
-    }
-    toast.success("Quotation deleted");
   }
 
   async function handleConvert(r: Quotation) {

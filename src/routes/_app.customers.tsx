@@ -56,6 +56,7 @@ function CustomersPage() {
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const [cloudRows, setCloudRows] = useState<Customer[]>([]);
+  const [cloudLoaded, setCloudLoaded] = useState(false);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "ALL" | "INACTIVE">("ACTIVE");
   const [open, setOpen] = useState(false);
@@ -95,6 +96,17 @@ function CustomersPage() {
         const val = snap.val();
         const list: Customer[] = Object.values(val);
         setCloudRows(list);
+        setCloudLoaded(true);
+
+        // Deletion reconciliation: purge local rows no longer present in Firebase cloud
+        const cloudIds = new Set(list.map((c) => c.id));
+        db().customers.toArray().then((localRows) => {
+          const toDelete = localRows.filter((r) => !cloudIds.has(r.id)).map((r) => r.id);
+          if (toDelete.length > 0) {
+            db().customers.bulkDelete(toDelete);
+            db().parties.bulkDelete(toDelete);
+          }
+        });
 
         // Update Dexie cache in background
         cacheEntitiesBulk(
@@ -108,11 +120,12 @@ function CustomersPage() {
         );
 
         // Sync into local legacy Dexie store
-        for (const c of list) {
-          db().customers.put(c);
-        }
+        db().customers.bulkPut(list);
       } else {
         setCloudRows([]);
+        setCloudLoaded(true);
+        db().customers.clear();
+        db().parties.clear();
       }
     };
 
@@ -124,14 +137,14 @@ function CustomersPage() {
     };
   }, [activeCompany?.id, user?.uid]);
 
-  // Synchronize local dexieRows into cloudRows on mount if cloudRows was empty
+  // Synchronize local dexieRows into cloudRows on mount before cloud loads
   useEffect(() => {
-    if (cloudRows.length === 0 && dexieRows.length > 0) {
+    if (!cloudLoaded && cloudRows.length === 0 && dexieRows.length > 0) {
       setCloudRows(dexieRows);
     }
-  }, [dexieRows]);
+  }, [cloudLoaded, dexieRows]);
 
-  const rows = activeCompany?.id && cloudRows.length > 0 ? cloudRows : dexieRows;
+  const rows = activeCompany?.id && cloudLoaded ? cloudRows : (cloudRows.length > 0 ? cloudRows : dexieRows);
 
   // Deep-link support
   useEffect(() => {

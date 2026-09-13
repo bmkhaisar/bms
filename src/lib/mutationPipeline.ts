@@ -123,38 +123,6 @@ export async function performOptimisticMutation<T = any>(
     console.error(`[MutationPipeline] Error in onOptimistic handler:`, err);
   }
 
-  // 3. Update Dexie cache immediately
-  try {
-    if (syncDexie) {
-      await syncDexie();
-    } else if (companyId) {
-      if (action === "delete") {
-        await removeCachedEntity({
-          companyId,
-          entityType,
-          entityId,
-        });
-      } else if (optimisticData && uid) {
-        await cacheEntity({
-          uid,
-          companyId,
-          entityType,
-          entityId,
-          data: optimisticData,
-        });
-      }
-    }
-  } catch (err) {
-    console.warn(`[MutationPipeline] Dexie sync warning:`, err);
-  }
-
-  // 4. Invalidate relevant query keys
-  if (queryKeys.length > 0) {
-    for (const key of queryKeys) {
-      appQueryClient.invalidateQueries({ queryKey: key });
-    }
-  }
-
   let toastId: string | number | undefined;
   if (busyToast && showToast) {
     toastId = toast.loading(busyToast);
@@ -162,15 +130,40 @@ export async function performOptimisticMutation<T = any>(
 
   recordAppliedMutation(clientMutationId);
 
-  // 5. Execute server mutation
+  // 3. Execute authoritative cloud/server mutation FIRST
   try {
     const serverResult = await serverMutation();
+
+    // 4. On authoritative server success: update Dexie database & tenant cache immediately
+    try {
+      if (syncDexie) {
+        await syncDexie();
+      } else if (companyId) {
+        if (action === "delete") {
+          await removeCachedEntity({
+            companyId,
+            entityType,
+            entityId,
+          });
+        } else if (optimisticData && uid) {
+          await cacheEntity({
+            uid,
+            companyId,
+            entityType,
+            entityId,
+            data: optimisticData,
+          });
+        }
+      }
+    } catch (dexieErr) {
+      console.warn(`[MutationPipeline] Post-server Dexie sync warning:`, dexieErr);
+    }
 
     if (onSuccessReconcile) {
       onSuccessReconcile(serverResult);
     }
 
-    // Invalidate queries to confirm fresh authoritative state
+    // 5. Invalidate queries to confirm fresh authoritative state
     if (queryKeys.length > 0) {
       for (const key of queryKeys) {
         appQueryClient.invalidateQueries({ queryKey: key });

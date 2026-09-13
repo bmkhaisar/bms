@@ -272,73 +272,71 @@ export async function postInvoiceTransaction(params: {
       updatedAt: Date.now(),
     };
 
-    // 7. Save immediately to local Dexie database
+    // 7. Authoritatively persist to Firebase RTDB FIRST
+    if (firebaseDb) {
+      const invRef = ref(firebaseDb, `companyData/${companyId}/invoices/${invoice.id}`);
+      await set(invRef, sanitizeForFirebase(updatedInvoice));
+    }
+
+    // 8. Save immediately to local Dexie database
     await db().invoices.put(updatedInvoice);
 
-    // 8. Non-blocking asynchronous sync for Firebase RTDB, cacheEntity, stock movements, and price history
-    (async () => {
-      try {
-        if (firebaseDb) {
-          const invRef = ref(firebaseDb, `companyData/${companyId}/invoices/${invoice.id}`);
-          await set(invRef, sanitizeForFirebase(updatedInvoice));
-        }
+    await cacheEntity({
+      uid,
+      companyId,
+      financialYearId,
+      entityType: "invoices",
+      entityId: invoice.id,
+      data: updatedInvoice,
+    });
 
-        await cacheEntity({
-          uid,
-          companyId,
-          financialYearId,
-          entityType: "invoices",
-          entityId: invoice.id,
-          data: updatedInvoice,
-        });
+    // Parallel stock movements and price history updates
+    try {
+      await Promise.all(
+        frozenLines
+          .filter((it) => it.productId)
+          .map((it) =>
+            recordStockMovement({
+              companyId,
+              productId: it.productId,
+              movementType: "out",
+              documentKind: "invoice",
+              documentId: invoice.id,
+              documentNumber: invoice.number,
+              date: invoice.date,
+              enteredQuantity: it.quantity,
+              enteredUom: it.unit || it.uomLabel || "NOS",
+              ratePaise: it.ratePaise,
+            }).catch((smErr) => console.warn("Stock movement recording failed non-fatally:", smErr))
+          )
+      );
 
-        // Parallel stock movements
-        await Promise.all(
-          frozenLines
-            .filter((it) => it.productId)
-            .map((it) =>
-              recordStockMovement({
-                companyId,
-                productId: it.productId,
-                movementType: "out",
-                documentKind: "invoice",
-                documentId: invoice.id,
-                documentNumber: invoice.number,
-                date: invoice.date,
-                enteredQuantity: it.quantity,
-                enteredUom: it.unit || it.uomLabel || "NOS",
-                ratePaise: it.ratePaise,
-              }).catch((smErr) => console.warn("Stock movement recording failed non-fatally:", smErr))
-            )
-        );
+      recordInvoicePriceHistory({
+        companyId,
+        customerId: invoice.customerId,
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.number,
+        date: invoice.date,
+        items: frozenLines.map((it) => ({
+          productId: it.productId,
+          rate: it.rate,
+          quantity: it.quantity,
+          unit: it.unit,
+        })),
+      });
 
-        recordInvoicePriceHistory({
-          companyId,
-          customerId: invoice.customerId,
-          invoiceId: invoice.id,
-          invoiceNumber: invoice.number,
-          date: invoice.date,
-          items: frozenLines.map((it) => ({
-            productId: it.productId,
-            rate: it.rate,
-            quantity: it.quantity,
-            unit: it.unit,
-          })),
-        });
-
-        for (const it of frozenLines) {
-          if (it.productId) {
-            const p = await db().products.get(it.productId);
-            if (p) {
-              p.lastSalesRatePaise = it.ratePaise || Math.round(it.rate * 100);
-              await db().products.put(p);
-            }
+      for (const it of frozenLines) {
+        if (it.productId) {
+          const p = await db().products.get(it.productId);
+          if (p) {
+            p.lastSalesRatePaise = it.ratePaise || Math.round(it.rate * 100);
+            await db().products.put(p);
           }
         }
-      } catch (bgErr) {
-        console.warn("Background invoice post sync warning:", bgErr);
       }
-    })();
+    } catch (bgErr) {
+      console.warn("Stock/price history update warning:", bgErr);
+    }
 
     return { success: true, voucherId, documentId: invoice.id, invoice: updatedInvoice };
   } catch (err: unknown) {
@@ -501,73 +499,71 @@ export async function postPurchaseTransaction(params: {
       updatedAt: Date.now(),
     };
 
-    // 4. Save immediately to local Dexie database
+    // 4. Authoritatively persist to Firebase RTDB FIRST
+    if (firebaseDb) {
+      const puRef = ref(firebaseDb, `companyData/${companyId}/purchases/${purchase.id}`);
+      await set(puRef, sanitizeForFirebase(updatedPurchase));
+    }
+
+    // 5. Save immediately to local Dexie database
     await db().purchases.put(updatedPurchase);
 
-    // 5. Non-blocking asynchronous sync for Firebase RTDB, cacheEntity, stock movements, and price history
-    (async () => {
-      try {
-        if (firebaseDb) {
-          const puRef = ref(firebaseDb, `companyData/${companyId}/purchases/${purchase.id}`);
-          await set(puRef, sanitizeForFirebase(updatedPurchase));
-        }
+    await cacheEntity({
+      uid,
+      companyId,
+      financialYearId,
+      entityType: "purchase",
+      entityId: purchase.id,
+      data: updatedPurchase,
+    });
 
-        await cacheEntity({
-          uid,
-          companyId,
-          financialYearId,
-          entityType: "purchase",
-          entityId: purchase.id,
-          data: updatedPurchase,
-        });
+    // Parallel stock movements and price history updates
+    try {
+      await Promise.all(
+        frozenLines
+          .filter((it) => it.productId)
+          .map((it) =>
+            recordStockMovement({
+              companyId,
+              productId: it.productId,
+              movementType: "in",
+              documentKind: "purchase",
+              documentId: purchase.id,
+              documentNumber: purchase.number,
+              date: purchase.date,
+              enteredQuantity: it.quantity,
+              enteredUom: it.unit || it.uomLabel || "NOS",
+              ratePaise: it.ratePaise,
+            }).catch((smErr) => console.warn("Stock movement recording failed non-fatally:", smErr))
+          )
+      );
 
-        // Parallel stock movements
-        await Promise.all(
-          frozenLines
-            .filter((it) => it.productId)
-            .map((it) =>
-              recordStockMovement({
-                companyId,
-                productId: it.productId,
-                movementType: "in",
-                documentKind: "purchase",
-                documentId: purchase.id,
-                documentNumber: purchase.number,
-                date: purchase.date,
-                enteredQuantity: it.quantity,
-                enteredUom: it.unit || it.uomLabel || "NOS",
-                ratePaise: it.ratePaise,
-              }).catch((smErr) => console.warn("Stock movement recording failed non-fatally:", smErr))
-            )
-        );
+      recordPurchasePriceHistory({
+        companyId,
+        supplierId: purchase.supplierId,
+        purchaseId: purchase.id,
+        purchaseNumber: purchase.number,
+        date: purchase.date,
+        items: frozenLines.map((it) => ({
+          productId: it.productId,
+          rate: it.rate,
+          quantity: it.quantity,
+          unit: it.unit,
+        })),
+      });
 
-        recordPurchasePriceHistory({
-          companyId,
-          supplierId: purchase.supplierId,
-          purchaseId: purchase.id,
-          purchaseNumber: purchase.number,
-          date: purchase.date,
-          items: frozenLines.map((it) => ({
-            productId: it.productId,
-            rate: it.rate,
-            quantity: it.quantity,
-            unit: it.unit,
-          })),
-        });
-
-        for (const it of frozenLines) {
-          if (it.productId) {
-            const p = await db().products.get(it.productId);
-            if (p) {
-              p.lastPurchaseRatePaise = it.ratePaise || Math.round(it.rate * 100);
-              await db().products.put(p);
-            }
+      for (const it of frozenLines) {
+        if (it.productId) {
+          const p = await db().products.get(it.productId);
+          if (p) {
+            p.lastPurchaseRatePaise = it.ratePaise || Math.round(it.rate * 100);
+            await db().products.put(p);
           }
         }
-      } catch (bgErr) {
-        console.warn("Background purchase sync warning:", bgErr);
       }
-    })();
+    } catch (bgErr) {
+      console.warn("Stock/price history update warning:", bgErr);
+    }
 
     return { success: true, voucherId, documentId: purchase.id, purchase: updatedPurchase };
   } catch (err: unknown) {
@@ -707,31 +703,22 @@ export async function postReceiptTransaction(params: {
         : undefined,
     };
 
-    // Save immediately to local Dexie database
-    await db().receipts.put(updatedReceipt);
-
-    // Authoritative persistence to Firebase RTDB (PRD § 56)
+    // Authoritative persistence to Firebase RTDB FIRST (PRD § 56)
     if (firebaseDb) {
-      try {
-        const recRef = ref(firebaseDb, `companyData/${companyId}/receipts/${receipt.id}`);
-        await set(recRef, sanitizeForFirebase(updatedReceipt));
-      } catch (rtdbErr) {
-        console.warn("RTDB receipt write warning (will retry via outbox):", rtdbErr);
-      }
+      const recRef = ref(firebaseDb, `companyData/${companyId}/receipts/${receipt.id}`);
+      await set(recRef, sanitizeForFirebase(updatedReceipt));
     }
 
-    try {
-      await cacheEntity({
-        uid,
-        companyId,
-        financialYearId,
-        entityType: "receipt",
-        entityId: receipt.id,
-        data: updatedReceipt,
-      });
-    } catch (cErr) {
-      console.warn("Receipt cache warning:", cErr);
-    }
+    // Save to local Dexie database & cache
+    await db().receipts.put(updatedReceipt);
+    await cacheEntity({
+      uid,
+      companyId,
+      financialYearId,
+      entityType: "receipt",
+      entityId: receipt.id,
+      data: updatedReceipt,
+    });
 
     return { success: true, voucherId, documentId: receipt.id, receipt: updatedReceipt };
   } catch (err: unknown) {
@@ -816,31 +803,22 @@ export async function postPaymentTransaction(params: {
       signatorySnapshot,
     };
 
-    // Save immediately to local Dexie database
-    await db().payments.put(updatedPayment);
-
-    // Authoritative persistence to Firebase RTDB (PRD § 56)
+    // Authoritative persistence to Firebase RTDB FIRST (PRD § 56)
     if (firebaseDb) {
-      try {
-        const payRef = ref(firebaseDb, `companyData/${companyId}/payments/${payment.id}`);
-        await set(payRef, sanitizeForFirebase(updatedPayment));
-      } catch (rtdbErr) {
-        console.warn("RTDB payment write warning (will retry via outbox):", rtdbErr);
-      }
+      const payRef = ref(firebaseDb, `companyData/${companyId}/payments/${payment.id}`);
+      await set(payRef, sanitizeForFirebase(updatedPayment));
     }
 
-    try {
-      await cacheEntity({
-        uid,
-        companyId,
-        financialYearId,
-        entityType: "payment",
-        entityId: payment.id,
-        data: updatedPayment,
-      });
-    } catch (cErr) {
-      console.warn("Payment cache warning:", cErr);
-    }
+    // Save to local Dexie database & cache
+    await db().payments.put(updatedPayment);
+    await cacheEntity({
+      uid,
+      companyId,
+      financialYearId,
+      entityType: "payment",
+      entityId: payment.id,
+      data: updatedPayment,
+    });
 
     return { success: true, voucherId, documentId: payment.id, payment: updatedPayment };
   } catch (err: unknown) {

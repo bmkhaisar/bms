@@ -56,6 +56,7 @@ import { saveDraft, loadDraft, clearDraft } from "@/lib/draftAutosave";
 import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
 import { reverseVoucherServerFn } from "@/functions/reverseVoucherFn";
 import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
+import { authoritativeDeleteDraft, authoritativeVoidPosted, authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
 
 type AnyDoc = Invoice | Quotation | Purchase;
 
@@ -461,15 +462,31 @@ export function DocumentListPage<T extends AnyDoc>({
   useEffect(() => {
     if (!activeCompany?.id || !firebaseDb) return;
     const collectionName = kind === "invoice" ? "invoices" : kind === "quotation" ? "quotations" : "purchases";
+    const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
     const collectionRef = ref(firebaseDb, `companyData/${activeCompany.id}/${collectionName}`);
     const unsub = onValue(collectionRef, async (snap) => {
-      if (snap.exists()) {
+      try {
+        if (!snap.exists() || !snap.val()) {
+          const localRows = await (table as any).toArray();
+          if (localRows.length > 0) {
+            await (table as any).bulkDelete(localRows.map((r: any) => r.id).filter(Boolean));
+          }
+          return;
+        }
         const val = snap.val();
         const records = Object.values(val) as any[];
+        const cloudIds = new Set(records.map((r: any) => r.id));
+
+        const localRows = await (table as any).toArray();
+        const toDelete = localRows.filter((r: any) => r.id && !cloudIds.has(r.id)).map((r: any) => r.id);
+        if (toDelete.length > 0) {
+          await (table as any).bulkDelete(toDelete);
+        }
         if (records.length > 0) {
-          const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
           await (table as any).bulkPut(records);
         }
+      } catch (err) {
+        console.warn(`[DocumentListPage] Realtime sync warning for ${collectionName}:`, err);
       }
     });
     return () => unsub();
@@ -895,17 +912,20 @@ export function DocumentListPage<T extends AnyDoc>({
               (comp ? createSignatorySnapshot(comp as any, q.signatoryOverride, q.date) : undefined)
             : q.signatorySnapshot,
       };
-      await db().quotations.put(toSave);
-      setOptimisticOverrides(prevMap => new Map(prevMap).set(toSave.id, toSave as unknown as T));
 
       if (activeCompany?.id) {
-        reconcileDocumentPostSuccess({
-          entityType: "quotation",
+        await authoritativeSaveEntity({
           companyId: activeCompany.id,
-          document: toSave,
-          action: "update",
+          financialYearId: activeFinancialYear?.id,
+          kind: "quotation",
+          entity: toSave,
+          uid: user?.uid,
+          action: rows.find(r => r.id === toSave.id) ? "update" : "create",
         });
+      } else {
+        await db().quotations.put(toSave);
       }
+      setOptimisticOverrides(prevMap => new Map(prevMap).set(toSave.id, toSave as unknown as T));
     }
 
       clearDraft(kind);
@@ -922,65 +942,41 @@ export function DocumentListPage<T extends AnyDoc>({
 
   async function cancelPostedDoc(doc: T) {
     const id = doc.id;
-    if (kind === "invoice") {
-      const inv = doc as unknown as Invoice;
-      const updated: Invoice = {
-        ...inv,
-        status: "cancelled",
-        postingStatus: "reversed",
-      };
+    // Immediate optimistic exclusion from active list
+    const optimisticVoided = {
+      ...doc,
+      status: "cancelled",
+      postingStatus: "reversed",
+    };
+    setOptimisticOverrides(prevMap => new Map(prevMap).set(id, optimisticVoided as unknown as T));
 
-      // Immediate optimistic update (removes from active list instantly)
-      setOptimisticOverrides(prevMap => new Map(prevMap).set(id, updated as unknown as T));
-      await db().invoices.put(updated);
-      await applyStockDelta(inv.items, 1);
-
+    try {
       if (activeCompany?.id) {
-        reconcileDocumentPostSuccess({
-          entityType: "invoice",
-          companyId: activeCompany.id,
-          document: updated,
-          action: "void",
-        });
-      }
-
-      if (activeCompany?.id && user?.uid && activeFinancialYear?.id) {
         let idToken: string | undefined;
-        try { idToken = await user.getIdToken(); } catch {}
-        amendPostedInvoiceTransaction({
+        try { idToken = await user?.getIdToken(); } catch {}
+        await authoritativeVoidPosted({
           companyId: activeCompany.id,
-          financialYearId: activeFinancialYear.id,
-          originalInvoice: inv,
-          correctedInvoice: updated,
-          company: activeCompany,
-          customerLedgerId: inv.customerId,
+          financialYearId: activeFinancialYear?.id,
+          kind: kind as any,
+          doc,
+          user,
           idToken,
-          uid: user.uid,
-          amendmentReason: "Invoice cancelled and voided with reversal accounting",
-        }).catch(e => console.warn("Failed to post reversal voucher:", e));
-      }
-      toast.success("Invoice deleted from active records");
-    } else if (kind === "purchase") {
-      const pu = doc as unknown as Purchase;
-      const updated: Purchase = {
-        ...pu,
-        status: "cancelled",
-        postingStatus: "reversed",
-      };
-
-      setOptimisticOverrides(prevMap => new Map(prevMap).set(id, updated as unknown as T));
-      await db().purchases.put(updated);
-      await applyStockDelta(pu.items, -1);
-
-      if (activeCompany?.id) {
-        reconcileDocumentPostSuccess({
-          entityType: "purchase",
-          companyId: activeCompany.id,
-          document: updated,
-          action: "void",
+          reversalReason: `${kind === "invoice" ? "Invoice" : "Purchase"} cancelled and voided with reversal accounting`,
         });
+      } else {
+        await (kind === "invoice" ? db().invoices : db().purchases).put(optimisticVoided as any);
       }
-      toast.success("Purchase deleted from active records");
+
+      toast.success(`${kind === "invoice" ? "Invoice" : "Purchase"} voided and removed from active records`);
+    } catch (err: any) {
+      // Rollback optimistic override on failure
+      setOptimisticOverrides(prevMap => {
+        const nextMap = new Map(prevMap);
+        nextMap.delete(id);
+        return nextMap;
+      });
+      console.error(`[cancelPostedDoc] Failed to void ${kind}:`, err);
+      toast.error(err?.message || `Failed to void ${kind}. Record restored.`);
     }
   }
 
@@ -989,45 +985,32 @@ export function DocumentListPage<T extends AnyDoc>({
     // Immediate optimistic removal
     setOptimisticOverrides(prevMap => new Map(prevMap).set(id, null));
 
-    if (kind === "invoice") {
-      const prev = await db().invoices.get(id);
-      if (prev) await applyStockDelta(prev.items, 1);
-      await db().invoices.delete(id);
+    try {
       if (activeCompany?.id) {
-        removeCachedEntity({ companyId: activeCompany.id, entityType: "invoice", entityId: id }).catch(console.warn);
-        if (firebaseDb) {
-          rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/invoices/${id}`)).catch(console.warn);
-        }
+        await authoritativeDeleteDraft({
+          companyId: activeCompany.id,
+          kind,
+          id,
+          uid: user?.uid,
+          itemsToRevertStock: (doc as any).items,
+          stockDeltaDirection: kind === "invoice" ? 1 : -1,
+        });
+      } else {
+        const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
+        await table.delete(id);
       }
-    } else if (kind === "purchase") {
-      const prev = await db().purchases.get(id);
-      if (prev) await applyStockDelta(prev.items, -1);
-      await db().purchases.delete(id);
-      if (activeCompany?.id) {
-        removeCachedEntity({ companyId: activeCompany.id, entityType: "purchase", entityId: id });
-        if (firebaseDb) {
-          rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/purchases/${id}`)).catch(console.warn);
-        }
-      }
-    } else {
-      await db().quotations.delete(id);
-      if (activeCompany?.id) {
-        removeCachedEntity({ companyId: activeCompany.id, entityType: "quotation", entityId: id }).catch(console.warn);
-        if (firebaseDb) {
-          rtdbRemove(ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${id}`)).catch(console.warn);
-        }
-      }
-    }
 
-    if (activeCompany?.id) {
-      reconcileDocumentPostSuccess({
-        entityType: kind,
-        companyId: activeCompany.id,
-        action: "delete",
+      toast.success(`${kind === "invoice" ? "Invoice" : kind === "quotation" ? "Quotation" : "Purchase"} deleted`);
+    } catch (err: any) {
+      // Rollback optimistic removal on failure
+      setOptimisticOverrides(prevMap => {
+        const nextMap = new Map(prevMap);
+        nextMap.delete(id);
+        return nextMap;
       });
+      console.error(`[removeDraftDoc] Failed to delete ${kind}:`, err);
+      toast.error(err?.message || `Failed to delete ${kind}. Record restored.`);
     }
-
-    toast.success(`${kind === "invoice" ? "Invoice" : kind === "quotation" ? "Quotation" : "Purchase"} deleted`);
   }
 
   async function duplicate(r: T) {

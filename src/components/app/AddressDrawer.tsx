@@ -9,8 +9,8 @@ import { MapPin, Plus, Loader2 } from "lucide-react";
 import { db, uid, type PartyAddress, type Party, type AddressSnapshot } from "@/lib/db";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, update } from "firebase/database";
 import { isIndia, getPostalCodeLabel, getPostalCodePlaceholder, validatePostalCode } from "@/lib/countryValidation";
+import { authoritativeSavePartyAddresses } from "@/modules/sync/canonicalMutationService";
 
 interface AddressDrawerProps {
   open: boolean;
@@ -102,17 +102,16 @@ export function AddressDrawer({
         updatedAt: Date.now(),
       };
 
-      // 1. Update local Dexie tables immediately
-      await db().parties.put(updatedParty);
-      await db().customers.put(updatedParty as any);
-      await db().suppliers.put(updatedParty as any);
-
-      // 2. Persist to Firebase RTDB if available
-      if (activeCompany?.id && firebaseDb) {
-        const updates: Record<string, unknown> = {};
-        updates[`companyData/${activeCompany.id}/parties/${party.id}/addresses`] = sanitizeForFirebase(updatedAddresses);
-        updates[`companyData/${activeCompany.id}/customers/${party.id}/addresses`] = sanitizeForFirebase(updatedAddresses);
-        await update(ref(firebaseDb), updates);
+      if (activeCompany?.id) {
+        await authoritativeSavePartyAddresses({
+          companyId: activeCompany.id,
+          party,
+          addresses: updatedAddresses,
+        });
+      } else {
+        await db().parties.put(updatedParty);
+        await db().customers.put(updatedParty as any);
+        await db().suppliers.put(updatedParty as any);
       }
 
       toast.success(`Address "${newAddress.label}" saved to ${party.name}`);

@@ -57,6 +57,7 @@ function ProductsPage() {
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Product>(() => db().products.orderBy("name").toArray());
   const [cloudRows, setCloudRows] = useState<Product[]>([]);
+  const [cloudLoaded, setCloudLoaded] = useState(false);
   const cats = useLive<Category>(() => db().categories.orderBy("name").toArray());
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "ALL" | "INACTIVE">("ACTIVE");
@@ -98,6 +99,16 @@ function ProductsPage() {
         const val = snap.val();
         const list: Product[] = Object.values(val);
         setCloudRows(list);
+        setCloudLoaded(true);
+
+        // Deletion reconciliation: purge local rows no longer present in Firebase cloud
+        const cloudIds = new Set(list.map((p) => p.id));
+        db().products.toArray().then((localRows) => {
+          const toDelete = localRows.filter((r) => !cloudIds.has(r.id)).map((r) => r.id);
+          if (toDelete.length > 0) {
+            db().products.bulkDelete(toDelete);
+          }
+        });
 
         // Update Dexie cache in background
         cacheEntitiesBulk(
@@ -111,11 +122,11 @@ function ProductsPage() {
         );
 
         // Sync into local legacy Dexie store
-        for (const p of list) {
-          db().products.put(p);
-        }
+        db().products.bulkPut(list);
       } else {
         setCloudRows([]);
+        setCloudLoaded(true);
+        db().products.clear();
       }
     };
 
@@ -127,14 +138,14 @@ function ProductsPage() {
     };
   }, [activeCompany?.id, user?.uid]);
 
-  // If dexie has rows and cloudRows is empty, populate cloudRows so UI is instantaneous
+  // If dexie has rows and cloudRows is empty, populate cloudRows before cloud loads
   useEffect(() => {
-    if (cloudRows.length === 0 && dexieRows.length > 0) {
+    if (!cloudLoaded && cloudRows.length === 0 && dexieRows.length > 0) {
       setCloudRows(dexieRows);
     }
-  }, [dexieRows]);
+  }, [cloudLoaded, dexieRows]);
 
-  const rows = activeCompany?.id && cloudRows.length > 0 ? cloudRows : dexieRows;
+  const rows = activeCompany?.id && cloudLoaded ? cloudRows : (cloudRows.length > 0 ? cloudRows : dexieRows);
 
   // Deep-link support: auto-filter and open product editor if id or q present in URL
   useEffect(() => {

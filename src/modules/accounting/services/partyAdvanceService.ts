@@ -1,6 +1,9 @@
 import { db, type Customer, type Invoice, type Receipt, type Purchase, type Payment, type Party } from "@/lib/db";
 import { toPaise, toRupees } from "@/modules/tax/taxEngine";
 import { postVoucherServerFn } from "@/functions/postVoucherFn";
+import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
+import { ref, set } from "firebase/database";
+import { cacheEntity } from "@/modules/sync/dexieCache";
 
 function toCanonicalDate(ts: number): string {
   const d = new Date(ts);
@@ -506,7 +509,21 @@ export async function processAdvanceRefund(params: {
       refundReason: reason || receipt.refundReason,
     };
 
+    // Authoritatively persist refunded receipt to Firebase RTDB FIRST
+    if (firebaseDb) {
+      const recRef = ref(firebaseDb, `companyData/${companyId}/receipts/${receipt.id}`);
+      await set(recRef, sanitizeForFirebase(updatedReceipt));
+    }
+
     await db().receipts.put(updatedReceipt);
+    await cacheEntity({
+      uid: uid || "system",
+      companyId,
+      financialYearId,
+      entityType: "receipt",
+      entityId: receipt.id,
+      data: updatedReceipt,
+    });
 
     return {
       success: true,

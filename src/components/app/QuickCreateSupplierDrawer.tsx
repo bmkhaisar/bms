@@ -13,8 +13,7 @@ import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useLive } from "@/lib/useLive";
 import { createSupplierWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 import { normalizeName, normalizeGstin, normalizePhone, normalizeEmail } from "@/modules/sync/searchNormalization";
-import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, set } from "firebase/database";
+import { authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
 
 interface QuickCreateSupplierProps {
   open: boolean;
@@ -122,15 +121,17 @@ export function QuickCreateSupplierDrawer({
         shippingAddress: newSupplier.address,
       };
 
-      await db().parties.put(newParty);
-      await db().suppliers.put(newSupplier);
-
-      if (activeCompany?.id && firebaseDb) {
-        try {
-          await set(ref(firebaseDb, `companyData/${activeCompany.id}/parties/${newParty.id}`), sanitizeForFirebase(newParty));
-        } catch (rtdbErr) {
-          console.warn("RTDB party sync non-fatal:", rtdbErr);
-        }
+      if (activeCompany?.id) {
+        await authoritativeSaveEntity({
+          companyId: activeCompany.id,
+          kind: "party",
+          entity: newParty,
+          uid: user?.uid,
+          action: "create",
+        });
+      } else {
+        await db().parties.put(newParty);
+        await db().suppliers.put(newSupplier);
       }
 
       toast.success(`Supplier "${newSupplier.name}" created and selected`);

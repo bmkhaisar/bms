@@ -39,6 +39,7 @@ import { downloadDocumentPDF, type NormalizedDocument } from "@/lib/documentRend
 import { createCompanySnapshot } from "@/modules/company/types";
 import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
+import { authoritativeDeleteDraft, authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
 
 export const Route = createFileRoute("/_app/receipts")({
   head: () => ({ meta: [{ title: "Receipts & Payments — BMS NEXT" }] }),
@@ -454,33 +455,46 @@ export function ReceiptsAndPaymentsPage() {
   }
 
   async function removeReceipt(id: string) {
-    const r = await db().receipts.get(id);
-    if (r?.invoiceId) {
-      const inv = await db().invoices.get(r.invoiceId);
-      if (inv) {
-        inv.amountPaid = Math.max(0, inv.amountPaid - r.amount);
-        inv.balance = Math.max(0, inv.grandTotal - inv.amountPaid);
-        inv.status = inv.balance <= 0.01 ? "paid" : inv.amountPaid > 0 ? "partial" : "unpaid";
-        await db().invoices.put(inv);
-        if (activeCompany?.id) {
-          reconcileDocumentPostSuccess({
-            entityType: "invoice",
-            companyId: activeCompany.id,
-            document: inv,
-            action: "update",
-          });
+    try {
+      const r = await db().receipts.get(id);
+
+      if (activeCompany?.id) {
+        await authoritativeDeleteDraft({
+          companyId: activeCompany.id,
+          kind: "receipt",
+          id,
+          uid: user?.uid,
+        });
+      } else {
+        await db().receipts.delete(id);
+      }
+
+      if (r?.invoiceId) {
+        const inv = await db().invoices.get(r.invoiceId);
+        if (inv) {
+          inv.amountPaid = Math.max(0, inv.amountPaid - r.amount);
+          inv.balance = Math.max(0, inv.grandTotal - inv.amountPaid);
+          inv.status = inv.balance <= 0.01 ? "paid" : inv.amountPaid > 0 ? "partial" : "unpaid";
+          if (activeCompany?.id) {
+            await authoritativeSaveEntity({
+              companyId: activeCompany.id,
+              financialYearId: activeFinancialYear?.id,
+              kind: "invoice",
+              entity: inv,
+              uid: user?.uid,
+              action: "update",
+            });
+          } else {
+            await db().invoices.put(inv);
+          }
         }
       }
+
+      toast.success("Receipt removed");
+    } catch (err: any) {
+      console.error("[removeReceipt] Failed to remove receipt from cloud:", err);
+      toast.error(err?.message || "Failed to remove receipt from cloud");
     }
-    await db().receipts.delete(id);
-    if (activeCompany?.id) {
-      reconcileDocumentPostSuccess({
-        entityType: "receipt",
-        companyId: activeCompany.id,
-        action: "delete",
-      });
-    }
-    toast.success("Receipt removed");
   }
 
   const custInvoices = editingReceipt
