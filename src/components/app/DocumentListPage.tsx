@@ -9,8 +9,10 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LineItemsEditor } from "./LineItemsEditor";
 import { computeLine, computeTotals, applyStockDelta } from "@/lib/calc";
-import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge, AddressSnapshot, BankAccount, TermsTemplate, StructuredTermItem } from "@/lib/db";
+import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge, AddressSnapshot, BankAccount, TermsTemplate, StructuredTermItem, Party, Receipt } from "@/lib/db";
 import { db, nextNumber, uid, getCompany } from "@/lib/db";
+import { useAccounting } from "@/modules/accounting/useAccounting";
+import { migrateLegacyCustomersAndSuppliersToParties } from "@/modules/accounting/domain/partyResolver";
 import { useEffect, useState, useMemo } from "react";
 import { useLive } from "@/lib/useLive";
 import { toDateInput, fromDateInput, formatDate, formatMoney } from "@/lib/format";
@@ -71,9 +73,15 @@ export function DocumentListPage<T extends AnyDoc>({
   });
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.orderBy("name").toArray());
+  const canonicalParties = useLive<Party>(() => db().parties.orderBy("name").toArray());
   const quotations = useLive<Quotation>(() => kind === "invoice" ? db().quotations.orderBy("createdAt").reverse().toArray() : Promise.resolve([]));
   const bankAccounts = useLive<BankAccount>(() => db().bankAccounts.orderBy("bankName").toArray());
   const termsTemplates = useLive<TermsTemplate>(() => db().termsTemplates.orderBy("name").toArray());
+
+  const { ledgers } = useAccounting();
+  const settlementLedgers = useMemo(() => ledgers.filter(l => (l.groupId === "grp_cash" || l.groupId === "grp_bank_accounts") && l.active !== false), [ledgers]);
+  const [receiptSettlementLedgerId, setReceiptSettlementLedgerId] = useState<string>("");
+  const [receiptPaymentMethod, setReceiptPaymentMethod] = useState<string>("cash");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [openCustomerDrawer, setOpenCustomerDrawer] = useState(false);
@@ -107,6 +115,28 @@ export function DocumentListPage<T extends AnyDoc>({
   const [chargeAmount, setChargeAmount] = useState<number>(0);
   const [savingDoc, setSavingDoc] = useState<boolean>(false);
   const [recordingReceipt, setRecordingReceipt] = useState<boolean>(false);
+
+  // Customer Advance Tracker (PRD §§ 21-22)
+  const customerReceipts = useLive<Receipt>(() => {
+    const custId = (editing as any)?.customerId;
+    if (!custId) return Promise.resolve([]);
+    return db().receipts.where("customerId").equals(custId).toArray();
+  }, [(editing as any)?.customerId]);
+
+  const availableCustomerAdvance = useMemo(() => {
+    return (customerReceipts || [])
+      .filter(r => r.postingStatus !== "reversed" && r.postingStatus !== "refunded")
+      .reduce((sum, r) => {
+        if (r.advanceAvailablePaise !== undefined) {
+          return sum + (r.advanceAvailablePaise / 100);
+        }
+        if (r.allocationType === "ADVANCE") {
+          const allocated = (r.allocatedInvoices || []).reduce((acc, a) => acc + (a.amountPaise / 100), 0);
+          return sum + Math.max(0, r.amount - allocated);
+        }
+        return sum;
+      }, 0);
+  }, [customerReceipts]);
 
   // Advance payment restriction modal state (PRD §§ 16-18)
   const [advanceRestrictionData, setAdvanceRestrictionData] = useState<{
@@ -263,8 +293,28 @@ export function DocumentListPage<T extends AnyDoc>({
     }
   }, [rows]);
 
-  const parties = tableFor === "customer" ? customers : suppliers;
-  const partyById = (id: string) => parties.find(p => p.id === id);
+  const parties = useMemo(() => {
+    if (tableFor === "customer") {
+      const debtors = (canonicalParties || []).filter(p => p.partyType === "SUNDRY_DEBTOR");
+      const existingIds = new Set(debtors.map(d => d.id));
+      const unmigrated = (customers || []).filter(c => !existingIds.has(c.id));
+      return [...debtors, ...unmigrated];
+    } else {
+      const creditors = (canonicalParties || []).filter(p => p.partyType === "SUNDRY_CREDITOR");
+      const existingIds = new Set(creditors.map(c => c.id));
+      const unmigrated = (suppliers || []).filter(s => !existingIds.has(s.id));
+      return [...creditors, ...unmigrated];
+    }
+  }, [tableFor, canonicalParties, customers, suppliers]);
+
+  const partyById = (id: string) => {
+    if (!id) return undefined;
+    return (
+      (canonicalParties || []).find(p => p.id === id) ||
+      (customers || []).find(c => c.id === id) ||
+      (suppliers || []).find(s => s.id === id)
+    );
+  };
 
   const effectiveRows: T[] = useMemo(() => {
     const list: T[] = [];
@@ -359,11 +409,13 @@ export function DocumentListPage<T extends AnyDoc>({
       id: uid(), number, date: Date.now(), items: [] as LineItem[],
       subtotal: 0, discountTotal: 0, gstTotal: 0, roundOff: 0, grandTotal: 0,
       createdAt: Date.now(), extraCharges: [] as ExtraCharge[], extraChargesTotal: 0,
+      gstCalculationMode: "overall" as const,
+      overallGstRate: 18,
     };
     if (kind === "invoice") {
-      setEditing({ ...base, customerId: "", cgstTotal: 0, sgstTotal: 0, igstTotal: 0, isIgst: false, amountPaid: 0, balance: 0, status: "unpaid" } as unknown as T);
+      setEditing({ ...base, customerId: "", cgstTotal: 0, sgstTotal: 0, igstTotal: 0, isIgst: false, amountPaid: 0, balance: 0, status: "unpaid", gstCalculationMode: "overall", overallGstRate: 18 } as unknown as T);
     } else if (kind === "quotation") {
-      setEditing({ ...base, customerId: "", status: "draft" } as unknown as T);
+      setEditing({ ...base, customerId: "", status: "draft", gstCalculationMode: "overall", overallGstRate: 18 } as unknown as T);
     } else {
       setEditing({ ...base, supplierId: "", amountPaid: 0, balance: 0, status: "unpaid" } as unknown as T);
     }
@@ -375,6 +427,16 @@ export function DocumentListPage<T extends AnyDoc>({
     }
     setOpen(true);
   }
+
+  // Idempotent migration of legacy customers/suppliers to unified Party Master
+  useEffect(() => {
+    if (activeCompany?.id) {
+      migrateLegacyCustomersAndSuppliersToParties({
+        companyId: activeCompany.id,
+        uid: user?.uid || "",
+      }).catch(console.error);
+    }
+  }, [activeCompany?.id, user?.uid]);
 
   function openEdit(r: T) {
     setEditing({ ...r });
@@ -1074,6 +1136,7 @@ export function DocumentListPage<T extends AnyDoc>({
       const party = partyById(selectedInvoiceForReceipt.customerId);
       const customerLedgerId = (party as any)?.ledgerId || `led_${activeCompany?.id || "default"}_cust_${selectedInvoiceForReceipt.customerId}`;
       const defaultCash = `led_${activeCompany?.id || "default"}_cash`;
+      const targetSettlementLedger = receiptSettlementLedgerId || defaultCash;
 
       const receiptRecord = {
         id: uid(),
@@ -1082,9 +1145,9 @@ export function DocumentListPage<T extends AnyDoc>({
         customerId: selectedInvoiceForReceipt.customerId,
         invoiceId: selectedInvoiceForReceipt.id,
         amount: receiptAmount,
-        mode: "cash" as const,
-        paymentMethod: "cash",
-        settlementLedgerId: defaultCash,
+        mode: (receiptPaymentMethod === "cash" ? "cash" : "bank") as "cash" | "bank",
+        paymentMethod: receiptPaymentMethod,
+        settlementLedgerId: targetSettlementLedger,
         createdAt: Date.now(),
       };
 
@@ -1094,7 +1157,7 @@ export function DocumentListPage<T extends AnyDoc>({
           financialYearId: activeFinancialYear.id,
           receipt: receiptRecord,
           customerLedgerId,
-          settlementLedgerId: defaultCash,
+          settlementLedgerId: targetSettlementLedger,
           idToken,
           uid: user.uid,
         });
@@ -1572,25 +1635,70 @@ export function DocumentListPage<T extends AnyDoc>({
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">Advance / Amount Paid (₹)</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={(editing as unknown as Invoice).amountPaid || ""}
-                        onChange={e => setEditing({ ...editing, amountPaid: Number(e.target.value) || 0 } as T)}
-                        placeholder="0.00"
-                      />
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">Available Advance</Label>
+                        <span className="font-mono font-bold text-xs text-emerald-600">
+                          {formatMoney(availableCustomerAdvance)}
+                        </span>
+                      </div>
+                      <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5 text-[11px] text-muted-foreground flex items-center justify-between">
+                        <span>
+                          {availableCustomerAdvance > 0
+                            ? `Customer has ${formatMoney(availableCustomerAdvance)} advance available`
+                            : "No unallocated advance"}
+                        </span>
+                        {availableCustomerAdvance > 0 && (
+                          <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                            Apply via Receipt
+                          </span>
+                        )}
+                      </div>
                     </div>
                     {enableGst && (
-                      <div className="space-y-1 sm:col-span-2">
-                        <Label className="text-xs">Tax Supply Determination</Label>
-                        <Select value={(editing as unknown as Invoice).isIgst ? "igst" : "cgst"} onValueChange={v => setEditing({ ...editing, isIgst: v === "igst" } as T)}>
-                          <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="cgst">Intra-State: CGST + SGST</SelectItem>
-                            <SelectItem value="igst">Inter-State: IGST</SelectItem>
-                          </SelectContent>
-                        </Select>
+                      <div className="space-y-2 sm:col-span-2 rounded-lg border border-border/60 bg-muted/20 p-2.5">
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold">Tax Supply Determination</Label>
+                            <Select value={(editing as unknown as Invoice).isIgst ? "igst" : "cgst"} onValueChange={v => setEditing({ ...editing, isIgst: v === "igst" } as T)}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="cgst">Intra-State: CGST + SGST</SelectItem>
+                                <SelectItem value="igst">Inter-State: IGST</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold">GST Mode</Label>
+                            <Select
+                              value={(editing as any).gstCalculationMode || "overall"}
+                              onValueChange={v => setEditing({ ...editing, gstCalculationMode: v } as T)}
+                            >
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="overall">Overall GST Rate</SelectItem>
+                                <SelectItem value="item_wise">Item-wise GST</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {((editing as any).gstCalculationMode !== "item_wise") && (
+                            <div className="space-y-1">
+                              <Label className="text-xs font-semibold">Overall GST Rate</Label>
+                              <Select
+                                value={String((editing as any).overallGstRate ?? 18)}
+                                onValueChange={v => setEditing({ ...editing, overallGstRate: Number(v) } as T)}
+                              >
+                                <SelectTrigger className="h-8 text-xs font-mono font-bold"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="0">0% (Nil / Exempt)</SelectItem>
+                                  <SelectItem value="5">5% GST</SelectItem>
+                                  <SelectItem value="12">12% GST</SelectItem>
+                                  <SelectItem value="18">18% GST (Standard)</SelectItem>
+                                  <SelectItem value="28">28% GST</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
                     <div className="space-y-1 sm:col-span-2">
@@ -1683,14 +1791,10 @@ export function DocumentListPage<T extends AnyDoc>({
                       </div>
 
                       <div className="space-y-1">
-                        <Label className="text-xs font-medium">Amount Paid (₹)</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={(editing as Purchase).amountPaid || ""}
-                          onChange={e => setEditing({ ...editing, amountPaid: Number(e.target.value) || 0 } as T)}
-                          placeholder="0.00"
-                        />
+                        <Label className="text-xs font-medium">Payment Settlement</Label>
+                        <div className="rounded-md border bg-muted/30 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                          Supplier payments are recorded via <strong className="text-foreground">Payment Vouchers</strong>.
+                        </div>
                       </div>
 
                       <div className="space-y-1 sm:col-span-2 md:col-span-3">
@@ -1759,6 +1863,7 @@ export function DocumentListPage<T extends AnyDoc>({
                 mode={kind === "purchase" ? "purchase" : "sales"}
                 isIgst={kind === "invoice" ? (editing as unknown as Invoice).isIgst : false}
                 enableGst={enableGst}
+                gstCalculationMode={(editing as any).gstCalculationMode || (kind === "purchase" ? "item_wise" : "overall")}
                 customerId={kind === "invoice" || kind === "quotation" ? (editing as any).customerId : undefined}
               />
 
@@ -2015,6 +2120,31 @@ export function DocumentListPage<T extends AnyDoc>({
                   onChange={e => setReceiptAmount(Number(e.target.value) || 0)}
                   placeholder="0.00"
                 />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Received Into (Ledger)</Label>
+                  <Select value={receiptSettlementLedgerId} onValueChange={setReceiptSettlementLedgerId}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Default Cash" /></SelectTrigger>
+                    <SelectContent>
+                      {settlementLedgers.map((l) => (
+                        <SelectItem key={l.id} value={l.id}>{l.name} ({l.groupId === "grp_cash" ? "Cash" : "Bank"})</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Payment Method</Label>
+                  <Select value={receiptPaymentMethod} onValueChange={setReceiptPaymentMethod}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cash">Cash</SelectItem>
+                      <SelectItem value="bank_transfer">Bank Transfer / NEFT</SelectItem>
+                      <SelectItem value="upi">UPI</SelectItem>
+                      <SelectItem value="cheque">Cheque</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
           )}

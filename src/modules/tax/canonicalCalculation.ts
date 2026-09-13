@@ -13,6 +13,7 @@ import {
   toRupees,
   determineInterState,
   normalizeStateCode,
+  validateTaxHeadExclusivity,
 } from "./taxEngine.ts";
 import type {
   TaxTotals,
@@ -260,24 +261,28 @@ export function validateDocumentTotals(
   diff: number;
   clientGrandTotal: number;
   authoritative: CanonicalCalculationResult;
+  taxValidation: { valid: boolean; error?: string };
 } {
   const canonicalInput = extractCanonicalInputFromInvoice(invoice, company);
   const authoritative = calculateCanonicalTotals(canonicalInput);
 
   const clientGrandTotal = Number(invoice.grandTotal) || 0;
   const diff = Math.round(Math.abs(clientGrandTotal - authoritative.grandTotal) * 100) / 100;
-  const matches = clientGrandTotal === 0 || diff <= 1.0;
+  const taxValidation = validateTaxHeadExclusivity(authoritative);
+  const matches = (clientGrandTotal === 0 || diff <= 1.0) && taxValidation.valid;
 
   return {
     matches,
     diff,
     clientGrandTotal,
     authoritative,
+    taxValidation,
   };
 }
 
 export {
   calculateAdvanceTax,
+  validateTaxHeadExclusivity,
   type AdvanceSupplyType,
   type AdvanceTaxTreatment,
   type AdvanceTaxCalculationParams,

@@ -298,6 +298,48 @@ export function validateGstInvoiceNumber(invoiceNumber?: string): {
 }
 
 /**
+ * Strict statutory verification enforcing Indian GST tax head mutual exclusivity:
+ * - Intrastate: CGST > 0, SGST > 0, IGST === 0
+ * - Interstate: CGST === 0, SGST === 0, IGST > 0
+ * - Sum of tax components === totalTax
+ */
+export function validateTaxHeadExclusivity(taxTotals: {
+  cgst?: number;
+  sgst?: number;
+  igst?: number;
+  cess?: number;
+  gstTotal?: number;
+  totalTax?: number;
+  cgstTotal?: number;
+  sgstTotal?: number;
+  igstTotal?: number;
+  cessTotal?: number;
+}): { valid: boolean; error?: string } {
+  const cgst = toPaise(taxTotals.cgst ?? taxTotals.cgstTotal ?? 0);
+  const sgst = toPaise(taxTotals.sgst ?? taxTotals.sgstTotal ?? 0);
+  const igst = toPaise(taxTotals.igst ?? taxTotals.igstTotal ?? 0);
+  const cess = toPaise(taxTotals.cess ?? taxTotals.cessTotal ?? 0);
+  const totalTax = toPaise(taxTotals.totalTax ?? taxTotals.gstTotal ?? 0);
+
+  if (igst > 0 && (cgst > 0 || sgst > 0)) {
+    return {
+      valid: false,
+      error: `Invalid GST tax regime: Interstate IGST (₹${(igst / 100).toFixed(2)}) and Intrastate CGST/SGST (₹${((cgst + sgst) / 100).toFixed(2)}) cannot coexist on the same document.`,
+    };
+  }
+
+  const componentSum = cgst + sgst + igst + cess;
+  if (Math.abs(componentSum - totalTax) > 1) {
+    return {
+      valid: false,
+      error: `GST sum mismatch: Sum of CGST (₹${(cgst / 100).toFixed(2)}) + SGST (₹${(sgst / 100).toFixed(2)}) + IGST (₹${(igst / 100).toFixed(2)}) + Cess (₹${(cess / 100).toFixed(2)}) = ₹${(componentSum / 100).toFixed(2)}, which does not equal Total Tax ₹${(totalTax / 100).toFixed(2)}.`,
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
  * Authoritative Document-Level Tax and Commercial Calculation Engine.
  * Supports:
  * - Full GST invoices (NORMAL_GST)

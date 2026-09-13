@@ -13,6 +13,7 @@ import {
   calculateAdvanceTax,
   createTaxSnapshot,
   validateGstInvoiceNumber,
+  validateTaxHeadExclusivity,
 } from "@/modules/tax/taxEngine";
 import {
   calculateCanonicalTotals,
@@ -98,6 +99,21 @@ export async function postInvoiceTransaction(params: {
         )}, Submitted: ₹${clientGrandTotal.toFixed(2)}). Please review the updated total before posting.`,
         recomputedGrandTotal: recomputed.grandTotal,
         discrepancy: true,
+      };
+    }
+
+    // 3b. Statutory Tax Head Exclusivity Assertion (PRD §§ 1, 2, 6)
+    const taxHeadCheck = validateTaxHeadExclusivity({
+      cgst: recomputed.cgst,
+      sgst: recomputed.sgst,
+      igst: recomputed.igst,
+      cess: recomputed.cess,
+      totalTax: recomputed.gstTotal,
+    });
+    if (!taxHeadCheck.valid) {
+      return {
+        success: false,
+        error: `Server posting tax validation rejected: ${taxHeadCheck.error}`,
       };
     }
 
@@ -354,6 +370,21 @@ export async function postPurchaseTransaction(params: {
     const totalPaise = Math.round(purchase.grandTotal * 100);
     const taxPaise = Math.round(purchase.gstTotal * 100);
     const taxablePaise = totalPaise - taxPaise;
+
+    // Statutory Tax Head Exclusivity Assertion (PRD §§ 1, 2, 6)
+    const taxHeadCheck = validateTaxHeadExclusivity({
+      cgst: purchase.cgstTotal,
+      sgst: purchase.sgstTotal,
+      igst: purchase.igstTotal,
+      cess: (purchase as any).cessTotal,
+      totalTax: purchase.gstTotal,
+    });
+    if (!taxHeadCheck.valid) {
+      return {
+        success: false,
+        error: `Server posting tax validation rejected: ${taxHeadCheck.error}`,
+      };
+    }
 
     const purchaseLedgerId = `led_${companyId}_purchase`;
     const gstLedgerId = `led_${companyId}_input_gst`;
@@ -679,26 +710,28 @@ export async function postReceiptTransaction(params: {
     // Save immediately to local Dexie database
     await db().receipts.put(updatedReceipt);
 
-    // Non-blocking asynchronous sync for Firebase RTDB and cacheEntity
-    (async () => {
+    // Authoritative persistence to Firebase RTDB (PRD § 56)
+    if (firebaseDb) {
       try {
-        if (firebaseDb) {
-          const recRef = ref(firebaseDb, `companyData/${companyId}/receipts/${receipt.id}`);
-          await set(recRef, sanitizeForFirebase(updatedReceipt));
-        }
-
-        await cacheEntity({
-          uid,
-          companyId,
-          financialYearId,
-          entityType: "receipt",
-          entityId: receipt.id,
-          data: updatedReceipt,
-        });
-      } catch (bgErr) {
-        console.warn("Background receipt sync warning:", bgErr);
+        const recRef = ref(firebaseDb, `companyData/${companyId}/receipts/${receipt.id}`);
+        await set(recRef, sanitizeForFirebase(updatedReceipt));
+      } catch (rtdbErr) {
+        console.warn("RTDB receipt write warning (will retry via outbox):", rtdbErr);
       }
-    })();
+    }
+
+    try {
+      await cacheEntity({
+        uid,
+        companyId,
+        financialYearId,
+        entityType: "receipt",
+        entityId: receipt.id,
+        data: updatedReceipt,
+      });
+    } catch (cErr) {
+      console.warn("Receipt cache warning:", cErr);
+    }
 
     return { success: true, voucherId, documentId: receipt.id, receipt: updatedReceipt };
   } catch (err: unknown) {
@@ -786,26 +819,28 @@ export async function postPaymentTransaction(params: {
     // Save immediately to local Dexie database
     await db().payments.put(updatedPayment);
 
-    // Non-blocking asynchronous sync for Firebase RTDB and cacheEntity
-    (async () => {
+    // Authoritative persistence to Firebase RTDB (PRD § 56)
+    if (firebaseDb) {
       try {
-        if (firebaseDb) {
-          const payRef = ref(firebaseDb, `companyData/${companyId}/payments/${payment.id}`);
-          await set(payRef, sanitizeForFirebase(updatedPayment));
-        }
-
-        await cacheEntity({
-          uid,
-          companyId,
-          financialYearId,
-          entityType: "payment",
-          entityId: payment.id,
-          data: updatedPayment,
-        });
-      } catch (bgErr) {
-        console.warn("Background payment sync warning:", bgErr);
+        const payRef = ref(firebaseDb, `companyData/${companyId}/payments/${payment.id}`);
+        await set(payRef, sanitizeForFirebase(updatedPayment));
+      } catch (rtdbErr) {
+        console.warn("RTDB payment write warning (will retry via outbox):", rtdbErr);
       }
-    })();
+    }
+
+    try {
+      await cacheEntity({
+        uid,
+        companyId,
+        financialYearId,
+        entityType: "payment",
+        entityId: payment.id,
+        data: updatedPayment,
+      });
+    } catch (cErr) {
+      console.warn("Payment cache warning:", cErr);
+    }
 
     return { success: true, voucherId, documentId: payment.id, payment: updatedPayment };
   } catch (err: unknown) {

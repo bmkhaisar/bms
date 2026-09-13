@@ -15,6 +15,7 @@ import { getLogoDataUrl, getLogoBytes } from "./logoData.ts";
 import { formatCompanyAddress } from "./companyAddress.ts";
 import { resolveDocumentModel } from "./documentModel.ts";
 import { extractTableRowsFromMarkdown, extractTermsFromMarkdown, parseMarkdownToBlocks } from "./markdownDoc.ts";
+import { resolveDocumentSignatory, createTypedSignatureDataUrl } from "../modules/company/signatoryHelper.ts";
 
 const FOOTER_MARK = "Built by MMA";
 // jsPDF's built-in Helvetica lacks the ₹ glyph (renders as superscript 1).
@@ -684,30 +685,51 @@ async function drawTermsPage(ctx: PdfContext) {
   doc.setTextColor(30, 30, 30);
   doc.text(`For ${company.name || "Business Entity"}`, sigX, y);
 
-  const sig = quotation.signatorySnapshot;
-  const sigName = sig?.signatoryName || company.authorizedSignatory || "Authorized Signatory";
-  const sigDesignation = sig?.designation || (company as any).designation;
-  const sigImg = sig?.signatureUrl || company.signature;
-  const stampImg = sig?.stampUrl || company.stamp;
+  const resolved = resolveDocumentSignatory({
+    company: company as any,
+    signatorySnapshot: quotation.signatorySnapshot,
+    signatoryOverride: quotation.signatoryOverride,
+    documentDate: quotation.date,
+  });
 
-  if (sigImg) {
-    try { doc.addImage(sigImg, "PNG", sigX, y + 3, 38, 13); } catch { /* ignore */ }
+  const sigName = resolved.signatoryName || "Authorized Signatory";
+  const sigDesignation = resolved.designation || "";
+
+  // Signature rendering (typed or uploaded)
+  if (resolved.showSignature) {
+    if (resolved.signatureMode === "typed" && resolved.signatoryName) {
+      const typedUrl = createTypedSignatureDataUrl(resolved.signatoryName, resolved.typedSignatureStyle);
+      if (typedUrl) {
+        try { doc.addImage(typedUrl, "PNG", sigX, y + 2, 38, 14); } catch { /* ignore */ }
+      }
+    } else if (resolved.signatureUrl) {
+      try { doc.addImage(resolved.signatureUrl, "PNG", sigX, y + 2, 38, 14); } catch { /* ignore */ }
+    }
   }
-  if (stampImg) {
-    try { doc.addImage(stampImg, "PNG", sigX + 40, y + 2, 18, 18); } catch { /* ignore */ }
+
+  // Stamp rendering: respects showStamp and stampUrl
+  if (resolved.showStamp && resolved.stampUrl) {
+    try { doc.addImage(resolved.stampUrl, "PNG", sigX + 38, y + 1, 20, 20); } catch { /* ignore */ }
   }
 
   doc.setDrawColor(180, 180, 180);
   doc.setLineWidth(0.3);
   doc.line(sigX, y + 22, sigX + 60, y + 22);
 
-  doc.setFontSize(8);
-  doc.setTextColor(60, 60, 60);
-  doc.text(sigName, sigX, y + 26);
-  if (sigDesignation) {
+  if (resolved.showSignatoryName) {
+    doc.setFontSize(8);
+    doc.setTextColor(60, 60, 60);
+    doc.text(sigName, sigX, y + 26);
+  }
+  if (resolved.showDesignation && sigDesignation) {
     doc.setFontSize(7.5);
     doc.setTextColor(100, 100, 100);
     doc.text(sigDesignation, sigX, y + 30);
+  }
+  if (resolved.showSignatureDate && resolved.signatureDateText) {
+    doc.setFontSize(7);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`Date: ${resolved.signatureDateText}`, sigX, y + 34);
   }
 }
 

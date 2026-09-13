@@ -7,13 +7,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
-import { UserPlus, AlertTriangle, ShieldAlert, CheckCircle2, Loader2, Users } from "lucide-react";
-import { db, uid, type Customer } from "@/lib/db";
+import { Users, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import { db, uid, type Customer, type Party } from "@/lib/db";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useLive } from "@/lib/useLive";
 import { createCustomerWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 import { detectCustomerDuplicates, type DuplicateMatch } from "@/modules/sync/searchNormalization";
+import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
+import { ref, set } from "firebase/database";
 
 interface QuickCreateCustomerProps {
   open: boolean;
@@ -124,7 +126,25 @@ export function QuickCreateCustomerDrawer({
         }
       }
 
+      const newParty: Party = {
+        ...newCustomer,
+        partyType: "SUNDRY_DEBTOR",
+        paymentPolicy: "CREDIT",
+        country: "India",
+        billingAddress: newCustomer.address,
+        shippingAddress: newCustomer.address,
+      };
+
+      await db().parties.put(newParty);
       await db().customers.put(newCustomer);
+
+      if (activeCompany?.id && firebaseDb) {
+        try {
+          await set(ref(firebaseDb, `companyData/${activeCompany.id}/parties/${newParty.id}`), sanitizeForFirebase(newParty));
+        } catch (rtdbErr) {
+          console.warn("RTDB party sync non-fatal:", rtdbErr);
+        }
+      }
 
       toast.success(`Customer "${newCustomer.name}" created and selected`);
       onCustomerCreated(newCustomer);

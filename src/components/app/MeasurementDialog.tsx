@@ -69,8 +69,10 @@ export function MeasurementDialog({
       return sum + (Number(r.width) || 0) * (Number(r.height) || 0) * (Number(r.pieces) || 1);
     } else if (pricingBasis === "per_length") {
       return sum + (Number(r.width) || Number(r.height) || 0) * (Number(r.pieces) || 1);
+    } else if (pricingBasis === "per_weight") {
+      return sum + (Number(r.width) || (r as any).weight || 0) * (Number(r.pieces) || 1);
     } else {
-      return sum + (Number(r.width) || 0) * (Number(r.pieces) || 1);
+      return sum + (Number(r.width) || 1) * (Number(r.pieces) || 1);
     }
   }, 0);
 
@@ -79,14 +81,16 @@ export function MeasurementDialog({
   let summaryText = "";
   if (pricingBasis === "per_area") {
     if (rows.length === 1) {
-      summaryText = `${rows[0].width} ft × ${rows[0].height} ft × ${rows[0].pieces} Nos = ${roundedQty} ${unit || "Sq Ft"}`;
+      summaryText = `${rows[0].width} FT × ${rows[0].height} FT × ${rows[0].pieces} pcs = ${roundedQty} ${unit || "SQ FT"}`;
     } else {
-      summaryText = `${rows.length} measurement sections = ${roundedQty} ${unit || "Sq Ft"}`;
+      summaryText = `${rows.length} sections = ${roundedQty} ${unit || "SQ FT"}`;
     }
   } else if (pricingBasis === "per_length") {
-    summaryText = `Length = ${roundedQty} ${unit || "Ft"}`;
+    summaryText = `${rows[0]?.width || roundedQty} FT × ${rows[0]?.pieces || 1} pcs = ${roundedQty} ${unit || "FT"}`;
+  } else if (pricingBasis === "per_weight") {
+    summaryText = `${roundedQty} ${unit || "KG"}`;
   } else {
-    summaryText = `Total = ${roundedQty} ${unit}`;
+    summaryText = `${roundedQty} ${unit || "NOS"}`;
   }
 
   function handleSave() {

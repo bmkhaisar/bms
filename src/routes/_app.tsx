@@ -2,6 +2,7 @@ import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { startCompanyRealtimeSync } from "@/modules/sync/companyRealtimeSync";
 import { Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/_app")({
@@ -17,7 +18,18 @@ function AppGuard() {
     isAuthenticated,
     isPlatformAdmin,
   } = useAuth();
-  const { activeCompany, loading: companyLoading, companies } = useActiveCompany();
+  const { activeCompany, loading: companyLoading, companies, activeFinancialYear } = useActiveCompany();
+
+  // Central multi-device realtime company synchronization (PRD §§ 49, 56-59, 77-78)
+  useEffect(() => {
+    if (!activeCompany?.id || !isAuthenticated) return;
+    const stopSync = startCompanyRealtimeSync({
+      companyId: activeCompany.id,
+      uid: user?.uid,
+      financialYearId: activeFinancialYear?.id,
+    });
+    return () => stopSync();
+  }, [activeCompany?.id, isAuthenticated, user?.uid, activeFinancialYear?.id]);
 
   useEffect(() => {
     if (authInitializing || claimsLoading) return;

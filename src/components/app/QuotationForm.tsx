@@ -566,6 +566,7 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
                 mode="sales"
                 isIgst={false}
                 enableGst={true}
+                gstCalculationMode={q.gstCalculationMode || "overall"}
                 customerId={q.customerId}
               />
             </Card>

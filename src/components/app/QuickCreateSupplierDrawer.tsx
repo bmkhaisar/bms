@@ -7,12 +7,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { Truck, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
-import { db, uid, type Supplier } from "@/lib/db";
+import { db, uid, type Supplier, type Party } from "@/lib/db";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useLive } from "@/lib/useLive";
 import { createSupplierWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 import { normalizeName, normalizeGstin, normalizePhone, normalizeEmail } from "@/modules/sync/searchNormalization";
+import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
+import { ref, set } from "firebase/database";
 
 interface QuickCreateSupplierProps {
   open: boolean;
@@ -111,7 +113,25 @@ export function QuickCreateSupplierDrawer({
         }
       }
 
+      const newParty: Party = {
+        ...newSupplier,
+        partyType: "SUNDRY_CREDITOR",
+        paymentPolicy: "CREDIT",
+        country: "India",
+        billingAddress: newSupplier.address,
+        shippingAddress: newSupplier.address,
+      };
+
+      await db().parties.put(newParty);
       await db().suppliers.put(newSupplier);
+
+      if (activeCompany?.id && firebaseDb) {
+        try {
+          await set(ref(firebaseDb, `companyData/${activeCompany.id}/parties/${newParty.id}`), sanitizeForFirebase(newParty));
+        } catch (rtdbErr) {
+          console.warn("RTDB party sync non-fatal:", rtdbErr);
+        }
+      }
 
       toast.success(`Supplier "${newSupplier.name}" created and selected`);
       onSupplierCreated(newSupplier);

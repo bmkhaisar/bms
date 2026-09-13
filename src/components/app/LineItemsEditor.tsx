@@ -24,6 +24,7 @@ export function LineItemsEditor({
   mode = "sales",
   isIgst = false,
   enableGst = true,
+  gstCalculationMode = "item_wise",
   customerId,
 }: {
   items: LineItem[];
@@ -31,6 +32,7 @@ export function LineItemsEditor({
   mode?: "sales" | "purchase";
   isIgst?: boolean;
   enableGst?: boolean;
+  gstCalculationMode?: "item_wise" | "overall";
   customerId?: string;
 }) {
   const { activeCompany } = useActiveCompany();
@@ -189,14 +191,26 @@ export function LineItemsEditor({
                 placeholder="Product description"
               />
               <div className="grid grid-cols-2 gap-2">
-                <Input
-                  className="h-8 text-right font-mono"
-                  type="number"
-                  step="0.01"
-                  value={it.quantity || ""}
-                  onChange={(e) => update(i, { quantity: Number(e.target.value) || 0 })}
-                  placeholder="Qty"
-                />
+                <div className="flex items-center gap-1">
+                  <Input
+                    className="h-8 text-right font-mono flex-1"
+                    type="number"
+                    step="0.01"
+                    value={it.quantity || ""}
+                    onChange={(e) => update(i, { quantity: Number(e.target.value) || 0 })}
+                    placeholder="Qty"
+                  />
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="outline"
+                    className="h-8 w-8 text-primary shrink-0"
+                    onClick={() => setMeasuringIndex(i)}
+                    title="Size / Measurement"
+                  >
+                    <Calculator className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
                 <Input
                   className="h-8 text-right font-mono"
                   type="number"
@@ -206,6 +220,20 @@ export function LineItemsEditor({
                   placeholder="Rate (₹)"
                 />
               </div>
+              {it.measurementSummary && (
+                <div className="text-[11px] text-muted-foreground font-mono bg-muted/40 px-2 py-1 rounded flex items-center justify-between">
+                  <span className="truncate">{it.measurementSummary}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 px-1 text-[10px] text-primary"
+                    onClick={() => setMeasuringIndex(i)}
+                  >
+                    Edit Size
+                  </Button>
+                </div>
+              )}
               <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-1.5 font-mono font-semibold">
                 <span>Line Total:</span>
                 <span>{formatMoney(it.total)}</span>
@@ -226,7 +254,7 @@ export function LineItemsEditor({
               <TableHead className="w-24 text-right">Qty & Unit</TableHead>
               <TableHead className="w-24 text-right">Rate (₹)</TableHead>
               <TableHead className="w-16 text-right">Disc %</TableHead>
-              {enableGst && <TableHead className="w-20 text-right">GST %</TableHead>}
+              {enableGst && gstCalculationMode !== "overall" && <TableHead className="w-20 text-right">GST %</TableHead>}
               <TableHead className="text-right">Line Total</TableHead>
               <TableHead className="w-10"></TableHead>
             </TableRow>
@@ -235,7 +263,7 @@ export function LineItemsEditor({
             {items.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={enableGst ? 9 : 8}
+                  colSpan={enableGst && gstCalculationMode !== "overall" ? 9 : 8}
                   className="py-8 text-center text-xs text-muted-foreground"
                 >
                   No items. Click "+ Add Line Item" or press <kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono">Alt+A</kbd> to begin.
@@ -455,14 +483,14 @@ export function LineItemsEditor({
                   {/* Qty & Unit with Dimension Calculator Trigger */}
                   <TableCell>
                     <div className="flex items-center gap-1 justify-end">
-                      {(it.pricingBasis === "per_area" || it.pricingBasis === "per_length") && (
+                      {it.pricingBasis !== "fixed" && (
                         <Button
                           type="button"
                           size="icon"
                           variant="outline"
                           className="h-8 w-8 text-primary shrink-0"
                           onClick={() => setMeasuringIndex(i)}
-                          title="Open Measurement Calculator"
+                          title="Open Measurement / Size Calculator"
                         >
                           <Calculator className="h-3.5 w-3.5" />
                         </Button>
@@ -505,8 +533,8 @@ export function LineItemsEditor({
                     />
                   </TableCell>
 
-                  {/* GST % */}
-                  {enableGst && (
+                  {/* GST % (Only shown in item-wise mode) */}
+                  {enableGst && gstCalculationMode !== "overall" && (
                     <TableCell>
                       <Select
                         value={String(it.gstRate)}
