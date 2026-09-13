@@ -268,19 +268,19 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
       grandTotal: grand,
       gstCalculationMode: q.gstCalculationMode || "item_wise",
       overallGstRate: q.overallGstRate,
-      includeGeneralInfo: q.includeGeneralInfo !== false,
-      includeTechSpecs: q.includeTechSpecs !== false,
-      includeTerms: q.includeTerms !== false,
-      includeBankDetails: q.includeBankDetails !== false,
+      includeGeneralInfo: q.includeGeneralInfo,
+      includeTechSpecs: q.includeTechSpecs,
+      includeTerms: q.includeTerms,
+      includeBankDetails: q.includeBankDetails,
       bankAccountId: q.bankAccountId,
       bankSnapshot: q.bankSnapshot,
-      bankDetailsSnapshot: q.bankSnapshot || q.bankDetailsSnapshot,
-      termsSnapshot: q.termsSnapshot,
+      bankDetailsSnapshot: (q.status && q.status !== "draft") ? (q.bankSnapshot || q.bankDetailsSnapshot) : q.bankDetailsSnapshot,
+      termsSnapshot: (q.status && q.status !== "draft") ? (q.termsSnapshot || (q.terms ? q.terms.split(/\r?\n+/).map(l => l.trim()).filter(Boolean) : undefined)) : q.termsSnapshot,
       structuredTerms: q.structuredTerms,
-      structuredTermsSnapshot: q.structuredTerms && q.structuredTerms.length > 0 ? [{ title: "Terms & Conditions", format: "numbered", items: q.structuredTerms }] : q.structuredTermsSnapshot,
+      structuredTermsSnapshot: (q.status && q.status !== "draft") ? (q.structuredTerms && q.structuredTerms.length > 0 ? [{ title: "Terms & Conditions", format: "numbered", items: q.structuredTerms }] : q.structuredTermsSnapshot) : q.structuredTermsSnapshot,
       structuredSections: q.structuredSections,
-      generalInformationSnapshot: q.structuredSections?.filter(s => s.type === "GENERAL_INFO") || q.generalInformationSnapshot,
-      technicalSpecificationSnapshot: q.structuredSections?.filter(s => s.type === "SPEC_TABLE") || q.technicalSpecificationSnapshot,
+      generalInformationSnapshot: (q.status && q.status !== "draft") ? (q.structuredSections?.filter(s => s.type === "GENERAL_INFO") || q.generalInformationSnapshot) : q.generalInformationSnapshot,
+      technicalSpecificationSnapshot: (q.status && q.status !== "draft") ? (q.structuredSections?.filter(s => s.type === "SPEC_TABLE") || q.technicalSpecificationSnapshot) : q.technicalSpecificationSnapshot,
     };
     // Save any custom sizes typed in items
     for (const it of finalQ.items) if (it.size) await saveSizeIfNew(it.size);
@@ -313,10 +313,6 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
               <TabsTrigger value="details">Details</TabsTrigger>
               <TabsTrigger value="items">Items</TabsTrigger>
               <TabsTrigger value="charges">Charges & Totals</TabsTrigger>
-              <TabsTrigger value="general">General Info</TabsTrigger>
-              <TabsTrigger value="tech">Technical</TabsTrigger>
-              <TabsTrigger value="electrical">Electrical</TabsTrigger>
-              <TabsTrigger value="terms">Terms & Bank</TabsTrigger>
             </TabsList>
           </div>
 
@@ -533,6 +529,19 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
                 </Field>
               </div>
             </Card>
+
+            {/* Centralized Document Settings Status Banner */}
+            <div className="rounded-xl border border-border/60 bg-muted/20 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold text-foreground">Managed in Company Settings</div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">
+                  General Information, Technical Specifications, Terms & Conditions, and Bank Details are centrally managed and automatically included based on your company configuration.
+                </div>
+              </div>
+              <Button variant="outline" size="sm" asChild className="text-xs shrink-0">
+                <a href="/settings" target="_blank" rel="noreferrer">Company Settings</a>
+              </Button>
+            </div>
           </TabsContent>
 
           {/* ============ ITEMS ============ */}
@@ -661,294 +670,6 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
             </Card>
           </TabsContent>
 
-          {/* ============ GENERAL INFO ============ */}
-          <TabsContent value="general">
-            <GeneralInformationEditor
-              enabled={q.includeGeneralInfo !== false}
-              onEnabledChange={(v) => setQ({ ...q, includeGeneralInfo: v })}
-              rows={
-                (q.structuredSections?.find(s => s.type === "GENERAL_INFO")?.rows) ||
-                (q.generalInfoSnapshot?.map((f, i) => ({
-                  id: f.key || uid(),
-                  label: f.label,
-                  value: f.value,
-                  order: i + 1,
-                  valueType: "TEXT" as const,
-                })) || [])
-              }
-              onChange={(rows) => {
-                const otherSecs = (q.structuredSections || []).filter(s => s.type !== "GENERAL_INFO");
-                const genSec: QuotationSection = {
-                  id: "sec-gen-info",
-                  type: "GENERAL_INFO",
-                  title: "General Information",
-                  order: 0,
-                  rows,
-                };
-                setQ({
-                  ...q,
-                  structuredSections: [genSec, ...otherSecs],
-                  generalInfoSnapshot: rows.map(r => ({ key: r.id, label: r.label, value: r.value })),
-                });
-              }}
-              templates={genTemplates}
-              selectedTemplateId={q.generalInfoTemplateId}
-              onApplyTemplate={(templateId) => {
-                const tmpl = genTemplates.find(t => t.id === templateId);
-                if (!tmpl) return;
-                const rows: SectionRow[] = tmpl.fields.map((f, i) => ({
-                  id: uid(),
-                  label: f.label,
-                  value: f.value,
-                  valueType: "TEXT",
-                  order: i + 1,
-                }));
-                const otherSecs = (q.structuredSections || []).filter(s => s.type !== "GENERAL_INFO");
-                const genSec: QuotationSection = {
-                  id: "sec-gen-info",
-                  type: "GENERAL_INFO",
-                  title: tmpl.name || "General Information",
-                  order: 0,
-                  rows,
-                };
-                setQ({
-                  ...q,
-                  generalInfoTemplateId: templateId,
-                  structuredSections: [genSec, ...otherSecs],
-                  generalInfoSnapshot: rows.map(r => ({ key: r.id, label: r.label, value: r.value })),
-                });
-              }}
-            />
-          </TabsContent>
-
-          {/* ============ TECHNICAL SPEC ============ */}
-          <TabsContent value="tech">
-            <TechnicalSpecificationsEditor
-              enabled={q.includeTechSpecs !== false}
-              onEnabledChange={(v) => setQ({ ...q, includeTechSpecs: v })}
-              sections={(q.structuredSections || []).filter(s => s.type === "SPEC_TABLE")}
-              onChange={(specSecs) => {
-                const genSecs = (q.structuredSections || []).filter(s => s.type === "GENERAL_INFO");
-                setQ({
-                  ...q,
-                  structuredSections: [...genSecs, ...specSecs],
-                  techSpecSnapshot: specSecs.map(s => ({
-                    title: s.title,
-                    rows: (s.rows || []).map(r => ({ label: r.label, value: r.value })),
-                  })),
-                });
-              }}
-              templates={techTemplates}
-              onApplyTemplate={(templateId) => {
-                const tmpl = techTemplates.find(t => t.id === templateId);
-                if (!tmpl) return;
-                const newSections: QuotationSection[] = tmpl.sections.map((sec, idx) => ({
-                  id: uid(),
-                  type: "SPEC_TABLE",
-                  title: sec.title,
-                  order: idx + 1,
-                  rows: sec.rows.map((r, rIdx) => ({
-                    id: uid(),
-                    label: r.label,
-                    value: r.value,
-                    order: rIdx + 1,
-                  })),
-                }));
-                const genSecs = (q.structuredSections || []).filter(s => s.type === "GENERAL_INFO");
-                setQ({
-                  ...q,
-                  techSpecTemplateId: templateId,
-                  structuredSections: [...genSecs, ...newSections],
-                  techSpecSnapshot: tmpl.sections.map(s => ({ title: s.title, rows: [...s.rows] })),
-                });
-              }}
-            />
-          </TabsContent>
-
-          {/* ============ TERMS & BANK ============ */}
-          <TabsContent value="terms">
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-4">
-                <StructuredTermsEditor
-                  enabled={q.includeTerms !== false}
-                  onEnabledChange={(v) => setQ({ ...q, includeTerms: v })}
-                  terms={q.structuredTerms || []}
-                  onChange={(terms) => setQ({
-                    ...q,
-                    structuredTerms: terms,
-                    termsSnapshot: terms.map(t => t.text),
-                    terms: terms.map((t, i) => `${i + 1}. ${t.text}`).join("\n"),
-                  })}
-                  templates={termsTemplates}
-                  onApplyTemplate={(templateId) => {
-                    const tmpl = termsTemplates.find(t => t.id === templateId);
-                    if (!tmpl) return;
-                    const items: StructuredTermItem[] = (tmpl.structuredTerms && tmpl.structuredTerms.length > 0)
-                      ? tmpl.structuredTerms.map((t, idx) => ({ ...t, id: uid(), order: idx + 1 }))
-                      : (tmpl.terms || []).filter(t => t.enabled).map((t, idx) => ({
-                          id: uid(),
-                          order: idx + 1,
-                          text: t.text,
-                          format: "NUMBERED",
-                        }));
-                    setQ({
-                      ...q,
-                      termsTemplateId: templateId,
-                      structuredTerms: items,
-                      termsSnapshot: items.map(x => x.text),
-                      terms: items.map((x, i) => `${i + 1}. ${x.text}`).join("\n"),
-                    });
-                  }}
-                  documentType="quotation"
-                />
-              </div>
-
-              <div className="space-y-4">
-                <Card className="p-4">
-                  <div className="mb-3 flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-semibold">Bank Settlement Details</div>
-                      <div className="text-xs text-muted-foreground">Bank account printed on document</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground font-medium">Show on PDF</span>
-                      <Switch
-                        checked={q.includeBankDetails !== false}
-                        onCheckedChange={(v) => setQ({ ...q, includeBankDetails: v })}
-                      />
-                    </div>
-                  </div>
-
-                  {q.includeBankDetails !== false && (
-                    <>
-                      <div className="mb-3">
-                        <Select value={q.bankAccountId || ""} onValueChange={applyBank}>
-                          <SelectTrigger><SelectValue placeholder="Select company bank account" /></SelectTrigger>
-                          <SelectContent>
-                            {banks.length === 0 && <SelectItem value="__none__" disabled>Add bank in Masters / Settings</SelectItem>}
-                            {banks.map(b => (
-                              <SelectItem key={b.id} value={b.id}>
-                                {b.bankName} — {b.accountNo} {b.isDefault ? " ★" : ""}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {q.bankSnapshot ? (
-                        <div className="rounded-md border bg-muted/30 p-3.5 text-xs space-y-1.5">
-                          <div className="font-bold text-sm text-foreground">{q.bankSnapshot.bankName}</div>
-                          <div><span className="text-muted-foreground">A/C Name:</span> <span className="font-semibold">{q.bankSnapshot.accountName}</span></div>
-                          <div><span className="text-muted-foreground">A/C No:</span> <span className="font-mono font-semibold">{q.bankSnapshot.accountNo}</span></div>
-                          <div><span className="text-muted-foreground">IFSC:</span> <span className="font-mono font-semibold">{q.bankSnapshot.ifsc}</span></div>
-                          {q.bankSnapshot.branch && <div><span className="text-muted-foreground">Branch:</span> {q.bankSnapshot.branch}</div>}
-                          {q.bankSnapshot.upi && <div><span className="text-muted-foreground">UPI:</span> <span className="font-mono">{q.bankSnapshot.upi}</span></div>}
-                        </div>
-                      ) : (
-                        <div className="rounded-md border border-dashed p-6 text-center text-xs text-muted-foreground">No bank selected.</div>
-                      )}
-                    </>
-                  )}
-                </Card>
-
-                {/* Signatory & Stamp Document Appearance Override */}
-                <Card className="p-4">
-                  <div className="mb-3 flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-medium">Signatory & Stamp (Document Appearance)</div>
-                      <div className="text-xs text-muted-foreground">
-                        Use company defaults or customize signature and stamp visibility for this quotation.
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-muted-foreground">Use Company Default</span>
-                      <Switch
-                        checked={!q.signatoryOverride}
-                        onCheckedChange={(useDefault) => {
-                          setQ({
-                            ...q,
-                            signatoryOverride: useDefault ? undefined : {
-                              showSignature: true,
-                              showStamp: true,
-                              showSignatoryName: true,
-                              showDesignation: true,
-                              showSignatureDate: true,
-                              signatureDateMode: "document_date",
-                            },
-                          });
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  {q.signatoryOverride && (
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2 rounded-lg border bg-muted/20 p-3">
-                      <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
-                        <span className="text-xs">Show Signature</span>
-                        <Switch
-                          checked={q.signatoryOverride.showSignature ?? true}
-                          onCheckedChange={(v) =>
-                            setQ({
-                              ...q,
-                              signatoryOverride: { ...q.signatoryOverride, showSignature: v },
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
-                        <span className="text-xs">Show Stamp</span>
-                        <Switch
-                          checked={q.signatoryOverride.showStamp ?? true}
-                          onCheckedChange={(v) =>
-                            setQ({
-                              ...q,
-                              signatoryOverride: { ...q.signatoryOverride, showStamp: v },
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
-                        <span className="text-xs">Show Signatory Name</span>
-                        <Switch
-                          checked={q.signatoryOverride.showSignatoryName ?? true}
-                          onCheckedChange={(v) =>
-                            setQ({
-                              ...q,
-                              signatoryOverride: { ...q.signatoryOverride, showSignatoryName: v },
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
-                        <span className="text-xs">Show Designation</span>
-                        <Switch
-                          checked={q.signatoryOverride.showDesignation ?? true}
-                          onCheckedChange={(v) =>
-                            setQ({
-                              ...q,
-                              signatoryOverride: { ...q.signatoryOverride, showDesignation: v },
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="flex items-center justify-between rounded-md border bg-background p-2.5 sm:col-span-2">
-                        <span className="text-xs">Show Signature Date</span>
-                        <Switch
-                          checked={q.signatoryOverride.showSignatureDate ?? true}
-                          onCheckedChange={(v) =>
-                            setQ({
-                              ...q,
-                              signatoryOverride: { ...q.signatoryOverride, showSignatureDate: v },
-                            })
-                          }
-                        />
-                      </div>
-                    </div>
-                  )}
-                </Card>
-              </div>
-            </div>
-          </TabsContent>
         </Tabs>
       </div>
 

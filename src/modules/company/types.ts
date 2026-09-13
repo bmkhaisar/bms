@@ -25,12 +25,27 @@ export const companySchema = z.object({
   currencySymbol: z.string().default("₹"),
   timezone: z.string().default("Asia/Kolkata"),
   bankName: z.string().optional(),
+  accountHolderName: z.string().optional(),
+  bankAccountHolderName: z.string().optional(),
   bankAccountNo: z.string().optional(),
   bankIfsc: z.string().optional(),
   bankBranch: z.string().optional(),
+  bankAccountType: z.string().optional(),
+  bankSwiftCode: z.string().optional(),
   upiId: z.string().optional(),
   upiQrUrl: z.string().optional(),
   terms: z.string().optional(),
+  quotationGeneralInfoMarkdown: z.string().optional(),
+  quotationTechnicalSpecsMarkdown: z.string().optional(),
+  quotationTermsMarkdown: z.string().optional(),
+  invoiceTermsMarkdown: z.string().optional(),
+  quotationClosingMessage: z.string().optional(),
+  showQuotationGeneralInfo: z.boolean().optional(),
+  showQuotationTechnicalSpecs: z.boolean().optional(),
+  showQuotationTerms: z.boolean().optional(),
+  showInvoiceTerms: z.boolean().optional(),
+  showQuotationBankDetails: z.boolean().optional(),
+  showInvoiceBankDetails: z.boolean().optional(),
   authorizedSignatory: z.string().optional(),
   designation: z.string().optional(),
   signatureMode: z.enum(["none", "typed", "uploaded"]).optional(),
@@ -106,11 +121,26 @@ export interface CompanySnapshot {
   email?: string;
   website?: string;
   bankName?: string;
+  accountHolderName?: string;
+  bankAccountHolderName?: string;
   bankAccountNo?: string;
   bankIfsc?: string;
   bankBranch?: string;
+  bankAccountType?: string;
+  bankSwiftCode?: string;
   upiId?: string;
   terms?: string;
+  quotationGeneralInfoMarkdown?: string;
+  quotationTechnicalSpecsMarkdown?: string;
+  quotationTermsMarkdown?: string;
+  invoiceTermsMarkdown?: string;
+  quotationClosingMessage?: string;
+  showQuotationGeneralInfo?: boolean;
+  showQuotationTechnicalSpecs?: boolean;
+  showQuotationTerms?: boolean;
+  showInvoiceTerms?: boolean;
+  showQuotationBankDetails?: boolean;
+  showInvoiceBankDetails?: boolean;
   authorizedSignatory?: string;
   designation?: string;
   signatureMode?: SignatureMode;
@@ -174,11 +204,26 @@ export function createCompanySnapshot(company: Partial<Company> & { logo?: strin
     email: company.email,
     website: company.website,
     bankName: company.bankName,
+    accountHolderName: company.accountHolderName || company.bankAccountHolderName || compName,
+    bankAccountHolderName: company.bankAccountHolderName || company.accountHolderName || compName,
     bankAccountNo: company.bankAccountNo,
     bankIfsc: company.bankIfsc,
     bankBranch: company.bankBranch,
+    bankAccountType: company.bankAccountType,
+    bankSwiftCode: company.bankSwiftCode,
     upiId: company.upiId,
     terms: company.terms,
+    quotationGeneralInfoMarkdown: company.quotationGeneralInfoMarkdown,
+    quotationTechnicalSpecsMarkdown: company.quotationTechnicalSpecsMarkdown,
+    quotationTermsMarkdown: company.quotationTermsMarkdown,
+    invoiceTermsMarkdown: company.invoiceTermsMarkdown,
+    quotationClosingMessage: company.quotationClosingMessage,
+    showQuotationGeneralInfo: company.showQuotationGeneralInfo ?? true,
+    showQuotationTechnicalSpecs: company.showQuotationTechnicalSpecs ?? true,
+    showQuotationTerms: company.showQuotationTerms ?? true,
+    showInvoiceTerms: company.showInvoiceTerms ?? true,
+    showQuotationBankDetails: company.showQuotationBankDetails ?? true,
+    showInvoiceBankDetails: company.showInvoiceBankDetails ?? true,
     authorizedSignatory: company.authorizedSignatory,
     designation: company.designation,
     signatureMode: company.signatureMode,

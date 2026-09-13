@@ -15,8 +15,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { ImagePlus, Save, ShieldAlert, Building2, FileSignature, Stamp, AlertCircle } from "lucide-react";
+import { ImagePlus, Save, ShieldAlert, Building2, FileSignature, Stamp, AlertCircle, FileText, Eye, CheckCircle2 } from "lucide-react";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb } from "@/config/firebase";
@@ -25,6 +26,7 @@ import { cacheEntity, getCachedEntity } from "@/modules/sync/dexieCache";
 import type { Company, TypedSignatureStyle } from "@/modules/company/types";
 import { TYPED_SIGNATURE_STYLES } from "@/modules/company/signatoryHelper";
 import { SignatoryBlock } from "@/components/app/SignatoryBlock";
+import { MarkdownRenderer } from "@/lib/MarkdownRenderer";
 
 export const Route = createFileRoute("/_app/settings")({
   head: () => ({ meta: [{ title: "Company Settings — BMS NEXT" }] }),
@@ -155,7 +157,22 @@ export function SettingsPage() {
       bankBranch: form.bankBranch?.trim() || "",
       bankAccountNo: form.bankAccountNo?.trim() || "",
       bankIfsc: form.bankIfsc?.trim().toUpperCase() || "",
+      accountHolderName: form.accountHolderName?.trim() || form.bankAccountHolderName?.trim() || form.name?.trim() || "",
+      bankAccountHolderName: form.bankAccountHolderName?.trim() || form.accountHolderName?.trim() || form.name?.trim() || "",
+      bankAccountType: form.bankAccountType?.trim() || "",
+      bankSwiftCode: form.bankSwiftCode?.trim() || "",
       upiId: form.upiId?.trim() || "",
+      showQuotationGeneralInfo: form.showQuotationGeneralInfo ?? true,
+      showQuotationTechnicalSpecs: form.showQuotationTechnicalSpecs ?? true,
+      showQuotationTerms: form.showQuotationTerms ?? true,
+      showInvoiceTerms: form.showInvoiceTerms ?? true,
+      showQuotationBankDetails: form.showQuotationBankDetails ?? true,
+      showInvoiceBankDetails: form.showInvoiceBankDetails ?? true,
+      quotationGeneralInfoMarkdown: form.quotationGeneralInfoMarkdown ?? "",
+      quotationTechnicalSpecsMarkdown: form.quotationTechnicalSpecsMarkdown ?? "",
+      quotationTermsMarkdown: form.quotationTermsMarkdown ?? "",
+      invoiceTermsMarkdown: form.invoiceTermsMarkdown ?? (form.terms || ""),
+      quotationClosingMessage: form.quotationClosingMessage ?? "",
       authorizedSignatory: form.authorizedSignatory?.trim() || "",
       designation: form.designation?.trim() || "",
       signatureMode: form.signatureMode || (form.signatureUrl ? "uploaded" : "none"),
@@ -170,7 +187,7 @@ export function SettingsPage() {
       showSignatureDate: form.showSignatureDate ?? true,
       signatureDateMode: form.signatureDateMode || "document_date",
       customSignatureDate: form.customSignatureDate || "",
-      terms: form.terms?.trim() || "",
+      terms: form.invoiceTermsMarkdown ?? (form.terms?.trim() || ""),
       invoicePrefix: form.invoicePrefix?.trim() || "INV",
       quotationPrefix: form.quotationPrefix?.trim() || "QT",
       purchasePrefix: form.purchasePrefix?.trim() || "PO",
@@ -883,71 +900,338 @@ export function SettingsPage() {
           </CardContent>
         </Card>
 
-        {/* Banking & UPI */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm lg:col-span-2">
+        {/* Universal Document Settings & Visibility Toggles */}
+        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm lg:col-span-3">
+          <CardHeader className="border-b border-border/40 pb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <FileText className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="text-base font-semibold">Document Settings & Universal Defaults</CardTitle>
+                <CardDescription className="text-xs">
+                  Centrally configure content and visibility for Quotations and Invoices. New documents inherit these defaults automatically.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-6 space-y-6">
+            {/* Global Document Visibility Toggles */}
+            <div className="space-y-4">
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Document Section Visibility (Default for Future Documents)
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                {/* Quotation Toggles */}
+                <div className="space-y-2.5 rounded-xl border border-border/50 bg-muted/20 p-4">
+                  <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-blue-500" />
+                    Quotation Defaults
+                  </span>
+                  <div className="grid gap-2 pt-1">
+                    <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/70 p-2 text-xs">
+                      <span>Show General Information</span>
+                      <Switch
+                        checked={form.showQuotationGeneralInfo ?? true}
+                        disabled={!canEdit}
+                        onCheckedChange={(val) => setForm({ ...form, showQuotationGeneralInfo: val })}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/70 p-2 text-xs">
+                      <span>Show Technical Specifications</span>
+                      <Switch
+                        checked={form.showQuotationTechnicalSpecs ?? true}
+                        disabled={!canEdit}
+                        onCheckedChange={(val) => setForm({ ...form, showQuotationTechnicalSpecs: val })}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/70 p-2 text-xs">
+                      <span>Show Terms & Conditions</span>
+                      <Switch
+                        checked={form.showQuotationTerms ?? true}
+                        disabled={!canEdit}
+                        onCheckedChange={(val) => setForm({ ...form, showQuotationTerms: val })}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/70 p-2 text-xs">
+                      <span>Show Bank Details</span>
+                      <Switch
+                        checked={form.showQuotationBankDetails ?? true}
+                        disabled={!canEdit}
+                        onCheckedChange={(val) => setForm({ ...form, showQuotationBankDetails: val })}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Invoice Toggles */}
+                <div className="space-y-2.5 rounded-xl border border-border/50 bg-muted/20 p-4">
+                  <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    Invoice Defaults
+                  </span>
+                  <div className="grid gap-2 pt-1">
+                    <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/70 p-2 text-xs">
+                      <span>Show Terms & Conditions</span>
+                      <Switch
+                        checked={form.showInvoiceTerms ?? true}
+                        disabled={!canEdit}
+                        onCheckedChange={(val) => setForm({ ...form, showInvoiceTerms: val })}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/70 p-2 text-xs">
+                      <span>Show Bank Details</span>
+                      <Switch
+                        checked={form.showInvoiceBankDetails ?? true}
+                        disabled={!canEdit}
+                        onCheckedChange={(val) => setForm({ ...form, showInvoiceBankDetails: val })}
+                      />
+                    </div>
+                    <div className="rounded-lg border border-dashed border-border/60 bg-background/40 p-2.5 text-[11px] text-muted-foreground leading-relaxed">
+                      General Information and Technical Specifications are excluded from Invoices by design to keep billing concise and compliant.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Markdown Content Editors with Live Interactive Preview */}
+            <div className="space-y-4 pt-2 border-t border-border/40">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Document Markdown Content & Templates
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Paste markdown tables, numbered lists, or bold bullet points. Instant live preview below.
+                  </p>
+                </div>
+              </div>
+
+              <Tabs defaultValue="quotation_general" className="w-full">
+                <TabsList className="grid grid-cols-2 md:grid-cols-5 w-full h-auto p-1">
+                  <TabsTrigger value="quotation_general" className="text-xs py-1.5">Quotation General Info</TabsTrigger>
+                  <TabsTrigger value="quotation_tech" className="text-xs py-1.5">Technical Specs</TabsTrigger>
+                  <TabsTrigger value="quotation_terms" className="text-xs py-1.5">Quotation Terms</TabsTrigger>
+                  <TabsTrigger value="invoice_terms" className="text-xs py-1.5">Invoice Terms</TabsTrigger>
+                  <TabsTrigger value="closing" className="text-xs py-1.5">Closing Note</TabsTrigger>
+                </TabsList>
+
+                {/* 1. Quotation General Info */}
+                <TabsContent value="quotation_general" className="mt-4 space-y-3">
+                  <div className="grid gap-4 lg:grid-cols-2 items-start">
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium">Markdown Editor</Label>
+                      <Textarea
+                        rows={10}
+                        value={form.quotationGeneralInfoMarkdown ?? ""}
+                        disabled={!canEdit}
+                        onChange={(e) => setForm({ ...form, quotationGeneralInfoMarkdown: e.target.value })}
+                        placeholder="| General Information | Details |&#10;|---|---|&#10;| Configuration | Cabin 40’L × 10’W × 8.5’H |&#10;| Transportation | **INCLUDED.** |&#10;| Wiring | Concealed wiring |"
+                        className="font-mono text-xs"
+                      />
+                      <p className="text-[10px] text-muted-foreground">
+                        Supports markdown table syntax (| Label | Value |). Left column renders with bold emphasis in PDF.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-primary flex items-center gap-1.5">
+                        <Eye className="h-3.5 w-3.5" /> Live Vector Preview
+                      </Label>
+                      <div className="min-h-[220px] rounded-xl border border-border/70 bg-background/80 p-3 overflow-y-auto max-h-[260px]">
+                        <MarkdownRenderer content={form.quotationGeneralInfoMarkdown || ""} />
+                      </div>
+                    </div>
+                  </div>
+                </TabsContent>
+
+                {/* 2. Technical Specifications */}
+                <TabsContent value="quotation_tech" className="mt-4 space-y-3">
+                  <div className="grid gap-4 lg:grid-cols-2 items-start">
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium">Markdown Editor</Label>
+                      <Textarea
+                        rows={10}
+                        value={form.quotationTechnicalSpecsMarkdown ?? ""}
+                        disabled={!canEdit}
+                        onChange={(e) => setForm({ ...form, quotationTechnicalSpecsMarkdown: e.target.value })}
+                        placeholder="## Structural Specifications&#10;| Item | Specification |&#10;|---|---|&#10;| Base Frame | 100 x 50 mm C-Channel |&#10;| Wall Panels | 50 mm Sandwich PUF Panel |&#10;&#10;## Electrical Work&#10;- Heavy duty conduits&#10;- Modular switches"
+                        className="font-mono text-xs"
+                      />
+                      <p className="text-[10px] text-muted-foreground">
+                        Supports headings (##), tables, and bullet points.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-primary flex items-center gap-1.5">
+                        <Eye className="h-3.5 w-3.5" /> Live Vector Preview
+                      </Label>
+                      <div className="min-h-[220px] rounded-xl border border-border/70 bg-background/80 p-3 overflow-y-auto max-h-[260px]">
+                        <MarkdownRenderer content={form.quotationTechnicalSpecsMarkdown || ""} />
+                      </div>
+                    </div>
+                  </div>
+                </TabsContent>
+
+                {/* 3. Quotation Terms */}
+                <TabsContent value="quotation_terms" className="mt-4 space-y-3">
+                  <div className="grid gap-4 lg:grid-cols-2 items-start">
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium">Markdown Editor</Label>
+                      <Textarea
+                        rows={10}
+                        value={form.quotationTermsMarkdown ?? ""}
+                        disabled={!canEdit}
+                        onChange={(e) => setForm({ ...form, quotationTermsMarkdown: e.target.value })}
+                        placeholder="1. **GST:** GST @ **18%** extra or included as specified.&#10;2. **Delivery:** Within **3 weeks** from receipt of PO and advance.&#10;3. **Payment Terms:** **50% advance**, **30% on inspection**, and **20% before dispatch**.&#10;4. **Quotation Validity:** **15 days** from quote date."
+                        className="font-mono text-xs"
+                      />
+                      <p className="text-[10px] text-muted-foreground">
+                        Numbered lists render with clean hanging indents. Use **bold** for key business terms.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-primary flex items-center gap-1.5">
+                        <Eye className="h-3.5 w-3.5" /> Live Vector Preview
+                      </Label>
+                      <div className="min-h-[220px] rounded-xl border border-border/70 bg-background/80 p-3 overflow-y-auto max-h-[260px]">
+                        <MarkdownRenderer content={form.quotationTermsMarkdown || ""} />
+                      </div>
+                    </div>
+                  </div>
+                </TabsContent>
+
+                {/* 4. Invoice Terms */}
+                <TabsContent value="invoice_terms" className="mt-4 space-y-3">
+                  <div className="grid gap-4 lg:grid-cols-2 items-start">
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium">Markdown Editor</Label>
+                      <Textarea
+                        rows={10}
+                        value={form.invoiceTermsMarkdown ?? (form.terms || "")}
+                        disabled={!canEdit}
+                        onChange={(e) => {
+                          setForm({
+                            ...form,
+                            invoiceTermsMarkdown: e.target.value,
+                            terms: e.target.value,
+                          });
+                        }}
+                        placeholder="1. Goods once sold will not be taken back.&#10;2. Interest @ **18% p.a.** will be charged on delayed payments after **15 days**.&#10;3. All disputes subject to local jurisdiction."
+                        className="font-mono text-xs"
+                      />
+                      <p className="text-[10px] text-muted-foreground">
+                        Invoices print Terms & Conditions above Settlement Details.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-primary flex items-center gap-1.5">
+                        <Eye className="h-3.5 w-3.5" /> Live Vector Preview
+                      </Label>
+                      <div className="min-h-[220px] rounded-xl border border-border/70 bg-background/80 p-3 overflow-y-auto max-h-[260px]">
+                        <MarkdownRenderer content={form.invoiceTermsMarkdown || form.terms || ""} />
+                      </div>
+                    </div>
+                  </div>
+                </TabsContent>
+
+                {/* 5. Closing Note */}
+                <TabsContent value="closing" className="mt-4 space-y-3">
+                  <div className="grid gap-4 lg:grid-cols-2 items-start">
+                    <div className="space-y-2">
+                      <Field label="Quotation Closing Message">
+                        <Input
+                          value={form.quotationClosingMessage ?? ""}
+                          disabled={!canEdit}
+                          onChange={(e) => setForm({ ...form, quotationClosingMessage: e.target.value })}
+                          placeholder="Thank you for your business. We look forward to working with you."
+                        />
+                      </Field>
+                      <p className="text-[10px] text-muted-foreground">
+                        Printed on the final page of quotations directly above the Authorized Signatory block.
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-border/50 bg-muted/20 p-4 text-xs italic text-muted-foreground">
+                      "{form.quotationClosingMessage || "Thank you for your business. We look forward to working with you."}"
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Banking & Settlement Information */}
+        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm lg:col-span-3">
           <CardHeader>
             <CardTitle className="text-base font-semibold">Banking & Settlement Information</CardTitle>
             <CardDescription className="text-xs">
-              Printed on customer invoices and quotations for direct payment settlement
+              Configured bank account details rendered on invoices and quotations in a clean 2-column settlement table
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
-            <Field label="Bank Name">
+          <CardContent className="grid gap-4 sm:grid-cols-3">
+            <Field label="Account Holder Name *">
               <Input
-                value={form.bankName ?? ""}
+                value={form.accountHolderName ?? form.bankAccountHolderName ?? ""}
                 disabled={!canEdit}
-                onChange={(e) => setForm({ ...form, bankName: e.target.value })}
-                placeholder="HDFC Bank"
+                onChange={(e) => setForm({ ...form, accountHolderName: e.target.value, bankAccountHolderName: e.target.value })}
+                placeholder="e.g. KH Portable Cabins"
               />
             </Field>
-            <Field label="Branch Name">
-              <Input
-                value={form.bankBranch ?? ""}
-                disabled={!canEdit}
-                onChange={(e) => setForm({ ...form, bankBranch: e.target.value })}
-                placeholder="MG Road Branch"
-              />
-            </Field>
-            <Field label="Account Number">
+            <Field label="Account Number *">
               <Input
                 value={form.bankAccountNo ?? ""}
                 disabled={!canEdit}
                 onChange={(e) => setForm({ ...form, bankAccountNo: e.target.value })}
-                placeholder="50200012345678"
+                placeholder="e.g. 40057061196"
               />
             </Field>
-            <Field label="IFSC Code">
+            <Field label="Bank Name *">
+              <Input
+                value={form.bankName ?? ""}
+                disabled={!canEdit}
+                onChange={(e) => setForm({ ...form, bankName: e.target.value })}
+                placeholder="e.g. State Bank of India"
+              />
+            </Field>
+            <Field label="IFSC Code *">
               <Input
                 value={form.bankIfsc ?? ""}
                 disabled={!canEdit}
-                onChange={(e) => setForm({ ...form, bankIfsc: e.target.value })}
-                placeholder="HDFC0001234"
+                onChange={(e) => setForm({ ...form, bankIfsc: e.target.value.toUpperCase() })}
+                placeholder="e.g. SBIN0017782"
               />
             </Field>
-            <Field label="UPI ID / VPA">
+            <Field label="Branch Name (Optional)">
+              <Input
+                value={form.bankBranch ?? ""}
+                disabled={!canEdit}
+                onChange={(e) => setForm({ ...form, bankBranch: e.target.value })}
+                placeholder="e.g. Industrial Area Branch"
+              />
+            </Field>
+            <Field label="Account Type (Optional)">
+              <Input
+                value={form.bankAccountType ?? ""}
+                disabled={!canEdit}
+                onChange={(e) => setForm({ ...form, bankAccountType: e.target.value })}
+                placeholder="e.g. Current Account"
+              />
+            </Field>
+            <Field label="UPI ID / VPA (Optional)">
               <Input
                 value={form.upiId ?? ""}
                 disabled={!canEdit}
                 onChange={(e) => setForm({ ...form, upiId: e.target.value })}
-                placeholder="company@hdfcbank"
+                placeholder="e.g. company@sbi"
               />
             </Field>
-          </CardContent>
-        </Card>
-
-        {/* Terms */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">Default Terms & Notes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Field label="Standard Invoice Terms">
-              <Textarea
-                rows={5}
-                value={form.terms ?? ""}
+            <Field label="SWIFT Code (Optional)">
+              <Input
+                value={form.bankSwiftCode ?? ""}
                 disabled={!canEdit}
-                onChange={(e) => setForm({ ...form, terms: e.target.value })}
-                placeholder="1. Goods once sold will not be taken back.&#10;2. Payment due within 15 days of invoice date."
+                onChange={(e) => setForm({ ...form, bankSwiftCode: e.target.value.toUpperCase() })}
+                placeholder="e.g. SBININBB123"
               />
             </Field>
           </CardContent>

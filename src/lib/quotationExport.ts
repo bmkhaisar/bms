@@ -14,6 +14,7 @@ import { formatDate, formatMoney, numberToWordsIndian } from "./format.ts";
 import { getLogoDataUrl, getLogoBytes } from "./logoData.ts";
 import { formatCompanyAddress } from "./companyAddress.ts";
 import { resolveDocumentModel } from "./documentModel.ts";
+import { extractTableRowsFromMarkdown, extractTermsFromMarkdown, parseMarkdownToBlocks } from "./markdownDoc.ts";
 
 const FOOTER_MARK = "Built by MMA";
 // jsPDF's built-in Helvetica lacks the ₹ glyph (renders as superscript 1).
@@ -499,10 +500,15 @@ async function drawTermsPage(ctx: PdfContext) {
   doc.line(margin, y, pageW - margin, y);
   y += 6;
 
-  // 1. Terms & Conditions Section (Hanging Indent, Auto-Pagination, Structured Support)
-  if (quotation.includeTerms !== false) {
+  // 1. Terms & Conditions Section (Hanging Indent, Auto-Pagination, Markdown & Structured Support)
+  const showTerms = quotation.includeTerms !== false &&
+    ((quotation as any).showTerms !== false) &&
+    ((company as any).showQuotationTerms !== false || !!quotation.structuredTermsSnapshot?.length || !!quotation.termsSnapshot?.length || !!quotation.termsMarkdown);
+
+  if (showTerms) {
     let termItems: Array<{ text: string; format?: string; title?: string }> = [];
 
+    const rawMd = quotation.termsMarkdown || quotation.terms || (company as any).quotationTermsMarkdown || company.terms || "";
     if (quotation.structuredTermsSnapshot?.length) {
       for (const sec of quotation.structuredTermsSnapshot) {
         if (sec.title) termItems.push({ text: sec.title, title: sec.title });
@@ -512,10 +518,15 @@ async function drawTermsPage(ctx: PdfContext) {
       }
     } else if (quotation.termsSnapshot?.length) {
       termItems = quotation.termsSnapshot.map(t => ({ text: t, format: "numbered" }));
-    } else {
-      const raw = quotation.terms || company.terms || "";
-      const lines = raw.split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
-      termItems = lines.map(l => ({ text: l.replace(/^\d+[.)]\s*/, ""), format: "numbered" }));
+    } else if (rawMd) {
+      const extracted = extractTermsFromMarkdown(rawMd);
+      termItems = extracted.map(t => {
+        const isBullet = t.startsWith("- ") || t.startsWith("* ");
+        return {
+          text: t.replace(/^(\d+[.)]|[-*])\s*/, ""),
+          format: isBullet ? "bullet" : "numbered",
+        };
+      });
     }
 
     if (termItems.length > 0) {
@@ -548,12 +559,12 @@ async function drawTermsPage(ctx: PdfContext) {
         const isNumbered = t.format !== "bullet" && t.format !== "paragraph";
         const isBullet = t.format === "bullet";
         const textIndent = isNumbered ? 9 : isBullet ? 7 : 2;
-        const bulletWidth = isNumbered ? 7 : isBullet ? 5 : 0;
         const maxTextW = pageW - margin * 2 - textIndent - 2;
 
         doc.setFont(template.fontFamily, "normal");
         doc.setFontSize(8.5);
-        const textLines = doc.splitTextToSize(body, maxTextW);
+        const cleanBody = body.replace(/\*\*(.+?)\*\*/g, "$1");
+        const textLines = doc.splitTextToSize(cleanBody, maxTextW);
 
         // Check if full term fits on current page
         const termH = textLines.length * 3.8 + 2;
@@ -586,15 +597,21 @@ async function drawTermsPage(ctx: PdfContext) {
   }
 
   // 2. Bank Details Section (PRD §§ 8-9, 78, 79 — Clean bordered table)
-  if (quotation.includeBankDetails !== false) {
+  const showBank = quotation.includeBankDetails !== false &&
+    ((quotation as any).showBankDetails !== false) &&
+    ((company as any).showQuotationBankDetails !== false || !!quotation.bankDetailsSnapshot || !!quotation.bankSnapshot);
+
+  if (showBank) {
     const rawBank: any = quotation.bankDetailsSnapshot || quotation.bankSnapshot || (
       company.bankName ? {
         bankName: company.bankName,
-        accountName: (company as any).bankAccountName || (company as any).legalName || company.name,
+        accountName: (company as any).bankAccountHolderName || (company as any).accountHolderName || (company as any).bankAccountName || (company as any).legalName || company.name,
         accountNo: company.bankAccount || (company as any).bankAccountNo,
         ifsc: company.bankIfsc,
         branch: (company as any).bankBranch,
+        accountType: (company as any).bankAccountType,
         upi: (company as any).upiId,
+        swift: (company as any).bankSwiftCode,
       } : null
     );
 
@@ -611,15 +628,15 @@ async function drawTermsPage(ctx: PdfContext) {
       y += 3.5;
 
       const bankRows: [string, string][] = [
-        ["Account Holder Name", rawBank.accountName || rawBank.accountHolderName || (company as any).legalName || company.name || "Business Entity"],
+        ["Account Holder Name", rawBank.accountHolderName || rawBank.accountName || (company as any).bankAccountHolderName || (company as any).accountHolderName || (company as any).legalName || company.name || "Business Entity"],
         ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || "—"],
         ["Bank Name", rawBank.bankName || "—"],
         ["IFSC Code", rawBank.ifsc || rawBank.bankIfsc || "—"],
       ];
       if (rawBank.branch) bankRows.push(["Branch", rawBank.branch]);
-      if (rawBank.accountType) bankRows.push(["Account Type", rawBank.accountType]);
-      if (rawBank.upi) bankRows.push(["UPI ID / VPA", rawBank.upi]);
-      if (rawBank.swift) bankRows.push(["SWIFT Code", rawBank.swift]);
+      if (rawBank.accountType || (company as any).bankAccountType) bankRows.push(["Account Type", rawBank.accountType || (company as any).bankAccountType]);
+      if (rawBank.upi || (company as any).upiId) bankRows.push(["UPI ID / VPA", rawBank.upi || (company as any).upiId]);
+      if (rawBank.swift || (company as any).bankSwiftCode) bankRows.push(["SWIFT Code", rawBank.swift || (company as any).bankSwiftCode]);
 
       autoTable(doc, {
         body: bankRows,
@@ -705,9 +722,17 @@ export async function exportQuotationPDF(
   await drawCover(ctx);
 
   // 2. Supplementary Section: General Information (PRD §§ 8, 9, 81 — Quotation only)
-  if (quotation.includeGeneralInfo !== false) {
+  const showGenInfo = quotation.includeGeneralInfo !== false &&
+    ((quotation as any).showGeneralInfo !== false) &&
+    ((company as any).showQuotationGeneralInfo !== false || !!quotation.generalInformationSnapshot?.length || !!quotation.generalInfoSnapshot?.length || !!(quotation as any).generalInfoMarkdown);
+
+  if (showGenInfo) {
     let genRows: Array<{ label: string; value: string; bullets?: string[] }> = [];
-    if (quotation.structuredSections) {
+    const genMd = (quotation as any).generalInfoMarkdown || (company as any).quotationGeneralInfoMarkdown;
+
+    if (genMd) {
+      genRows = extractTableRowsFromMarkdown(genMd);
+    } else if (quotation.structuredSections) {
       const sec = quotation.structuredSections.find(s => s.type === "GENERAL_INFO");
       if (sec && sec.rows) {
         genRows = sec.rows.map(r => ({
@@ -741,10 +766,42 @@ export async function exportQuotationPDF(
   }
 
   // 3. Supplementary Section: Technical / Fabrication Specifications (PRD §§ 8, 9, 82 — Quotation only)
-  if (quotation.includeTechSpecs !== false) {
-    let specSections: Array<{ heading: string; subtitle?: string; rows: Array<{ label: string; value: string }> }> = [];
+  const showTechSpecs = quotation.includeTechSpecs !== false &&
+    ((quotation as any).showTechSpecs !== false) &&
+    ((company as any).showQuotationTechnicalSpecs !== false || !!quotation.technicalSpecificationSnapshot?.length || !!quotation.techSpecSnapshot?.length || !!quotation.technicalSpecsMarkdown);
 
-    if (quotation.structuredSections) {
+  if (showTechSpecs) {
+    let specSections: Array<{ heading: string; subtitle?: string; rows: Array<{ label: string; value: string }> }> = [];
+    const techMd = quotation.technicalSpecsMarkdown || (company as any).quotationTechnicalSpecsMarkdown;
+
+    if (techMd) {
+      const blocks = parseMarkdownToBlocks(techMd);
+      let currentSection: { heading: string; rows: Array<{ label: string; value: string }> } = {
+        heading: "Technical Specifications",
+        rows: [],
+      };
+      for (const b of blocks) {
+        if (b.type === "HEADING") {
+          if (currentSection.rows.length > 0) {
+            specSections.push(currentSection);
+          }
+          currentSection = { heading: b.text, rows: [] };
+        } else if (b.type === "TABLE") {
+          for (const r of b.rows) {
+            if (r.length >= 2) {
+              currentSection.rows.push({ label: r[0], value: r[1] });
+            }
+          }
+        } else if (b.type === "BULLET_LIST" || b.type === "NUMBERED_LIST") {
+          for (const item of (b as any).items) {
+            currentSection.rows.push({ label: "Specification", value: item.text });
+          }
+        }
+      }
+      if (currentSection.rows.length > 0) {
+        specSections.push(currentSection);
+      }
+    } else if (quotation.structuredSections) {
       const specs = quotation.structuredSections.filter(s => s.type === "SPEC_TABLE");
       specSections = specs.map(s => ({
         heading: s.title,

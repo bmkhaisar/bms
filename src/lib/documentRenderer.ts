@@ -687,8 +687,59 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   doc.text(`Amount in words: ${words}`, margin, y);
   y += 6;
 
-  // 7. Settlement & Banking Details
-  if (docData.receiptDetails || (docData.includeBankDetails !== false && (docData.bankDetailsSnapshot || docData.bankSnapshot || comp.bankName || comp.upiId))) {
+  // 7. Terms & Conditions (Rendered before Bank Details, supports Markdown lists, hanging indent)
+  const showTerms = docData.includeTerms !== false &&
+    (docData.termsSnapshot?.length || (docData as any).showInvoiceTerms !== false && (comp as any).showInvoiceTerms !== false);
+
+  if (showTerms && (docData.terms || docData.termsSnapshot?.length || (comp as any).invoiceTermsMarkdown || comp.terms)) {
+    if (y > pageH - 35) {
+      doc.addPage();
+      renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
+      y = margin;
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(107, 114, 128);
+    doc.text("TERMS & CONDITIONS", margin, y);
+    y += 4;
+
+    const rawTerms = docData.terms || (comp as any).invoiceTermsMarkdown || comp.terms || "";
+    const termLines: string[] = docData.termsSnapshot?.length
+      ? docData.termsSnapshot
+      : rawTerms.split(/\r?\n+/).map((l: string) => l.trim()).filter(Boolean);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(107, 114, 128);
+
+    for (let i = 0; i < termLines.length; i++) {
+      const rawLine = termLines[i];
+      const isBullet = rawLine.startsWith("- ") || rawLine.startsWith("* ");
+      const cleanText = rawLine.replace(/^(\d+[.)]|[-*])\s*/, "").replace(/\*\*(.+?)\*\*/g, "$1");
+      const lines = doc.splitTextToSize(cleanText, pageW - margin * 2 - 8);
+      const termH = lines.length * 3.4 + 1.5;
+
+      if (y + termH > pageH - 25) {
+        doc.addPage();
+        renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
+        y = margin;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.text(isBullet ? "•" : `${i + 1}.`, margin, y);
+      doc.setFont("helvetica", "normal");
+      doc.text(lines, margin + 6, y);
+      y += termH;
+    }
+    y += 2;
+  }
+
+  // 8. Settlement & Banking Details (Rendered after Terms & Conditions)
+  const showBank = docData.includeBankDetails !== false &&
+    (docData.bankDetailsSnapshot || docData.bankSnapshot || (docData as any).showInvoiceBankDetails !== false && (comp as any).showInvoiceBankDetails !== false);
+
+  if (showBank && (docData.receiptDetails || (docData.bankDetailsSnapshot || docData.bankSnapshot || comp.bankName || comp.upiId))) {
     if (y > pageH - 45) {
       doc.addPage();
       renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
@@ -721,7 +772,7 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       }
     } else {
       const rawBank: any = docData.bankDetailsSnapshot || docData.bankSnapshot || (comp.bankName ? {
-        accountName: (comp as any).bankAccountName || comp.legalName || comp.name,
+        accountName: (comp as any).bankAccountHolderName || (comp as any).accountHolderName || (comp as any).bankAccountName || comp.legalName || comp.name,
         accountNo: comp.bankAccountNo || (comp as any).bankAccount,
         bankName: comp.bankName,
         ifsc: comp.bankIfsc,
@@ -731,7 +782,7 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
 
       if (rawBank && (rawBank.bankName || rawBank.accountNo)) {
         const bankRows: [string, string][] = [
-          ["Account Holder Name", rawBank.accountName || rawBank.accountHolderName || comp.legalName || comp.name || "Business Entity"],
+          ["Account Holder Name", rawBank.accountHolderName || rawBank.accountName || (comp as any).bankAccountHolderName || (comp as any).accountHolderName || comp.legalName || comp.name || "Business Entity"],
           ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || "—"],
           ["Bank Name", rawBank.bankName || "—"],
           ["IFSC Code", rawBank.ifsc || rawBank.bankIfsc || "—"],
@@ -750,48 +801,6 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
         y = (doc as any).lastAutoTable.finalY + 4;
       }
     }
-  }
-
-  // 8. Terms & Conditions (Hanging indent, full multi-page support without slicing)
-  if (docData.includeTerms !== false && (docData.terms || docData.termsSnapshot?.length || comp.terms)) {
-    if (y > pageH - 35) {
-      doc.addPage();
-      renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
-      y = margin;
-    }
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(107, 114, 128);
-    doc.text("TERMS & CONDITIONS", margin, y);
-    y += 4;
-
-    const termLines: string[] = docData.termsSnapshot?.length
-      ? docData.termsSnapshot
-      : (docData.terms || comp.terms || "").split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
-    doc.setTextColor(107, 114, 128);
-
-    for (let i = 0; i < termLines.length; i++) {
-      const t = termLines[i].replace(/^\d+[.)]\s*/, "");
-      const lines = doc.splitTextToSize(t, pageW - margin * 2 - 8);
-      const termH = lines.length * 3.4 + 1.5;
-
-      if (y + termH > pageH - 25) {
-        doc.addPage();
-        renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
-        y = margin;
-      }
-
-      doc.setFont("helvetica", "bold");
-      doc.text(`${i + 1}.`, margin, y);
-      doc.setFont("helvetica", "normal");
-      doc.text(lines, margin + 6, y);
-      y += termH;
-    }
-    y += 2;
   }
 
   // 9. Authorized Signatory Block

@@ -20,6 +20,21 @@ export interface CompanySettings {
   bankBranch?: string;
   upiId?: string;
   terms?: string;
+  quotationGeneralInfoMarkdown?: string;
+  quotationTechnicalSpecsMarkdown?: string;
+  quotationTermsMarkdown?: string;
+  invoiceTermsMarkdown?: string;
+  quotationClosingMessage?: string;
+  showQuotationGeneralInfo?: boolean;
+  showQuotationTechnicalSpecs?: boolean;
+  showQuotationTerms?: boolean;
+  showInvoiceTerms?: boolean;
+  showQuotationBankDetails?: boolean;
+  showInvoiceBankDetails?: boolean;
+  accountHolderName?: string;
+  bankAccountHolderName?: string;
+  bankAccountType?: string;
+  bankSwiftCode?: string;
   declaration?: string;
   authorizedSignatory?: string;
   signature?: string; // data URL
@@ -299,6 +314,9 @@ export interface Quotation {
   structuredTermsSnapshot?: any[];
   generalInformationSnapshot?: any[];
   technicalSpecificationSnapshot?: any[];
+  generalInformationMarkdown?: string;
+  technicalSpecsMarkdown?: string;
+  termsMarkdown?: string;
   closingMessage?: string;
   // References
   generalInfoTemplateId?: ID;
@@ -349,6 +367,7 @@ export interface Invoice {
   advanceGstAdjusted?: number;
   notes?: string; terms?: string;
   termsSnapshot?: string[];
+  termsMarkdown?: string;
   structuredTerms?: StructuredTermItem[];
   structuredTermsSnapshot?: any[];
   termsTemplateId?: ID;
@@ -531,6 +550,7 @@ export interface BankAccount {
   id: ID;
   bankName: string;
   accountName: string;
+  accountHolderName?: string;
   accountNo: string;
   ifsc: string;
   branch?: string;

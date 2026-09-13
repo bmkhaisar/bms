@@ -16,8 +16,12 @@ export interface FormattedCompanyAddress {
   cin?: string;
   /** Complete ordered array of address lines to print directly in headers */
   headerAddressLines: string[];
-  /** Combined contact details line */
+  /** Combined contact details line (Phone & Email) */
   contactLine?: string;
+  /** Dedicated GSTIN line (GSTIN: XXXXX) */
+  gstinLine?: string;
+  /** Dedicated PAN line (PAN: XXXXX) */
+  panLine?: string;
   /** Full single-string address representation */
   fullAddressText: string;
 }
@@ -102,15 +106,17 @@ export function formatCompanyAddress(
     }
   }
 
-  // 5. Assemble contact line
+  // 5. Assemble contact line (strictly Phone & Email - PRD § 26-28 single GSTIN render)
   const contactParts: string[] = [];
   if (phone) contactParts.push(`Phone: ${phone}`);
   if (email) contactParts.push(`Email: ${email}`);
-  if (gstin) contactParts.push(`GSTIN: ${gstin}`);
-  if (pan) contactParts.push(`PAN: ${pan}`);
   const contactLine = contactParts.join(" · ");
 
-  // 6. Full address text
+  // 6. Tax Lines
+  const gstinLine = gstin ? `GSTIN: ${gstin}` : undefined;
+  const panLine = pan ? `PAN: ${pan}` : undefined;
+
+  // 7. Full address text
   const fullAddressText = [...headerAddressLines].join("\n");
 
   return {
@@ -125,6 +131,8 @@ export function formatCompanyAddress(
     cin: cin || undefined,
     headerAddressLines,
     contactLine: contactLine || undefined,
+    gstinLine,
+    panLine,
     fullAddressText,
   };
 }

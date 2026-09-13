@@ -8,7 +8,6 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LineItemsEditor } from "./LineItemsEditor";
-import { StructuredTermsEditor } from "./StructuredTermsEditor";
 import { computeLine, computeTotals, applyStockDelta } from "@/lib/calc";
 import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge, AddressSnapshot, BankAccount, TermsTemplate, StructuredTermItem } from "@/lib/db";
 import { db, nextNumber, uid, getCompany } from "@/lib/db";
@@ -48,7 +47,7 @@ import { getPartyFinancialInsight } from "@/modules/accounting/services/partyAdv
 import { validateDocumentTotals } from "@/modules/tax/canonicalCalculation";
 import { formatAddressLines } from "./AddressDrawer";
 import { firebaseDb } from "@/config/firebase";
-import { ref, remove as rtdbRemove } from "firebase/database";
+import { ref, remove as rtdbRemove, onValue } from "firebase/database";
 import { removeCachedEntity } from "@/modules/sync/dexieCache";
 import { saveDraft, loadDraft, clearDraft } from "@/lib/draftAutosave";
 
@@ -150,6 +149,7 @@ export function DocumentListPage<T extends AnyDoc>({
       date: doc.date,
       dueDate: (doc as Invoice).dueDate,
       company: {
+        ...docCompany,
         name: docCompany.name,
         legalName: docCompany.legalName || docCompany.name,
         address: docCompany.address,
@@ -164,8 +164,18 @@ export function DocumentListPage<T extends AnyDoc>({
         bankName: docCompany.bankName,
         bankAccountNo: docCompany.bankAccount || docCompany.bankAccountNo,
         bankIfsc: docCompany.bankIfsc,
+        bankAccountHolderName: (docCompany as any).bankAccountHolderName || (docCompany as any).accountHolderName,
+        accountHolderName: (docCompany as any).accountHolderName || (docCompany as any).bankAccountHolderName,
         upiId: docCompany.upiId,
         terms: docCompany.terms,
+        invoiceTermsMarkdown: (docCompany as any).invoiceTermsMarkdown,
+        quotationTermsMarkdown: (docCompany as any).quotationTermsMarkdown,
+        showInvoiceTerms: (docCompany as any).showInvoiceTerms,
+        showInvoiceBankDetails: (docCompany as any).showInvoiceBankDetails,
+        showQuotationTerms: (docCompany as any).showQuotationTerms,
+        showQuotationBankDetails: (docCompany as any).showQuotationBankDetails,
+        showQuotationGeneralInfo: (docCompany as any).showQuotationGeneralInfo,
+        showQuotationTechnicalSpecs: (docCompany as any).showQuotationTechnicalSpecs,
         authorizedSignatory: docCompany.authorizedSignatory,
         designation: docCompany.designation,
         signatureMode: docCompany.signatureMode,
@@ -218,6 +228,13 @@ export function DocumentListPage<T extends AnyDoc>({
       balance: (doc as Invoice).balance,
       notes: doc.notes,
       terms: (doc as any).terms,
+      termsSnapshot: (doc as any).termsSnapshot,
+      structuredTerms: (doc as any).structuredTerms,
+      includeTerms: (doc as any).includeTerms,
+      bankAccountId: (doc as any).bankAccountId,
+      bankSnapshot: (doc as any).bankSnapshot || (doc as any).bankDetailsSnapshot,
+      bankDetailsSnapshot: (doc as any).bankDetailsSnapshot || (doc as any).bankSnapshot,
+      includeBankDetails: (doc as any).includeBankDetails,
       enableGst: isTaxDoc,
       watermarkMode: (docCompany as any).watermarkSetting || "off",
     };
@@ -318,6 +335,24 @@ export function DocumentListPage<T extends AnyDoc>({
       return () => clearTimeout(timer);
     }
   }, [open, editing, kind]);
+
+  // Canonical Realtime Firebase listener for company documents (PRD § 41, 42, 45)
+  useEffect(() => {
+    if (!activeCompany?.id || !firebaseDb) return;
+    const collectionName = kind === "invoice" ? "invoices" : kind === "quotation" ? "quotations" : "purchases";
+    const collectionRef = ref(firebaseDb, `companyData/${activeCompany.id}/${collectionName}`);
+    const unsub = onValue(collectionRef, async (snap) => {
+      if (snap.exists()) {
+        const val = snap.val();
+        const records = Object.values(val) as any[];
+        if (records.length > 0) {
+          const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
+          await (table as any).bulkPut(records);
+        }
+      }
+    });
+    return () => unsub();
+  }, [activeCompany?.id, kind]);
 
   // Auto-update Intra/Inter state when party or place of supply changes
   function onPartySelect(selectedPartyId: string) {
@@ -600,6 +635,7 @@ export function DocumentListPage<T extends AnyDoc>({
             toast.error(mapFriendlyError(res.error));
             return;
           }
+          await db().invoices.put((res as any).invoice || inv);
         } else {
           const res = await postInvoiceTransaction({
             companyId: activeCompany.id,
@@ -615,6 +651,7 @@ export function DocumentListPage<T extends AnyDoc>({
             toast.error(mapFriendlyError(res.error));
             return;
           }
+          await db().invoices.put(res.invoice || inv);
         }
       } else {
         await db().invoices.put(inv);
@@ -681,6 +718,7 @@ export function DocumentListPage<T extends AnyDoc>({
           toast.error(`Posting failed: ${res.error}`);
           return;
         }
+        await db().purchases.put((res as any).purchase || pu);
       } else {
         await db().purchases.put(pu);
       }
@@ -1555,86 +1593,16 @@ export function DocumentListPage<T extends AnyDoc>({
 
 
               {kind === "invoice" && (
-                <div className="space-y-4">
-                  <StructuredTermsEditor
-                    enabled={(editing as Invoice).includeTerms !== false}
-                    onEnabledChange={(v) => setEditing({ ...editing, includeTerms: v } as T)}
-                    terms={(editing as Invoice).structuredTerms || []}
-                    onChange={(terms) => setEditing({
-                      ...editing,
-                      structuredTerms: terms,
-                      termsSnapshot: terms.map(t => t.text),
-                      terms: terms.map((t, i) => `${i + 1}. ${t.text}`).join("\n"),
-                    } as T)}
-                    templates={termsTemplates}
-                    onApplyTemplate={(templateId) => {
-                      const tmpl = termsTemplates.find(t => t.id === templateId);
-                      if (!tmpl) return;
-                      const items: StructuredTermItem[] = (tmpl.structuredTerms && tmpl.structuredTerms.length > 0)
-                        ? tmpl.structuredTerms.map((t, idx) => ({ ...t, id: uid(), order: idx + 1 }))
-                        : (tmpl.terms || []).filter(t => t.enabled).map((t, idx) => ({
-                            id: uid(),
-                            order: idx + 1,
-                            text: t.text,
-                            format: "NUMBERED",
-                          }));
-                      setEditing({
-                        ...editing,
-                        termsTemplateId: templateId,
-                        structuredTerms: items,
-                        termsSnapshot: items.map(x => x.text),
-                        terms: items.map((x, i) => `${i + 1}. ${x.text}`).join("\n"),
-                      } as T);
-                    }}
-                    documentType="invoice"
-                  />
-
-                  {/* Bank Details Selector (PRD Correction #6, #26) */}
-                  <Card className="p-3.5 space-y-3">
-                    <div className="flex items-center justify-between border-b pb-2">
-                      <div>
-                        <div className="text-xs font-semibold text-foreground">Bank Settlement Details</div>
-                        <div className="text-[11px] text-muted-foreground">Select bank account to print on invoice</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor="inv-include-bank" className="text-xs text-muted-foreground">Show on Invoice</Label>
-                        <Switch
-                          id="inv-include-bank"
-                          checked={(editing as Invoice).includeBankDetails !== false}
-                          onCheckedChange={(v) => setEditing({ ...editing, includeBankDetails: v } as T)}
-                        />
-                      </div>
+                <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+                  <div>
+                    <div className="text-xs font-semibold text-foreground">Terms & Bank Details: Managed in Company Settings</div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                      Invoice Terms & Conditions and Bank Settlement Details are centrally managed and automatically included based on company defaults.
                     </div>
-
-                    {(editing as Invoice).includeBankDetails !== false && (
-                      <div className="space-y-2">
-                        <Select
-                          value={(editing as Invoice).bankAccountId || ""}
-                          onValueChange={(bankId) => {
-                            const b = bankAccounts.find(x => x.id === bankId);
-                            setEditing({
-                              ...editing,
-                              bankAccountId: bankId,
-                              bankSnapshot: b,
-                              bankDetailsSnapshot: b,
-                            } as T);
-                          }}
-                        >
-                          <SelectTrigger className="h-8 text-xs">
-                            <SelectValue placeholder="Select company bank account" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {bankAccounts.length === 0 && <SelectItem value="__none__" disabled>No bank accounts configured</SelectItem>}
-                            {bankAccounts.map(b => (
-                              <SelectItem key={b.id} value={b.id} className="text-xs">
-                                {b.bankName} — {b.accountNo} ({b.accountName}) {b.isDefault ? " ★" : ""}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
-                  </Card>
+                  </div>
+                  <Button variant="outline" size="sm" asChild className="text-xs shrink-0">
+                    <a href="/settings" target="_blank" rel="noreferrer">Company Settings</a>
+                  </Button>
                 </div>
               )}
 

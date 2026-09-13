@@ -26,6 +26,8 @@ export interface PostingResult {
   success: boolean;
   voucherId?: string;
   documentId?: string;
+  invoice?: Invoice;
+  purchase?: Purchase;
   error?: string;
   recomputedGrandTotal?: number;
   discrepancy?: boolean;
@@ -314,7 +316,7 @@ export async function postInvoiceTransaction(params: {
       console.warn("Price history logging failed non-fatally:", phErr);
     }
 
-    return { success: true, voucherId, documentId: invoice.id };
+    return { success: true, voucherId, documentId: invoice.id, invoice: updatedInvoice };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Failed to post invoice voucher:", err);
@@ -523,7 +525,7 @@ export async function postPurchaseTransaction(params: {
       console.warn("Purchase price history logging failed non-fatally:", phErr);
     }
 
-    return { success: true, voucherId, documentId: purchase.id };
+    return { success: true, voucherId, documentId: purchase.id, purchase: updatedPurchase };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Failed to post purchase voucher:", err);

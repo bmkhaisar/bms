@@ -153,15 +153,6 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
             <div className="text-[11px]">
               <div className="font-semibold">Amount in words</div>
               <div className="italic">{numberToWordsIndian(grandTotal)}</div>
-              {company.bankName && (
-                <div className="mt-3 rounded border p-2">
-                  <div className="font-semibold">Bank Details</div>
-                  <div>Bank: {company.bankName}</div>
-                  <div>A/C: <span className="font-mono">{company.bankAccount}</span></div>
-                  <div>IFSC: <span className="font-mono">{company.bankIfsc}</span> {company.bankBranch && `· ${company.bankBranch}`}</div>
-                  {company.upiId && <div>UPI: <span className="font-mono">{company.upiId}</span></div>}
-                </div>
-              )}
             </div>
             <div>
               <table className="w-full text-[11px]">
@@ -193,18 +184,69 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
         </>
       )}
 
-      <footer className="mt-6 grid grid-cols-2 gap-4 border-t pt-3 text-[10px]">
-        <div>
-          {company.terms && (<><div className="font-semibold">Terms & Conditions</div><div className="whitespace-pre-line">{company.terms}</div></>)}
-          {company.declaration && (<div className="mt-2"><span className="font-semibold">Declaration: </span>{company.declaration}</div>)}
-        </div>
-        <div className="flex justify-end">
-          <SignatoryBlock
-            company={company as any}
-            signatoryOverride={(doc as any).signatoryOverride}
-            signatorySnapshot={(doc as any).signatorySnapshot}
-            documentDate={(doc as any).date}
-          />
+      {/* Document Section Order: Terms & Conditions -> Bank Settlement -> Signatory */}
+      <footer className="mt-6 space-y-3 border-t pt-3 text-[10px]">
+        {/* 1. Terms & Conditions */}
+        {((doc as any).terms || company.terms || (company as any).invoiceTermsMarkdown) && (
+          <div className="rounded border border-gray-200 p-2 bg-gray-50/50">
+            <div className="font-semibold text-gray-900 mb-1">Terms & Conditions</div>
+            <div className="text-gray-700 whitespace-pre-line text-[11px]">
+              {(doc as any).terms || (company as any).invoiceTermsMarkdown || company.terms}
+            </div>
+          </div>
+        )}
+
+        {/* 2. Bank Settlement Details */}
+        {(company.bankName || (doc as any).bankSnapshot || (doc as any).bankDetailsSnapshot) && (
+          <div className="rounded border border-gray-200 p-2">
+            <div className="font-semibold text-gray-900 mb-1">Payment / Bank Settlement Details</div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-gray-700">
+              <div>
+                <span className="text-gray-500">Account Holder:</span>{" "}
+                <span className="font-medium">
+                  {(doc as any).bankDetailsSnapshot?.accountHolderName || (doc as any).bankSnapshot?.accountHolderName || company.bankAccountHolderName || (company as any).accountHolderName || compAddr.companyName}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500">Bank Name:</span>{" "}
+                <span className="font-medium">
+                  {(doc as any).bankDetailsSnapshot?.bankName || (doc as any).bankSnapshot?.bankName || company.bankName}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500">Account Number:</span>{" "}
+                <span className="font-mono font-medium">
+                  {(doc as any).bankDetailsSnapshot?.accountNo || (doc as any).bankSnapshot?.accountNo || company.bankAccount}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500">IFSC Code:</span>{" "}
+                <span className="font-mono font-medium">
+                  {(doc as any).bankDetailsSnapshot?.ifscCode || (doc as any).bankSnapshot?.ifscCode || company.bankIfsc}
+                </span>
+              </div>
+              {company.upiId && (
+                <div>
+                  <span className="text-gray-500">UPI ID:</span>{" "}
+                  <span className="font-mono font-medium">{company.upiId}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-4 items-end pt-1">
+          <div>
+            {company.declaration && (<div><span className="font-semibold">Declaration: </span>{company.declaration}</div>)}
+          </div>
+          <div className="flex justify-end">
+            <SignatoryBlock
+              company={company as any}
+              signatoryOverride={(doc as any).signatoryOverride}
+              signatorySnapshot={(doc as any).signatorySnapshot}
+              documentDate={(doc as any).date}
+            />
+          </div>
         </div>
       </footer>
     </div>

@@ -478,19 +478,19 @@ function BanksMaster() {
       </div>
       {items.length === 0 ? <Empty text="No bank accounts yet" /> : (
         <Table>
-          <TableHeader><TableRow><TableHead>Bank</TableHead><TableHead>A/C Name</TableHead><TableHead>A/C No.</TableHead><TableHead>IFSC</TableHead><TableHead className="w-40 text-right">Actions</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Bank</TableHead><TableHead>Account Holder</TableHead><TableHead>A/C No.</TableHead><TableHead>IFSC Code</TableHead><TableHead className="w-40 text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>
             {items.map(b => (
               <TableRow key={b.id}>
                 <TableCell className="font-medium">{b.bankName} {b.isDefault && <Badge className="ml-2">Default</Badge>}</TableCell>
-                <TableCell>{b.accountName}</TableCell>
+                <TableCell>{b.accountHolderName || b.accountName}</TableCell>
                 <TableCell className="font-mono">{b.accountNo}</TableCell>
                 <TableCell className="font-mono">{b.ifsc}</TableCell>
                 <TableCell className="text-right">
                   <Button size="icon" variant="ghost" onClick={() => setDefault(b.id)} title={b.isDefault ? "Unset default" : "Set default"}>
                     {b.isDefault ? <StarOff className="h-4 w-4" /> : <Star className="h-4 w-4" />}
                   </Button>
-                  <Button size="icon" variant="ghost" onClick={() => setEditing({ ...b })}><Pencil className="h-4 w-4" /></Button>
+                  <Button size="icon" variant="ghost" onClick={() => setEditing({ ...b, accountHolderName: b.accountHolderName || b.accountName })}><Pencil className="h-4 w-4" /></Button>
                   <Button size="icon" variant="ghost" onClick={() => setDeleteTarget({ id: b.id, name: `${b.bankName} (${b.accountNo})` })}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                 </TableCell>
               </TableRow>
@@ -505,10 +505,10 @@ function BanksMaster() {
           {editing && (
             <div className="grid gap-3 sm:grid-cols-2">
               <F label="Bank Name *"><Input value={editing.bankName} onChange={e => setEditing({ ...editing, bankName: e.target.value })} /></F>
-              <F label="Account Name *"><Input value={editing.accountName} onChange={e => setEditing({ ...editing, accountName: e.target.value })} /></F>
+              <F label="Account Holder Name *"><Input value={editing.accountHolderName || editing.accountName} onChange={e => setEditing({ ...editing, accountHolderName: e.target.value, accountName: e.target.value })} /></F>
               <F label="Account No. *"><Input value={editing.accountNo} onChange={e => setEditing({ ...editing, accountNo: e.target.value })} /></F>
-              <F label="IFSC *"><Input value={editing.ifsc} onChange={e => setEditing({ ...editing, ifsc: e.target.value })} /></F>
-              <F label="Branch"><Input value={editing.branch || ""} onChange={e => setEditing({ ...editing, branch: e.target.value })} /></F>
+              <F label="IFSC Code *"><Input value={editing.ifsc} onChange={e => setEditing({ ...editing, ifsc: e.target.value.toUpperCase() })} /></F>
+              <F label="Branch (Optional)"><Input value={editing.branch || ""} onChange={e => setEditing({ ...editing, branch: e.target.value })} /></F>
               <F label="Account Type"><Input placeholder="e.g. Current Account" value={editing.accountType || ""} onChange={e => setEditing({ ...editing, accountType: e.target.value })} /></F>
               <F label="UPI"><Input value={editing.upi || ""} onChange={e => setEditing({ ...editing, upi: e.target.value })} /></F>
               <F label="SWIFT"><Input placeholder="e.g. SBININBB123" value={editing.swift || ""} onChange={e => setEditing({ ...editing, swift: e.target.value })} /></F>
@@ -517,8 +517,15 @@ function BanksMaster() {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
             <Button onClick={async () => {
-              if (!editing?.bankName || !editing?.accountNo) { toast.error("Bank & account required"); return; }
-              await db().bankAccounts.put(editing); setEditing(null); toast.success("Saved");
+              if (!editing?.bankName || !editing?.accountNo) { toast.error("Bank & account number required"); return; }
+              const payload = {
+                ...editing,
+                accountHolderName: editing.accountHolderName || editing.accountName,
+                accountName: editing.accountHolderName || editing.accountName,
+              };
+              await db().bankAccounts.put(payload);
+              setEditing(null);
+              toast.success("Saved");
             }}>Save</Button>
           </DialogFooter>
         </DialogContent>
