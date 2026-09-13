@@ -157,12 +157,13 @@ export function Dashboard() {
       receipts,
       financialYearStart: activeFinancialYear?.startDate,
       financialYearEnd: activeFinancialYear?.endDate,
+      inventoryValuationMethod: (activeCompany as any)?.inventoryValuationMethod,
     });
     if (isDexieLoaded) {
       dashboardMetricsMemoryCache[cacheKey] = computed;
     }
     return computed;
-  }, [isDexieLoaded, ledgers, invoices, purchases, products, receipts, activeFinancialYear?.startDate, activeFinancialYear?.endDate, cacheKey]);
+  }, [isDexieLoaded, ledgers, invoices, purchases, products, receipts, activeFinancialYear?.startDate, activeFinancialYear?.endDate, (activeCompany as any)?.inventoryValuationMethod, cacheKey]);
 
   // If Dexie is still querying its initial tick and no memory cache exists yet, show skeleton rather than flashing ₹0 (PRD #22, #23)
   if (!isDexieLoaded && !dashboardMetricsMemoryCache[cacheKey]) {

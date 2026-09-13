@@ -20,6 +20,9 @@ export interface DashboardMetrics {
   totalLiquidity: number;
   grossProfit: number;
   netProfit: number;
+  netSalesRevenue?: number;
+  costOfGoodsSold?: number;
+  isCostingIncomplete?: boolean;
   stockValue: number;
   lowStockCount: number;
   gstLiability: number;
@@ -48,8 +51,9 @@ export function computeDashboardMetrics(params: {
   receipts?: Receipt[];
   financialYearStart?: number;
   financialYearEnd?: number;
+  inventoryValuationMethod?: "purchase_cost" | "standard_cost" | string;
 }): DashboardMetrics {
-  const { ledgers, invoices, purchases, products, receipts = [], financialYearStart, financialYearEnd } = params;
+  const { ledgers, invoices, purchases, products, receipts = [], financialYearStart, financialYearEnd, inventoryValuationMethod } = params;
 
   // 1. Filter documents by active Financial Year window if provided
   const fyInvoices = invoices.filter((inv) => {
@@ -131,17 +135,28 @@ export function computeDashboardMetrics(params: {
       ? payableLedgers.reduce((sum, l) => sum + Math.max(0, -Math.min(0, (l.currentBalance || 0) / 100)), 0)
       : fyPurchases.reduce((sum, pu) => sum + Math.max(0, pu.balance || 0), 0);
 
-  // 3. Sales, Purchases, and Profitability
-  const totalSales = fyInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0);
+  // 3. Sales Revenue (Strictly excludes Output GST) & Deterministic COGS
+  const grossBilledSales = fyInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0);
+  const netSalesRevenue = fyInvoices.reduce((sum, inv) => sum + (inv.subtotal - inv.discountTotal), 0);
+  const totalSales = grossBilledSales;
   const totalPurchases = fyPurchases.reduce((sum, pu) => sum + pu.grandTotal, 0);
 
-  // Calculate COGS: Based on inventory purchased or unit cost of items sold
+  // Authoritative Cost of Goods Sold (COGS) without guessing
+  const valuationMethod = inventoryValuationMethod || "purchase_cost";
   let costOfGoodsSold = 0;
+  let isCostingIncomplete = false;
   for (const inv of fyInvoices) {
-    for (const item of inv.items) {
+    for (const item of inv.items || []) {
       const prod = products.find((p) => p.id === item.productId);
-      const unitCost = prod ? prod.purchasePrice : item.rate * 0.7; // 70% fallback if purchase cost unknown
-      costOfGoodsSold += unitCost * item.quantity;
+      const unitCost = prod
+        ? valuationMethod === "standard_cost"
+          ? ((prod as any).defaultPurchaseRatePaise ? (prod as any).defaultPurchaseRatePaise / 100 : 0)
+          : (prod.purchasePrice || 0)
+        : 0;
+      if (unitCost <= 0 && (item.quantity || 0) > 0) {
+        isCostingIncomplete = true;
+      }
+      costOfGoodsSold += unitCost * (item.quantity || 0);
     }
   }
 
@@ -152,15 +167,19 @@ export function computeDashboardMetrics(params: {
   const operatingExpensesPaise = expenseLedgers.reduce((sum, l) => sum + Math.max(0, (l.currentBalance || 0)), 0);
   const operatingExpenses = operatingExpensesPaise / 100;
 
-  const grossProfit = totalSales - costOfGoodsSold;
+  const grossProfit = netSalesRevenue - costOfGoodsSold;
   const netProfit = grossProfit - operatingExpenses;
 
-  // 4. Inventory Stock Value and Low Stock Alerts
+  // 4. Inventory Stock Value and Low Stock Alerts (Deterministic configured valuationMethod)
   let stockValue = 0;
   let lowStockCount = 0;
   for (const p of products) {
     if (p.trackInventory !== false) {
-      stockValue += (p.currentStock || 0) * (p.purchasePrice || 0);
+      const unitValuation =
+        valuationMethod === "standard_cost"
+          ? ((p as any).defaultPurchaseRatePaise ? (p as any).defaultPurchaseRatePaise / 100 : 0)
+          : (p.purchasePrice || 0);
+      stockValue += (p.currentStock || 0) * unitValuation;
       if ((p.currentStock || 0) <= (p.reorderLevel || 0)) {
         lowStockCount++;
       }
@@ -257,6 +276,9 @@ export function computeDashboardMetrics(params: {
     totalLiquidity: (cashPaise + bankPaise) / 100,
     grossProfit,
     netProfit,
+    netSalesRevenue,
+    costOfGoodsSold,
+    isCostingIncomplete,
     stockValue,
     lowStockCount: lowStockCount,
     gstLiability: Math.max(0, netGst),

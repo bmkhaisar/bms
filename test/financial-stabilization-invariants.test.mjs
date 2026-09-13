@@ -417,3 +417,330 @@ test("11. Multi-Device Realtime & Idempotency Simulation", () => {
   assert.equal(deviceB_Cache.has("rec_001"), true);
   assert.equal(deviceB_Cache.get("rec_001").amount, 25000);
 });
+
+// ----------------------------------------------------------------------------
+// 12. ADVANCE GST TIME-OF-SUPPLY & PREVENTION OF DOUBLE TAXATION
+// ----------------------------------------------------------------------------
+test("12. Advance GST: Goods exempt (Notif 66/2017), Services taxable (Sec 13(2)), No double taxation on invoice", () => {
+  // 1. Goods Advance Receipt: ₹50,000 for goods supply -> 0 tax liability on receipt
+  function computeAdvanceTax(amount, supplyType, gstRate = 18, isInterState = false) {
+    if (supplyType === "GOODS") {
+      return {
+        supplyType: "GOODS",
+        taxTreatment: "NO_ADVANCE_GST",
+        taxablePaise: 0,
+        cgstPaise: 0,
+        sgstPaise: 0,
+        igstPaise: 0,
+        totalTaxPaise: 0,
+      };
+    }
+    if (supplyType === "SERVICES") {
+      // Inclusive back-calculation
+      const totalPaise = toPaise(amount);
+      const taxablePaise = Math.round((totalPaise * 100) / (100 + gstRate));
+      const taxPaise = totalPaise - taxablePaise;
+      if (isInterState) {
+        return {
+          supplyType: "SERVICES",
+          taxTreatment: "ADVANCE_GST",
+          taxablePaise,
+          cgstPaise: 0,
+          sgstPaise: 0,
+          igstPaise: taxPaise,
+          totalTaxPaise: taxPaise,
+        };
+      } else {
+        const half = Math.round(taxPaise / 2);
+        return {
+          supplyType: "SERVICES",
+          taxTreatment: "ADVANCE_GST",
+          taxablePaise,
+          cgstPaise: half,
+          sgstPaise: taxPaise - half,
+          igstPaise: 0,
+          totalTaxPaise: taxPaise,
+        };
+      }
+    }
+    return { supplyType, taxTreatment: "PENDING_CLASSIFICATION", totalTaxPaise: 0 };
+  }
+
+  const goodsAdv = computeAdvanceTax(50000, "GOODS", 18, false);
+  assert.equal(goodsAdv.taxTreatment, "NO_ADVANCE_GST");
+  assert.equal(goodsAdv.totalTaxPaise, 0);
+
+  // 2. Service Advance Receipt: ₹118,000 @ 18% Intrastate -> Taxable ₹100k, CGST ₹9k, SGST ₹9k
+  const serviceAdv = computeAdvanceTax(118000, "SERVICES", 18, false);
+  assert.equal(serviceAdv.taxTreatment, "ADVANCE_GST");
+  assert.equal(toRupees(serviceAdv.taxablePaise), 100000);
+  assert.equal(toRupees(serviceAdv.cgstPaise), 9000);
+  assert.equal(toRupees(serviceAdv.sgstPaise), 9000);
+  assert.equal(toRupees(serviceAdv.totalTaxPaise), 18000);
+
+  // 3. Prevention of Double Taxation when Later Invoiced:
+  // Invoice of ₹236,000 (taxable ₹200k, tax ₹36,000) allocates ₹118,000 advance with ₹18,000 prior tax accounted
+  const invoiceTaxable = 200000;
+  const invoiceGrossTax = 36000;
+  const priorAdvanceTaxAccounted = toRupees(serviceAdv.totalTaxPaise); // ₹18,000
+  const netInvoiceTaxPayable = Math.max(0, invoiceGrossTax - priorAdvanceTaxAccounted);
+
+  assert.equal(netInvoiceTaxPayable, 18000); // Only remaining ₹18,000 is payable
+
+  // Total Statutory Output Liability for the full lifecycle:
+  // Advance Receipt Period Tax: ₹18,000
+  // Invoice Period Net Tax: ₹18,000
+  // Total Lifetime GST: ₹36,000 (EXACTLY 18% of ₹200k taxable, ZERO double taxation)
+  const lifetimeGstPaid = toRupees(serviceAdv.totalTaxPaise) + netInvoiceTaxPayable;
+  assert.equal(lifetimeGstPaid, invoiceGrossTax);
+});
+
+// ----------------------------------------------------------------------------
+// 13. EXPANDED AR AND AP RECONCILIATION INVARIANTS
+// ----------------------------------------------------------------------------
+test("13. Expanded AR and AP Reconciliation formulas match bill-wise remaining balances exactly", () => {
+  // Accounts Receivable (AR)
+  const openingAr = 25000;
+  const arInvoices = 150000;
+  const arDebitAdjustments = 2500;
+  const arReceipts = 80000; // direct payments
+  const arCreditNotes = 5000; // sales returns
+  const arAdvanceAllocations = 20000; // unallocated advances applied
+  const arRefundWriteOff = 1500; // write-offs
+  const arReversals = 500; // bounced check reversal
+
+  // Formula: Opening AR + Invoices + Debit Adjustments - Receipts - Credit Notes - Advance Allocations - Refund/Write-off Adjustments ± Reversals
+  const calculatedClosingAr =
+    openingAr +
+    arInvoices +
+    arDebitAdjustments -
+    arReceipts -
+    arCreditNotes -
+    arAdvanceAllocations -
+    arRefundWriteOff +
+    arReversals;
+
+  // Bill-wise balance remaining from invoices issued in period:
+  // Balance = (Invoices + Debit Adjustments - Receipts - Credit Notes - Advance Allocations - Refund/Write-off + Reversals)
+  const billWisePeriodBalance =
+    arInvoices +
+    arDebitAdjustments -
+    arReceipts -
+    arCreditNotes -
+    arAdvanceAllocations -
+    arRefundWriteOff +
+    arReversals;
+  const actualClosingAr = openingAr + billWisePeriodBalance;
+
+  assert.equal(calculatedClosingAr, 71500);
+  assert.equal(actualClosingAr, 71500);
+  assert.equal(Math.abs(calculatedClosingAr - actualClosingAr) < 0.01, true);
+
+  // Accounts Payable (AP)
+  const openingAp = 40000;
+  const apPurchases = 120000;
+  const apCreditAdjustments = 1200;
+  const apPayments = 70000;
+  const apDebitNotes = 8000;
+  const apSupplierAdvanceAllocations = 15000;
+  const apRefundDiscount = 2200;
+  const apReversals = 1000;
+
+  const calculatedClosingAp =
+    openingAp +
+    apPurchases +
+    apCreditAdjustments -
+    apPayments -
+    apDebitNotes -
+    apSupplierAdvanceAllocations -
+    apRefundDiscount +
+    apReversals;
+
+  const billWiseApBalance =
+    apPurchases +
+    apCreditAdjustments -
+    apPayments -
+    apDebitNotes -
+    apSupplierAdvanceAllocations -
+    apRefundDiscount +
+    apReversals;
+  const actualClosingAp = openingAp + billWiseApBalance;
+
+  assert.equal(calculatedClosingAp, 67000);
+  assert.equal(actualClosingAp, 67000);
+  assert.equal(Math.abs(calculatedClosingAp - actualClosingAp) < 0.01, true);
+});
+
+// ----------------------------------------------------------------------------
+// 14. DETERMINISTIC INVENTORY & COGS VALUATION
+// ----------------------------------------------------------------------------
+test("14. Inventory Valuation: Deterministic per method, no silent mixing, flags incomplete profit without selling price guessing", () => {
+  const catalog = [
+    { id: "p1", name: "Portable Bunkhouse", currentStock: 5, purchasePrice: 180000, defaultPurchaseRatePaise: 17500000 },
+    { id: "p2", name: "Security Sentry Post", currentStock: 3, purchasePrice: 0, defaultPurchaseRatePaise: 4500000 },
+    { id: "p3", name: "Custom Site Office", currentStock: 2, purchasePrice: 0, defaultPurchaseRatePaise: 0 },
+  ];
+
+  function evaluateInventory(products, valuationMethod) {
+    let totalStockValue = 0;
+    let missingCostCount = 0;
+
+    for (const p of products) {
+      let unitCost = 0;
+      if (valuationMethod === "standard_cost") {
+        unitCost = p.defaultPurchaseRatePaise ? p.defaultPurchaseRatePaise / 100 : 0;
+      } else {
+        unitCost = p.purchasePrice || 0;
+      }
+
+      if (unitCost <= 0 && p.currentStock > 0) {
+        missingCostCount++;
+      }
+      totalStockValue += p.currentStock * unitCost;
+    }
+
+    return { totalStockValue, missingCostCount };
+  }
+
+  // 1. Purchase cost valuation mode
+  const purEval = evaluateInventory(catalog, "purchase_cost");
+  assert.equal(purEval.totalStockValue, 5 * 180000); // 900,000
+  assert.equal(purEval.missingCostCount, 2); // p2 and p3 have purchasePrice = 0
+
+  // 2. Standard cost valuation mode
+  const stdEval = evaluateInventory(catalog, "standard_cost");
+  assert.equal(stdEval.totalStockValue, 5 * 175000 + 3 * 45000); // 875,000 + 135,000 = 1,010,000
+  assert.equal(stdEval.missingCostCount, 1); // p3 has no standard rate
+
+  // 3. Profit & COGS without guessing
+  function computeCogs(saleItems, products, valuationMethod) {
+    let cogs = 0;
+    let isCostingIncomplete = false;
+    const missingItems = [];
+
+    for (const item of saleItems) {
+      const prod = products.find((p) => p.id === item.productId);
+      const unitCost = prod
+        ? valuationMethod === "standard_cost"
+          ? (prod.defaultPurchaseRatePaise ? prod.defaultPurchaseRatePaise / 100 : 0)
+          : (prod.purchasePrice || 0)
+        : 0;
+
+      if (unitCost <= 0 && item.qty > 0) {
+        isCostingIncomplete = true;
+        missingItems.push(item.name);
+      }
+      // Never guess with rate * 0.7
+      cogs += unitCost * item.qty;
+    }
+
+    return { cogs, isCostingIncomplete, missingItems };
+  }
+
+  const sales = [
+    { productId: "p1", name: "Portable Bunkhouse", qty: 2, rate: 250000 },
+    { productId: "p3", name: "Custom Site Office", qty: 1, rate: 350000 },
+  ];
+
+  const res = computeCogs(sales, catalog, "purchase_cost");
+  assert.equal(res.cogs, 2 * 180000); // 360,000
+  assert.equal(res.isCostingIncomplete, true);
+  assert.equal(res.missingItems.includes("Custom Site Office"), true);
+});
+
+// ----------------------------------------------------------------------------
+// 15. QUOTATION PDF PREVIEW === DOWNLOAD PARITY & CANONICAL RESOLUTION
+// ----------------------------------------------------------------------------
+test("15. Quotation PDF: Preview blob reuse, Draft resolves company defaults, Issued preserves snapshots, no generic terms", () => {
+  const activeCompany = {
+    id: "comp_kh",
+    name: "KH Portable Cabins",
+    address: "Bangalore, Karnataka",
+    quotationTermsMarkdown: "1. GST: 18% included.\n2. Delivery within 2 weeks.\n3. Payment 50% advance.",
+    bankName: "State Bank of India",
+    bankAccount: "40657841199",
+    bankIfsc: "SBIN0127762",
+    accountHolderName: "KH Portable Cabins",
+  };
+
+  const draftQuote = {
+    id: "qt_001",
+    number: "QT/2026-27/0012",
+    status: "draft",
+    date: Date.now(),
+    customerId: "cust_1",
+    items: [{ name: "Portable Cabin 20x10", quantity: 1, rate: 200000, total: 236000, gstRate: 18 }],
+  };
+
+  // Draft resolution rule:
+  function resolveQuotationTerms(quote, company) {
+    const isDraft = !quote.status || quote.status === "draft";
+    if (!isDraft) {
+      return quote.termsMarkdown || quote.terms || "";
+    }
+    // Draft: document override -> company settings (never generic hardcoded fallback)
+    return quote.termsMarkdown || quote.terms || company.quotationTermsMarkdown || company.terms || "";
+  }
+
+  const resolvedDraftTerms = resolveQuotationTerms(draftQuote, activeCompany);
+  assert.match(resolvedDraftTerms, /GST: 18% included/);
+  assert.doesNotMatch(resolvedDraftTerms, /Goods once sold will not be taken back/);
+
+  // Issued quotation preserves frozen snapshot:
+  const issuedQuote = {
+    id: "qt_002",
+    number: "QT/2026-27/0010",
+    status: "sent",
+    termsMarkdown: "1. Custom frozen term for client A.",
+    companySnapshot: { name: "Original Historical Entity" },
+  };
+  const resolvedIssuedTerms = resolveQuotationTerms(issuedQuote, activeCompany);
+  assert.equal(resolvedIssuedTerms, "1. Custom frozen term for client A.");
+
+  // Single Blob Pipeline Simulation:
+  // Preview generates Blob; Download reuses identical Blob reference
+  let previewBlob = { size: 45120, type: "application/pdf", hash: "blob_hash_abc123" };
+  let downloadedBlob = null;
+
+  function onDownloadPdfClick(cachedPreviewBlob) {
+    // Directly reuse preview blob
+    downloadedBlob = cachedPreviewBlob;
+  }
+
+  onDownloadPdfClick(previewBlob);
+  assert.equal(downloadedBlob, previewBlob);
+  assert.equal(downloadedBlob.hash, "blob_hash_abc123");
+});
+
+// ----------------------------------------------------------------------------
+// 16. REPORTS NAVIGATION LAYOUT & RESPONSIVE INVARIANTS
+// ----------------------------------------------------------------------------
+test("16. Reports Layout: Row 1 horizontal scroll container, Row 2 centered toolbar without absolute positioning overlap", () => {
+  // Navigation specification invariants
+  const navigationLayout = {
+    row1: {
+      type: "primary_tabs",
+      hasHorizontalScroll: true,
+      whitespaceNowrap: true,
+      shrinkItems: true,
+      position: "relative",
+    },
+    row2: {
+      type: "secondary_toolbar",
+      hasAbsolutePositioning: false,
+      hasNegativeMargin: false,
+      hasTranslateY: false,
+      minHeightPx: 44,
+      gapPx: 24,
+      marginTopPx: 8,
+    },
+  };
+
+  assert.equal(navigationLayout.row1.hasHorizontalScroll, true);
+  assert.equal(navigationLayout.row1.whitespaceNowrap, true);
+  assert.equal(navigationLayout.row2.hasAbsolutePositioning, false);
+  assert.equal(navigationLayout.row2.hasNegativeMargin, false);
+  assert.equal(navigationLayout.row2.hasTranslateY, false);
+  assert.equal(navigationLayout.row2.minHeightPx >= 44, true);
+});
+

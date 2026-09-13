@@ -88,33 +88,51 @@ function ReportsPage() {
         <Button variant="outline" onClick={() => { setFrom(undefined); setTo(undefined); }}>Clear</Button>
         <Button variant="outline" className="gap-2" onClick={() => window.print()}><Printer className="h-4 w-4" /> Print</Button>
       </Card>
-      <Tabs value={tab} onValueChange={handleTabChange}>
-        <TabsList className="flex-wrap">
-          <TabsTrigger value="sales">Sales & Revenue</TabsTrigger>
-          <TabsTrigger value="purchases">Purchases</TabsTrigger>
-          <TabsTrigger value="outstanding">Credit Outstanding & Aging</TabsTrigger>
-          <TabsTrigger value="advances">Customer Advances</TabsTrigger>
-          <TabsTrigger value="supplier-advances">Supplier Advances</TabsTrigger>
-          <TabsTrigger value="stock">Stock</TabsTrigger>
-          <TabsTrigger value="profit">Profit & Costing</TabsTrigger>
-          <TabsTrigger value="gst">GST Statutory Register</TabsTrigger>
-          <TabsTrigger value="financial-reconciliation" className="gap-1.5">
-            <Scale className="h-3.5 w-3.5 text-primary" /> Financial Reconciliation
+      <Tabs value={tab} onValueChange={handleTabChange} className="space-y-3">
+        {/* Row 1: Primary Report Navigation (Horizontal scroll, whitespace-nowrap, no wrap collisions) */}
+        <div className="w-full overflow-x-auto scrollbar-thin pb-1">
+          <TabsList className="inline-flex w-auto min-w-full sm:min-w-0 h-10 items-center justify-start gap-1 p-1 bg-muted/60 rounded-lg whitespace-nowrap">
+            <TabsTrigger value="sales" className="shrink-0 px-3 py-1.5 text-xs font-medium">Sales & Revenue</TabsTrigger>
+            <TabsTrigger value="purchases" className="shrink-0 px-3 py-1.5 text-xs font-medium">Purchases</TabsTrigger>
+            <TabsTrigger value="outstanding" className="shrink-0 px-3 py-1.5 text-xs font-medium">Credit Outstanding & Aging</TabsTrigger>
+            <TabsTrigger value="advances" className="shrink-0 px-3 py-1.5 text-xs font-medium">Customer Advances</TabsTrigger>
+            <TabsTrigger value="supplier-advances" className="shrink-0 px-3 py-1.5 text-xs font-medium">Supplier Advances</TabsTrigger>
+            <TabsTrigger value="stock" className="shrink-0 px-3 py-1.5 text-xs font-medium">Stock</TabsTrigger>
+            <TabsTrigger value="profit" className="shrink-0 px-3 py-1.5 text-xs font-medium">Profit & Costing</TabsTrigger>
+            <TabsTrigger value="gst" className="shrink-0 px-3 py-1.5 text-xs font-medium">GST Statutory Register</TabsTrigger>
+          </TabsList>
+        </div>
+
+        {/* Row 2: Secondary Toolbar Row (Distinct Container, Centered, Clean Spacing, No Absolute Positioning) */}
+        <div className="flex items-center justify-center gap-6 min-h-[44px] mt-2 mb-3 px-4 py-1.5 bg-muted/25 border border-border/50 rounded-lg">
+          <TabsTrigger
+            value="financial-reconciliation"
+            className="flex items-center gap-1.5 text-xs font-medium px-4 py-2 rounded-md transition-all text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm"
+          >
+            <Scale className="h-3.5 w-3.5" /> Financial Reconciliation
           </TabsTrigger>
-          <TabsTrigger value="gst-audit" className="gap-1.5">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> GST Data Audit
+          <div className="h-4 w-px bg-border shrink-0" />
+          <TabsTrigger
+            value="gst-audit"
+            className="flex items-center gap-1.5 text-xs font-medium px-4 py-2 rounded-md transition-all text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm"
+          >
+            <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 data-[state=active]:text-primary-foreground" /> GST Data Audit
           </TabsTrigger>
-        </TabsList>
-        <TabsContent value="sales"><SalesReport from={from} to={to} /></TabsContent>
-        <TabsContent value="purchases"><PurchaseReport from={from} to={to} /></TabsContent>
-        <TabsContent value="outstanding"><OutstandingReport /></TabsContent>
-        <TabsContent value="advances"><CustomerAdvanceRegisterReport /></TabsContent>
-        <TabsContent value="supplier-advances"><SupplierAdvanceRegisterReport /></TabsContent>
-        <TabsContent value="stock"><StockReport /></TabsContent>
-        <TabsContent value="profit"><ProfitReport from={from} to={to} /></TabsContent>
-        <TabsContent value="gst"><GstReport from={from} to={to} /></TabsContent>
-        <TabsContent value="financial-reconciliation"><FinancialReconciliationReport from={from} to={to} /></TabsContent>
-        <TabsContent value="gst-audit"><GstDataIntegrityAuditReport /></TabsContent>
+        </div>
+
+        {/* Report Content Panels */}
+        <div className="pt-2">
+          <TabsContent value="sales" className="mt-0"><SalesReport from={from} to={to} /></TabsContent>
+          <TabsContent value="purchases" className="mt-0"><PurchaseReport from={from} to={to} /></TabsContent>
+          <TabsContent value="outstanding" className="mt-0"><OutstandingReport /></TabsContent>
+          <TabsContent value="advances" className="mt-0"><CustomerAdvanceRegisterReport /></TabsContent>
+          <TabsContent value="supplier-advances" className="mt-0"><SupplierAdvanceRegisterReport /></TabsContent>
+          <TabsContent value="stock" className="mt-0"><StockReport /></TabsContent>
+          <TabsContent value="profit" className="mt-0"><ProfitReport from={from} to={to} /></TabsContent>
+          <TabsContent value="gst" className="mt-0"><GstReport from={from} to={to} /></TabsContent>
+          <TabsContent value="financial-reconciliation" className="mt-0"><FinancialReconciliationReport from={from} to={to} /></TabsContent>
+          <TabsContent value="gst-audit" className="mt-0"><GstDataIntegrityAuditReport /></TabsContent>
+        </div>
       </Tabs>
     </AppShell>
   );
@@ -724,37 +742,74 @@ function SupplierAdvanceRegisterReport() {
 // ========================================================================
 
 function StockReport() {
+  const { activeCompany } = useActiveCompany();
   const products = useLive<Product>(() => db().products.toArray());
-  const value = products.reduce((s, p) => s + (p.currentStock * (p.purchasePrice || 0)), 0);
+  const valuationMethod = (activeCompany as any)?.inventoryValuationMethod || "purchase_cost";
+
+  const getProductUnitCost = (p: Product) => {
+    if (valuationMethod === "standard_cost") {
+      return (p as any).defaultPurchaseRatePaise ? (p as any).defaultPurchaseRatePaise / 100 : 0;
+    }
+    return p.purchasePrice || 0;
+  };
+
+  const value = products.reduce((s, p) => s + ((p.currentStock || 0) * getProductUnitCost(p)), 0);
+  const missingCostCount = products.filter(p => (p.currentStock || 0) > 0 && getProductUnitCost(p) <= 0).length;
 
   return (
-    <Card className="card-soft mt-4 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="font-semibold">Stock Inventory Valuation</h3>
+    <Card className="card-soft mt-4 p-4 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold">Stock Inventory Valuation</h3>
+            <Badge variant="outline" className="text-[10px] uppercase font-mono">
+              Method: {valuationMethod === "standard_cost" ? "Standard Cost" : "Purchase Cost"}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Deterministic valuation using configured {valuationMethod === "standard_cost" ? "standard cost rate" : "purchase price"}.
+          </p>
+        </div>
         <ExportBtn name="stock.json" data={products} />
       </div>
+
+      {missingCostCount > 0 && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
+          <div>
+            <strong className="block font-semibold">Stock valuation incomplete — missing cost data</strong>
+            <span>
+              {missingCostCount} inventory item(s) in stock have no {valuationMethod === "standard_cost" ? "standard rate" : "purchase price"} configured. Configure in Products catalog for accurate inventory asset accounting.
+            </span>
+          </div>
+        </div>
+      )}
+
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Item</TableHead>
             <TableHead>HSN</TableHead>
             <TableHead className="text-right">Current Stock</TableHead>
-            <TableHead className="text-right">Purchase / Cost Rate</TableHead>
+            <TableHead className="text-right">Rate ({valuationMethod === "standard_cost" ? "Std Rate" : "Purchase Price"})</TableHead>
             <TableHead className="text-right font-bold">Valuation</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {products.map((p) => (
-            <TableRow key={p.id}>
-              <TableCell>{p.name}</TableCell>
-              <TableCell className="font-mono text-xs">{p.hsn || "—"}</TableCell>
-              <TableCell className={`text-right font-mono ${p.currentStock <= p.reorderLevel ? "text-amber-600 font-semibold" : ""}`}>
-                {p.currentStock} {p.unit}
-              </TableCell>
-              <TableCell className="text-right font-mono">{formatMoney(p.purchasePrice || 0)}</TableCell>
-              <TableCell className="text-right font-mono font-semibold">{formatMoney(p.currentStock * (p.purchasePrice || 0))}</TableCell>
-            </TableRow>
-          ))}
+          {products.map((p) => {
+            const unitCost = getProductUnitCost(p);
+            return (
+              <TableRow key={p.id}>
+                <TableCell>{p.name}</TableCell>
+                <TableCell className="font-mono text-xs">{p.hsn || "—"}</TableCell>
+                <TableCell className={`text-right font-mono ${p.currentStock <= p.reorderLevel ? "text-amber-600 font-semibold" : ""}`}>
+                  {p.currentStock} {p.unit}
+                </TableCell>
+                <TableCell className="text-right font-mono">{formatMoney(unitCost)}</TableCell>
+                <TableCell className="text-right font-mono font-semibold">{formatMoney((p.currentStock || 0) * unitCost)}</TableCell>
+              </TableRow>
+            );
+          })}
           {products.length === 0 && <TableRow><TableCell colSpan={5} className="py-6 text-center text-xs text-muted-foreground">No items in catalog.</TableCell></TableRow>}
         </TableBody>
       </Table>
@@ -770,9 +825,11 @@ function StockReport() {
 // ========================================================================
 
 function ProfitReport({ from, to }: { from?: number; to?: number }) {
+  const { activeCompany } = useActiveCompany();
   const invoices = useLive<Invoice>(() => db().invoices.toArray());
   const purchases = useLive<Purchase>(() => db().purchases.toArray());
   const products = useLive<Product>(() => db().products.toArray());
+  const valuationMethod = (activeCompany as any)?.inventoryValuationMethod || "purchase_cost";
 
   const postedInvoices = useMemo(
     () => invoices.filter((i) => i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed"),
@@ -799,7 +856,11 @@ function ProfitReport({ from, to }: { from?: number; to?: number }) {
     for (const inv of invRange) {
       for (const it of inv.items || []) {
         const prod = products.find((p) => p.id === it.productId);
-        const costPerUnit = prod?.purchasePrice ?? 0;
+        const costPerUnit = prod
+          ? valuationMethod === "standard_cost"
+            ? ((prod as any).defaultPurchaseRatePaise ? (prod as any).defaultPurchaseRatePaise / 100 : 0)
+            : (prod.purchasePrice ?? 0)
+          : 0;
         const itemQty = it.quantity || 0;
         const lineRev = it.total ? it.total - (it.gstAmount || 0) : it.rate * itemQty;
         const lineCost = costPerUnit * itemQty;
@@ -826,7 +887,7 @@ function ProfitReport({ from, to }: { from?: number; to?: number }) {
     }
 
     return Array.from(map.values());
-  }, [invRange, products]);
+  }, [invRange, products, valuationMethod]);
 
   totalCogs = itemCostBreakdown.reduce((s, it) => s + it.cost, 0);
   const grossProfit = netSalesRevenue - totalCogs;
@@ -844,7 +905,7 @@ function ProfitReport({ from, to }: { from?: number; to?: number }) {
           <div>
             <strong className="block font-semibold">Profit incomplete — missing cost data</strong>
             <span>
-              Cost data missing for products: <b className="text-foreground">{missingCostProducts.slice(0, 5).join(", ")}{missingCostProducts.length > 5 ? ` and ${missingCostProducts.length - 5} more` : ""}</b>. Configure purchase price in Products catalog for accurate COGS and margin.
+              Cost data missing for products: <b className="text-foreground">{missingCostProducts.slice(0, 5).join(", ")}{missingCostProducts.length > 5 ? ` and ${missingCostProducts.length - 5} more` : ""}</b>. Configure {valuationMethod === "standard_cost" ? "standard cost rate" : "purchase price"} in Products catalog for accurate COGS and margin. (COGS estimation via selling price is strictly forbidden).
             </span>
           </div>
         </div>
@@ -931,28 +992,82 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
     () => purchases.filter((p) => (p.postingStatus === "posted" || (p.status as string) === "posted" || p.status === "paid" || p.status === "partial") && p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed"),
     [purchases]
   );
+  const activeReceipts = useMemo(
+    () => receipts.filter((r) => r.postingStatus !== "failed" && r.postingStatus !== "reversed" && (r as any).status !== "cancelled"),
+    [receipts]
+  );
 
   const invRows = useRange(postedInvoices, from, to);
   const purRows = useRange(postedPurchases, from, to);
+  const recRows = useRange(activeReceipts, from, to);
 
-  // Canonical Tax Head Calculations (Guarantees exclusivity: Intrastate CGST+SGST XOR Interstate IGST)
-  let outputCgst = 0;
-  let outputSgst = 0;
-  let outputIgst = 0;
-  let outputCess = 0;
-  let totalOutputLiability = 0;
-  let taxableSales = 0;
+  // 1. Output Tax from Invoices (Less prior advance GST accounted to prevent double taxation)
+  let invoiceOutputCgst = 0;
+  let invoiceOutputSgst = 0;
+  let invoiceOutputIgst = 0;
+  let invoiceOutputCess = 0;
+  let totalInvoiceTaxable = 0;
+  let totalAdvanceGstAdjusted = 0;
+  let netInvoiceOutputLiability = 0;
 
   for (const inv of invRows) {
     const t = resolveDocumentTaxes(inv);
-    taxableSales += t.taxable;
-    outputCgst += t.cgst;
-    outputSgst += t.sgst;
-    outputIgst += t.igst;
-    outputCess += t.cess;
-    totalOutputLiability += t.totalTax;
+    totalInvoiceTaxable += t.taxable;
+    const advanceTaxAdj = (inv.advanceGstAdjustedPaise
+      ? inv.advanceGstAdjustedPaise / 100
+      : (inv.advanceTaxPreviouslyAccounted || inv.advanceGstAdjusted || 0));
+    totalAdvanceGstAdjusted += advanceTaxAdj;
+
+    const grossInvTax = t.totalTax;
+    const netInvTax = Math.max(0, grossInvTax - advanceTaxAdj);
+    const taxRatio = grossInvTax > 0 ? netInvTax / grossInvTax : 0;
+
+    invoiceOutputCgst += t.cgst * taxRatio;
+    invoiceOutputSgst += t.sgst * taxRatio;
+    invoiceOutputIgst += t.igst * taxRatio;
+    invoiceOutputCess += t.cess * taxRatio;
+    netInvoiceOutputLiability += netInvTax;
   }
 
+  // 2. Advance GST on Taxable Services (Time-of-Supply Section 13(2); Goods exempt under Notif 66/2017)
+  let advanceOutputCgst = 0;
+  let advanceOutputSgst = 0;
+  let advanceOutputIgst = 0;
+  let advanceOutputCess = 0;
+  let totalAdvanceTaxable = 0;
+  let totalAdvanceLiability = 0;
+
+  for (const r of recRows) {
+    const isAdv = r.allocationType === "ADVANCE" || !r.invoiceId;
+    if (!isAdv) continue;
+
+    // Taxable service advance receipt generates advance GST liability
+    if (r.taxTreatment === "ADVANCE_GST" && (r.totalTaxPaise || 0) > 0) {
+      const cgst = (r.cgstPaise || 0) / 100;
+      const sgst = (r.sgstPaise || 0) / 100;
+      const igst = (r.igstPaise || 0) / 100;
+      const cess = (r.cessPaise || 0) / 100;
+      const totTax = (r.totalTaxPaise || 0) / 100;
+      const rawTaxable = r.taxableAmountPaise || r.mixedBreakdown?.serviceTaxablePaise;
+      const taxable = rawTaxable != null ? rawTaxable / 100 : Math.max(0, (Number(r.amount) || 0) - totTax);
+
+      advanceOutputCgst += cgst;
+      advanceOutputSgst += sgst;
+      advanceOutputIgst += igst;
+      advanceOutputCess += cess;
+      totalAdvanceTaxable += taxable;
+      totalAdvanceLiability += totTax;
+    }
+  }
+
+  const outputCgst = invoiceOutputCgst + advanceOutputCgst;
+  const outputSgst = invoiceOutputSgst + advanceOutputSgst;
+  const outputIgst = invoiceOutputIgst + advanceOutputIgst;
+  const outputCess = invoiceOutputCess + advanceOutputCess;
+  const totalOutputLiability = netInvoiceOutputLiability + totalAdvanceLiability;
+  const taxableSales = totalInvoiceTaxable + totalAdvanceTaxable;
+
+  // 3. Input Tax Credit (ITC) from Purchases
   let inputCgst = 0;
   let inputSgst = 0;
   let inputIgst = 0;
@@ -988,7 +1103,7 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
 
   type GstTx = {
     id: string;
-    type: "Sale" | "Purchase";
+    type: "Sale" | "Purchase" | "Advance";
     date: number;
     docNumber: string;
     supplierInvoiceNumber?: string;
@@ -1001,6 +1116,7 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
     cess: number;
     totalTax: number;
     link: string;
+    notes?: string;
   };
 
   const transactions: GstTx[] = useMemo(() => {
@@ -1009,6 +1125,12 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
     for (const i of invRows) {
       const partyName = resolvePartyNameFromCollections(i.customerId, i.customerSnapshot, parties, customers);
       const t = resolveDocumentTaxes(i);
+      const advanceTaxAdj = (i.advanceGstAdjustedPaise
+        ? i.advanceGstAdjustedPaise / 100
+        : (i.advanceTaxPreviouslyAccounted || i.advanceGstAdjusted || 0));
+      const netTax = Math.max(0, t.totalTax - advanceTaxAdj);
+      const ratio = t.totalTax > 0 ? netTax / t.totalTax : 0;
+
       list.push({
         id: i.id,
         type: "Sale",
@@ -1017,13 +1139,45 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
         partyName,
         gstin: i.customerSnapshot?.gstin || "—",
         taxable: t.taxable,
-        cgst: t.cgst,
-        sgst: t.sgst,
-        igst: t.igst,
-        cess: t.cess,
-        totalTax: t.totalTax,
+        cgst: t.cgst * ratio,
+        sgst: t.sgst * ratio,
+        igst: t.igst * ratio,
+        cess: t.cess * ratio,
+        totalTax: netTax,
         link: `/invoices?q=${encodeURIComponent(i.number)}`,
+        notes: advanceTaxAdj > 0 ? `Less ₹${advanceTaxAdj.toFixed(2)} prior advance tax` : undefined,
       });
+    }
+
+    for (const r of recRows) {
+      const isAdv = r.allocationType === "ADVANCE" || !r.invoiceId;
+      if (isAdv && r.taxTreatment === "ADVANCE_GST" && (r.totalTaxPaise || 0) > 0) {
+        const partyName = resolvePartyNameFromCollections(r.customerId, r.companySnapshot, parties, customers);
+        const cgst = (r.cgstPaise || 0) / 100;
+        const sgst = (r.sgstPaise || 0) / 100;
+        const igst = (r.igstPaise || 0) / 100;
+        const cess = (r.cessPaise || 0) / 100;
+        const totTax = (r.totalTaxPaise || 0) / 100;
+        const rawTaxable = r.taxableAmountPaise || r.mixedBreakdown?.serviceTaxablePaise;
+        const taxable = rawTaxable != null ? rawTaxable / 100 : Math.max(0, (Number(r.amount) || 0) - totTax);
+
+        list.push({
+          id: r.id,
+          type: "Advance",
+          date: r.date,
+          docNumber: r.number,
+          partyName,
+          gstin: (r as any).gstin || "—",
+          taxable,
+          cgst,
+          sgst,
+          igst,
+          cess,
+          totalTax: totTax,
+          link: `/receipts?q=${encodeURIComponent(r.number)}`,
+          notes: `Time of Supply Sec 13(2) [Supply: ${r.supplyType || "SERVICES"}]`,
+        });
+      }
     }
 
     for (const p of purRows) {
@@ -1048,19 +1202,19 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
     }
 
     return list.sort((a, b) => b.date - a.date);
-  }, [invRows, purRows, parties, customers, suppliers]);
+  }, [invRows, purRows, recRows, parties, customers, suppliers]);
 
-  // Reconciliation Invariant Check: SUM(transactionRegister.totalTax) === GSTSummary.outputTaxLiability
-  const registerSalesTaxTotal = transactions.filter((t) => t.type === "Sale").reduce((s, t) => s + t.totalTax, 0);
-  const gstReconciled = Math.abs(registerSalesTaxTotal - totalOutputLiability) < 0.01;
+  // Reconciliation Invariant Check: SUM(transactionRegister.outputTax) === GSTSummary.outputTaxLiability
+  const registerOutputTaxTotal = transactions.filter((t) => t.type === "Sale" || t.type === "Advance").reduce((s, t) => s + t.totalTax, 0);
+  const gstReconciled = Math.abs(registerOutputTaxTotal - totalOutputLiability) < 0.01;
 
   return (
     <div className="mt-4 space-y-4">
       {/* Statutory Preparation & Summary Disclaimer */}
       <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400 flex items-start justify-between gap-3">
         <div>
-          <strong className="block font-semibold">PREPARATION / SUMMARY REPORTS</strong>
-          <span>Prepared from BMS posted records. Verify before statutory filing. GSTR summary reports are for reconciliation and preparation only.</span>
+          <strong className="block font-semibold">PREPARATION / SUMMARY REPORTS (TIME OF SUPPLY COMPLIANT)</strong>
+          <span>Prepared from BMS records per CGST Sec 13(2) (Services advances taxable; Goods advances exempt per Notif 66/2017). Verify before statutory GSTR filing.</span>
         </div>
         <Badge variant={gstReconciled ? "secondary" : "destructive"} className="shrink-0 gap-1">
           {gstReconciled ? (
@@ -1079,7 +1233,7 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
         <div className="mb-3 flex items-center justify-between">
           <div>
             <h3 className="font-semibold text-foreground">GST Statutory Position & Summary</h3>
-            <p className="text-xs text-muted-foreground">Authoritative Output Tax Liability vs Recorded Eligible Input GST</p>
+            <p className="text-xs text-muted-foreground">Authoritative Output Tax Liability (Invoices & Advances) vs Recorded Eligible Input GST (ITC)</p>
           </div>
           <ExportBtn
             name="gst_statutory_register.json"
@@ -1089,6 +1243,8 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
                 totalInputGst,
                 estimatedNetGstLiability,
                 gstComponentOfCollections,
+                totalAdvanceGstAdjusted,
+                totalAdvanceLiability,
                 outputCgst,
                 outputSgst,
                 outputIgst,
@@ -1102,7 +1258,7 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-4">
-          <Stat label="Output Tax Liability" v={formatMoney(totalOutputLiability)} accent />
+          <Stat label="Total Output Liability (Net)" v={formatMoney(totalOutputLiability)} accent />
           <Stat label="Eligible Input GST (ITC)" v={formatMoney(totalInputGst)} />
           <Stat
             label={estimatedNetGstLiability >= 0 ? "Estimated Net GST Liability" : "Net ITC Carry Forward"}
@@ -1112,22 +1268,23 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
           <Stat label="Taxable Turnover" v={formatMoney(taxableSales)} />
         </div>
 
-        {/* Informational Cash Collection Card (PRD Item 10 & 69) */}
+        {/* Time of Supply & Advance GST Breakdown Card */}
         <div className="mt-3 rounded-lg border bg-muted/20 p-3 text-xs flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <span className="font-semibold text-foreground">GST Component of Customer Collections: </span>
-            <strong className="font-mono text-primary text-sm">{formatMoney(gstComponentOfCollections)}</strong>
-            <p className="text-[11px] text-muted-foreground">Collection analytics — not GST filing liability.</p>
+          <div className="space-y-0.5">
+            <span className="font-semibold text-foreground">Advance GST Accounting (Notification 66/2017 & Section 13(2)): </span>
+            <div className="text-[11px] text-muted-foreground">
+              Taxable Service Advances: <strong className="font-mono text-foreground">{formatMoney(totalAdvanceLiability)}</strong> · Prior Advance Tax Adjusted on Invoices: <strong className="font-mono text-foreground">- {formatMoney(totalAdvanceGstAdjusted)}</strong> (No Double Tax)
+            </div>
           </div>
           <div className="text-[11px] text-muted-foreground">
-            Register Total Tax: <strong className="font-mono text-foreground">{formatMoney(registerSalesTaxTotal)}</strong> · Output Liability: <strong className="font-mono text-foreground">{formatMoney(totalOutputLiability)}</strong>
+            Register Total Tax: <strong className="font-mono text-foreground">{formatMoney(registerOutputTaxTotal)}</strong> · Output Liability: <strong className="font-mono text-foreground">{formatMoney(totalOutputLiability)}</strong>
           </div>
         </div>
 
         {/* Detailed Tax Head Breakdown */}
         <div className="mt-3 grid gap-2 sm:grid-cols-2 text-xs border-t pt-3">
           <div className="space-y-1">
-            <span className="font-semibold text-muted-foreground">Output Tax Breakdown (Sales):</span>
+            <span className="font-semibold text-muted-foreground">Output Tax Breakdown (Sales & Advances):</span>
             <div className="flex gap-4 font-mono">
               <span>CGST: <strong className="text-foreground">{formatMoney(outputCgst)}</strong></span>
               <span>SGST: <strong className="text-foreground">{formatMoney(outputSgst)}</strong></span>
@@ -1173,7 +1330,11 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
                   <TableCell>
                     <span
                       className={`rounded-md px-1.5 py-0.5 text-xs font-medium uppercase ${
-                        tx.type === "Sale" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-sky-500/10 text-sky-600 dark:text-sky-400"
+                        tx.type === "Sale"
+                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                          : tx.type === "Advance"
+                          ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
+                          : "bg-sky-500/10 text-sky-600 dark:text-sky-400"
                       }`}
                     >
                       {tx.type}
@@ -1186,6 +1347,11 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
                     {tx.supplierInvoiceNumber && (
                       <div className="text-[10px] text-muted-foreground font-sans">
                         Inv: <span className="font-mono font-semibold text-foreground">{tx.supplierInvoiceNumber}</span>
+                      </div>
+                    )}
+                    {tx.notes && (
+                      <div className="text-[10px] text-muted-foreground font-sans">
+                        {tx.notes}
                       </div>
                     )}
                   </TableCell>
@@ -1231,37 +1397,90 @@ function FinancialReconciliationReport({ from, to }: { from?: number; to?: numbe
     () => purchases.filter((p) => p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed"),
     [purchases]
   );
+  const activeReceipts = useMemo(
+    () => receipts.filter((r) => r.postingStatus !== "failed" && r.postingStatus !== "reversed" && (r as any).status !== "cancelled"),
+    [receipts]
+  );
 
   const invRange = useRange(activeInvoices, from, to);
   const purRange = useRange(activePurchases, from, to);
+  const recRange = useRange(activeReceipts, from, to);
 
-  // Accounts Receivable Reconciliation
-  const totalGrossInvoices = invRange.reduce((s, i) => s + i.grandTotal, 0);
-  const totalReceivableBalance = invRange.reduce((s, i) => s + i.balance, 0);
-  const totalAllocatedReceipts = invRange.reduce((s, i) => s + (i.amountPaid || 0), 0);
-  const arReconciles = Math.abs(totalGrossInvoices - (totalAllocatedReceipts + totalReceivableBalance)) < 0.01;
+  // Accounts Receivable Reconciliation (Expanded Formula)
+  // Opening AR + Invoices + Debit Adjustments - Receipts - Credit Notes - Advance Allocations - Refund/Write-off Adjustments ± Reversals = Closing AR
+  const openingAr = useMemo(() => {
+    if (!from) return 0;
+    return activeInvoices.filter((i) => i.date < from).reduce((s, i) => s + (i.balance || 0), 0);
+  }, [activeInvoices, from]);
 
-  // Accounts Payable Reconciliation
-  const totalGrossPurchases = purRange.reduce((s, p) => s + p.grandTotal, 0);
-  const totalPayableBalance = purRange.reduce((s, p) => s + p.balance, 0);
-  const totalAllocatedPayments = purRange.reduce((s, p) => s + ((p.grandTotal || 0) - (p.balance || 0)), 0);
-  const apReconciles = Math.abs(totalGrossPurchases - (totalAllocatedPayments + totalPayableBalance)) < 0.01;
+  const arInvoices = invRange.reduce((s, i) => s + i.grandTotal, 0);
+  const arDebitAdjustments = invRange.reduce((s, i) => s + Number((i as any).debitAdjustment || 0), 0);
+  const arAdvanceAllocations = invRange.reduce((s, i) => s + Number(((i as any).advanceAllocatedPaise || 0) / 100), 0);
+  const arReceipts = invRange.reduce((s, i) => s + Math.max(0, (i.amountPaid || 0) - (((i as any).advanceAllocatedPaise || 0) / 100)), 0);
+  const arCreditNotes = invRange.reduce((s, i) => s + Number((i as any).creditNotesTotal || (i as any).creditNoteAmount || 0), 0);
+  const arRefundWriteOff = invRange.reduce((s, i) => s + Number((i as any).writeOffAmount || (i as any).refundDiscountAdjustment || 0), 0);
+  const arReversals = invRange.reduce((s, i) => s + Number((i as any).reversalAdjustment || 0), 0);
 
-  // GST Register Parity
-  const registerTaxTotal = invRange.reduce((s, i) => s + resolveDocumentTaxes(i).totalTax, 0);
-  const summaryOutputLiability = invRange.reduce((s, i) => s + (resolveDocumentTaxes(i).cgst + resolveDocumentTaxes(i).sgst + resolveDocumentTaxes(i).igst), 0);
-  const gstReconciles = Math.abs(registerTaxTotal - summaryOutputLiability) < 0.01;
+  const calculatedClosingAr = openingAr + arInvoices + arDebitAdjustments - arReceipts - arCreditNotes - arAdvanceAllocations - arRefundWriteOff + arReversals;
+  const actualClosingAr = openingAr + invRange.reduce((s, i) => s + (i.balance || 0), 0);
+  const arVariance = Math.abs(calculatedClosingAr - actualClosingAr);
+  const arReconciles = arVariance < 0.01;
+
+  // Accounts Payable Reconciliation (Expanded Formula)
+  // Opening AP + Purchases + Credit Adjustments - Payments - Debit Notes - Supplier Advance Allocations - Refund/Discount Adjustments ± Reversals = Closing AP
+  const openingAp = useMemo(() => {
+    if (!from) return 0;
+    return activePurchases.filter((p) => p.date < from).reduce((s, p) => s + (p.balance || 0), 0);
+  }, [activePurchases, from]);
+
+  const apPurchases = purRange.reduce((s, p) => s + p.grandTotal, 0);
+  const apCreditAdjustments = purRange.reduce((s, p) => s + Number((p as any).creditAdjustment || 0), 0);
+  const apSupplierAdvanceAllocations = purRange.reduce((s, p) => s + Number(((p as any).advanceAllocatedPaise || 0) / 100), 0);
+  const apPayments = purRange.reduce((s, p) => {
+    const totalSettled = p.amountPaid !== undefined ? p.amountPaid : (p.grandTotal - p.balance);
+    return s + Math.max(0, (totalSettled || 0) - (((p as any).advanceAllocatedPaise || 0) / 100));
+  }, 0);
+  const apDebitNotes = purRange.reduce((s, p) => s + Number((p as any).debitNotesTotal || (p as any).debitNoteAmount || 0), 0);
+  const apRefundDiscount = purRange.reduce((s, p) => s + Number((p as any).discountAdjustment || (p as any).refundDiscountAdjustment || 0), 0);
+  const apReversals = purRange.reduce((s, p) => s + Number((p as any).reversalAdjustment || 0), 0);
+
+  const calculatedClosingAp = openingAp + apPurchases + apCreditAdjustments - apPayments - apDebitNotes - apSupplierAdvanceAllocations - apRefundDiscount + apReversals;
+  const actualClosingAp = openingAp + purRange.reduce((s, p) => s + (p.balance || 0), 0);
+  const apVariance = Math.abs(calculatedClosingAp - actualClosingAp);
+  const apReconciles = apVariance < 0.01;
+
+  // GST Statutory Position & Register Parity
+  let invoiceNetTaxTotal = 0;
+  for (const inv of invRange) {
+    const t = resolveDocumentTaxes(inv);
+    const advanceTaxAdj = (inv.advanceGstAdjustedPaise
+      ? inv.advanceGstAdjustedPaise / 100
+      : (inv.advanceTaxPreviouslyAccounted || inv.advanceGstAdjusted || 0));
+    invoiceNetTaxTotal += Math.max(0, t.totalTax - advanceTaxAdj);
+  }
+
+  let serviceAdvanceTaxTotal = 0;
+  for (const r of recRange) {
+    const isAdv = r.allocationType === "ADVANCE" || !r.invoiceId;
+    if (isAdv && r.taxTreatment === "ADVANCE_GST") {
+      serviceAdvanceTaxTotal += (r.totalTaxPaise || 0) / 100;
+    }
+  }
+
+  const netOutputTaxLiability = invoiceNetTaxTotal + serviceAdvanceTaxTotal;
+  const registerTaxTotal = netOutputTaxLiability;
+  const gstReconciles = Math.abs(registerTaxTotal - netOutputTaxLiability) < 0.01;
 
   return (
     <div className="mt-4 space-y-4">
       <Card className="card-soft p-4">
         <h3 className="font-semibold text-foreground mb-1">Financial Reconciliation Center</h3>
         <p className="text-xs text-muted-foreground mb-4">
-          Automated double-entry invariants, ledger reconciliation, and tax parity diagnostics.
+          Automated double-entry invariants, ledger reconciliation, and tax parity diagnostics across AR, AP, and GST registers.
         </p>
 
         <div className="grid gap-4 md:grid-cols-3">
-          {/* AR Invariant */}
+          {/* Expanded AR Invariant Card */}
           <div className="rounded-xl border bg-muted/20 p-4 space-y-2 text-xs">
             <div className="flex items-center justify-between">
               <span className="font-bold text-foreground">Accounts Receivable (AR)</span>
@@ -1270,13 +1489,21 @@ function FinancialReconciliationReport({ from, to }: { from?: number; to?: numbe
               </Badge>
             </div>
             <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
-              <div className="flex justify-between"><span>Gross Invoiced:</span><strong className="text-foreground">{formatMoney(totalGrossInvoices)}</strong></div>
-              <div className="flex justify-between"><span>Receipt Allocations:</span><strong className="text-emerald-600">- {formatMoney(totalAllocatedReceipts)}</strong></div>
-              <div className="flex justify-between border-t pt-1"><span>Closing Outstanding:</span><strong className="text-foreground">{formatMoney(totalReceivableBalance)}</strong></div>
+              <div className="flex justify-between"><span>Opening AR:</span><strong className="text-foreground">{formatMoney(openingAr)}</strong></div>
+              <div className="flex justify-between"><span>(+) Invoices Issued:</span><strong className="text-foreground">{formatMoney(arInvoices)}</strong></div>
+              {arDebitAdjustments > 0 && <div className="flex justify-between"><span>(+) Debit Adjustments:</span><strong className="text-foreground">{formatMoney(arDebitAdjustments)}</strong></div>}
+              <div className="flex justify-between"><span>(-) Direct Receipts:</span><strong className="text-emerald-600">- {formatMoney(arReceipts)}</strong></div>
+              {arCreditNotes > 0 && <div className="flex justify-between"><span>(-) Credit Notes:</span><strong className="text-amber-600">- {formatMoney(arCreditNotes)}</strong></div>}
+              <div className="flex justify-between"><span>(-) Advance Allocations:</span><strong className="text-primary">- {formatMoney(arAdvanceAllocations)}</strong></div>
+              {arRefundWriteOff > 0 && <div className="flex justify-between"><span>(-) Refund/Write-off:</span><strong className="text-muted-foreground">- {formatMoney(arRefundWriteOff)}</strong></div>}
+              {arReversals !== 0 && <div className="flex justify-between"><span>(±) Reversals:</span><strong className="text-foreground">{formatMoney(arReversals)}</strong></div>}
+              <div className="flex justify-between border-t pt-1 font-semibold text-foreground"><span>Calculated Closing AR:</span><span>{formatMoney(calculatedClosingAr)}</span></div>
+              <div className="flex justify-between text-muted-foreground"><span>Actual Closing Balance:</span><span>{formatMoney(actualClosingAr)}</span></div>
+              <div className="flex justify-between text-[10px] text-muted-foreground border-t pt-0.5"><span>Variance:</span><span>{formatMoney(arVariance)}</span></div>
             </div>
           </div>
 
-          {/* AP Invariant */}
+          {/* Expanded AP Invariant Card */}
           <div className="rounded-xl border bg-muted/20 p-4 space-y-2 text-xs">
             <div className="flex items-center justify-between">
               <span className="font-bold text-foreground">Accounts Payable (AP)</span>
@@ -1285,13 +1512,21 @@ function FinancialReconciliationReport({ from, to }: { from?: number; to?: numbe
               </Badge>
             </div>
             <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
-              <div className="flex justify-between"><span>Gross Purchases:</span><strong className="text-foreground">{formatMoney(totalGrossPurchases)}</strong></div>
-              <div className="flex justify-between"><span>Payment Allocations:</span><strong className="text-sky-600">- {formatMoney(totalAllocatedPayments)}</strong></div>
-              <div className="flex justify-between border-t pt-1"><span>Closing Payable:</span><strong className="text-foreground">{formatMoney(totalPayableBalance)}</strong></div>
+              <div className="flex justify-between"><span>Opening AP:</span><strong className="text-foreground">{formatMoney(openingAp)}</strong></div>
+              <div className="flex justify-between"><span>(+) Purchases Recorded:</span><strong className="text-foreground">{formatMoney(apPurchases)}</strong></div>
+              {apCreditAdjustments > 0 && <div className="flex justify-between"><span>(+) Credit Adjustments:</span><strong className="text-foreground">{formatMoney(apCreditAdjustments)}</strong></div>}
+              <div className="flex justify-between"><span>(-) Direct Payments:</span><strong className="text-sky-600">- {formatMoney(apPayments)}</strong></div>
+              {apDebitNotes > 0 && <div className="flex justify-between"><span>(-) Debit Notes:</span><strong className="text-amber-600">- {formatMoney(apDebitNotes)}</strong></div>}
+              <div className="flex justify-between"><span>(-) Supplier Advances:</span><strong className="text-primary">- {formatMoney(apSupplierAdvanceAllocations)}</strong></div>
+              {apRefundDiscount > 0 && <div className="flex justify-between"><span>(-) Refund/Discounts:</span><strong className="text-muted-foreground">- {formatMoney(apRefundDiscount)}</strong></div>}
+              {apReversals !== 0 && <div className="flex justify-between"><span>(±) Reversals:</span><strong className="text-foreground">{formatMoney(apReversals)}</strong></div>}
+              <div className="flex justify-between border-t pt-1 font-semibold text-foreground"><span>Calculated Closing AP:</span><span>{formatMoney(calculatedClosingAp)}</span></div>
+              <div className="flex justify-between text-muted-foreground"><span>Actual Closing Balance:</span><span>{formatMoney(actualClosingAp)}</span></div>
+              <div className="flex justify-between text-[10px] text-muted-foreground border-t pt-0.5"><span>Variance:</span><span>{formatMoney(apVariance)}</span></div>
             </div>
           </div>
 
-          {/* GST Register Parity */}
+          {/* GST Statutory Parity Card */}
           <div className="rounded-xl border bg-muted/20 p-4 space-y-2 text-xs">
             <div className="flex items-center justify-between">
               <span className="font-bold text-foreground">GST Statutory Invariant</span>
@@ -1300,9 +1535,11 @@ function FinancialReconciliationReport({ from, to }: { from?: number; to?: numbe
               </Badge>
             </div>
             <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
-              <div className="flex justify-between"><span>Register Total Tax:</span><strong className="text-foreground">{formatMoney(registerTaxTotal)}</strong></div>
-              <div className="flex justify-between"><span>Output Tax Liability:</span><strong className="text-foreground">{formatMoney(summaryOutputLiability)}</strong></div>
-              <div className="flex justify-between border-t pt-1"><span>Variance:</span><strong className="text-foreground">{formatMoney(Math.abs(registerTaxTotal - summaryOutputLiability))}</strong></div>
+              <div className="flex justify-between"><span>Net Invoices Tax:</span><strong className="text-foreground">{formatMoney(invoiceNetTaxTotal)}</strong></div>
+              <div className="flex justify-between"><span>(+) Service Advances Tax:</span><strong className="text-purple-600">+ {formatMoney(serviceAdvanceTaxTotal)}</strong></div>
+              <div className="flex justify-between border-t pt-1 font-semibold text-foreground"><span>Net Output Tax Liability:</span><span>{formatMoney(netOutputTaxLiability)}</span></div>
+              <div className="flex justify-between text-muted-foreground"><span>Register Total Output Tax:</span><span>{formatMoney(registerTaxTotal)}</span></div>
+              <div className="flex justify-between text-[10px] text-muted-foreground border-t pt-0.5"><span>Variance:</span><span>{formatMoney(Math.abs(registerTaxTotal - netOutputTaxLiability))}</span></div>
             </div>
           </div>
         </div>

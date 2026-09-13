@@ -249,26 +249,38 @@ export function QuotationsPage() {
     });
   }
 
+  function getEffectiveCompany(r: Quotation): CompanySettings | null {
+    const isDraft = !r.status || r.status === "draft";
+    const resolved = isDraft
+      ? (activeCompany || r.companySnapshot || company)
+      : (r.companySnapshot || activeCompany || company);
+    return (resolved as CompanySettings) || null;
+  }
+
   async function exportPDF(r: Quotation) {
-    if (!company) return;
-    await downloadQuotationPDF(r, company, cust(r.customerId), tpl(r.templateId));
+    const effComp = getEffectiveCompany(r);
+    if (!effComp) return;
+    await downloadQuotationPDF(r, effComp, cust(r.customerId), tpl(r.templateId));
     toast.success(`Downloaded ${r.number}.pdf`);
   }
   async function exportDOCX(r: Quotation) {
-    if (!company) return;
-    await downloadQuotationDOCX(r, company, cust(r.customerId));
+    const effComp = getEffectiveCompany(r);
+    if (!effComp) return;
+    await downloadQuotationDOCX(r, effComp, cust(r.customerId));
     toast.success(`Downloaded ${r.number}.docx`);
   }
   async function printQuote(r: Quotation) {
-    if (!company) return;
-    const blob = await exportQuotationPDF(r, company, cust(r.customerId), tpl(r.templateId));
+    const effComp = getEffectiveCompany(r);
+    if (!effComp) return;
+    const blob = await exportQuotationPDF(r, effComp, cust(r.customerId), tpl(r.templateId));
     const url = URL.createObjectURL(blob);
     const w = window.open(url);
     if (w) setTimeout(() => w.print(), 800);
   }
   async function share(r: Quotation) {
-    if (!company) return;
-    const blob = await exportQuotationPDF(r, company, cust(r.customerId), tpl(r.templateId));
+    const effComp = getEffectiveCompany(r);
+    if (!effComp) return;
+    const blob = await exportQuotationPDF(r, effComp, cust(r.customerId), tpl(r.templateId));
     const file = new File([blob], `${r.number}.pdf`, { type: "application/pdf" });
     const nav = navigator as any;
     if (nav.canShare?.({ files: [file] })) {

@@ -6,7 +6,8 @@ import { Eye, Download, Printer, Pencil, FileCheck, ExternalLink, Loader2 } from
 import { db, type Quotation, type Customer, type CompanySettings, type QuotationTemplate } from "@/lib/db";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useLive } from "@/lib/useLive";
-import { downloadQuotationPDF, printQuotationPDF, exportQuotationPDF } from "@/lib/quotationExport";
+import { downloadQuotationPDF, printQuotationPDF, exportQuotationPDF, triggerDownload } from "@/lib/quotationExport";
+import { toast } from "sonner";
 
 interface QuotationQuickPreviewModalProps {
   open: boolean;
@@ -26,6 +27,7 @@ interface QuotationQuickPreviewModalProps {
  * 
  * Displays all pages (Page 1, General Info, Tech Specs, Terms & Conditions, Bank Details, Signatory)
  * with 100% layout fidelity. Eliminates calculation or presentation drift between preview and export.
+ * Directly reuses the generated PDF Blob for Download and Print.
  */
 export function QuotationQuickPreviewModal({
   open,
@@ -41,11 +43,17 @@ export function QuotationQuickPreviewModal({
   const companySettings = companySettingsList[0];
 
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
   const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const prevBlobUrlRef = useRef<string | null>(null);
 
-  const comp = quotation?.companySnapshot || activeCompany || companySettings;
+  // Canonical resolution: Draft uses current Company Settings defaults, Issued uses frozen snapshots
+  const isDraft = !quotation?.status || quotation?.status === "draft";
+  const comp = isDraft
+    ? (activeCompany || quotation?.companySnapshot || companySettings)
+    : (quotation?.companySnapshot || activeCompany || companySettings);
   const cust = quotation?.customerSnapshot || (customers ? customers.find((c) => c.id === quotation?.customerId) : undefined);
   const template = quotation?.templateId ? templates.find((t) => t.id === quotation.templateId) : undefined;
 
@@ -56,6 +64,7 @@ export function QuotationQuickPreviewModal({
         prevBlobUrlRef.current = null;
       }
       setPdfUrl(null);
+      setPdfBlob(null);
       return;
     }
 
@@ -74,6 +83,7 @@ export function QuotationQuickPreviewModal({
 
         const url = URL.createObjectURL(blob);
         prevBlobUrlRef.current = url;
+        setPdfBlob(blob);
         setPdfUrl(url);
       } catch (err: any) {
         console.error("Failed to render PDF preview:", err);
@@ -213,8 +223,20 @@ export function QuotationQuickPreviewModal({
               variant="outline"
               size="sm"
               className="gap-1.5"
+              disabled={loading}
               onClick={() => {
-                if (comp) {
+                if (pdfUrl) {
+                  const iframe = document.createElement("iframe");
+                  iframe.style.display = "none";
+                  iframe.src = pdfUrl;
+                  document.body.appendChild(iframe);
+                  iframe.onload = () => {
+                    iframe.contentWindow?.print();
+                    setTimeout(() => {
+                      if (document.body.contains(iframe)) document.body.removeChild(iframe);
+                    }, 60000);
+                  };
+                } else if (comp && quotation) {
                   printQuotationPDF(quotation, comp as any, cust as any, template);
                 }
               }}
@@ -226,13 +248,37 @@ export function QuotationQuickPreviewModal({
               variant="default"
               size="sm"
               className="gap-1.5"
-              onClick={() => {
-                if (comp) {
-                  downloadQuotationPDF(quotation, comp as any, cust as any, template);
+              disabled={loading || downloading}
+              onClick={async () => {
+                if (downloading) return;
+                setDownloading(true);
+                try {
+                  let blobToDownload = pdfBlob;
+                  if (!blobToDownload && quotation && comp) {
+                    blobToDownload = await exportQuotationPDF(quotation, comp as any, cust as any, template);
+                    setPdfBlob(blobToDownload);
+                  }
+                  if (blobToDownload && quotation) {
+                    triggerDownload(blobToDownload, `${quotation.number}.pdf`);
+                    toast.success(`Downloaded ${quotation.number}.pdf`);
+                  }
+                } catch (err: any) {
+                  console.error("Failed to download PDF:", err);
+                  toast.error("Failed to download PDF.");
+                } finally {
+                  setDownloading(false);
                 }
               }}
             >
-              <Download className="h-3.5 w-3.5" /> Download PDF
+              {downloading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating PDF…
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5" /> Download PDF
+                </>
+              )}
             </Button>
           </div>
         </DialogFooter>
