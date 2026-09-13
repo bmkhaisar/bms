@@ -103,21 +103,31 @@ function ReportsPage() {
           </TabsList>
         </div>
 
-        {/* Row 2: Secondary Toolbar Row (Distinct Container, Centered, Clean Spacing, No Absolute Positioning) */}
-        <div className="flex items-center justify-center gap-6 min-h-[44px] mt-2 mb-3 px-4 py-1.5 bg-muted/25 border border-border/50 rounded-lg">
-          <TabsTrigger
-            value="financial-reconciliation"
-            className="flex items-center gap-1.5 text-xs font-medium px-4 py-2 rounded-md transition-all text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm"
+        {/* Row 2: Secondary Toolbar Row (Distinct Container, Centered, Clean Spacing, Responsive at <=390px, No Absolute Positioning) */}
+        <div className="w-full overflow-x-auto scrollbar-thin flex items-center justify-start sm:justify-center gap-3 sm:gap-6 min-h-[44px] mt-2 mb-3 px-3 py-1.5 bg-muted/25 border border-border/50 rounded-lg">
+          <Button
+            type="button"
+            variant={tab === "financial-reconciliation" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => handleTabChange("financial-reconciliation")}
+            className={`shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 sm:px-4 py-2 h-8 whitespace-nowrap transition-all ${
+              tab === "financial-reconciliation" ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm" : "text-muted-foreground hover:text-foreground"
+            }`}
           >
             <Scale className="h-3.5 w-3.5" /> Financial Reconciliation
-          </TabsTrigger>
+          </Button>
           <div className="h-4 w-px bg-border shrink-0" />
-          <TabsTrigger
-            value="gst-audit"
-            className="flex items-center gap-1.5 text-xs font-medium px-4 py-2 rounded-md transition-all text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm"
+          <Button
+            type="button"
+            variant={tab === "gst-audit" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => handleTabChange("gst-audit")}
+            className={`shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 sm:px-4 py-2 h-8 whitespace-nowrap transition-all ${
+              tab === "gst-audit" ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm" : "text-muted-foreground hover:text-foreground"
+            }`}
           >
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 data-[state=active]:text-primary-foreground" /> GST Data Audit
-          </TabsTrigger>
+            <ShieldCheck className={`h-3.5 w-3.5 ${tab === "gst-audit" ? "text-primary-foreground" : "text-emerald-500"}`} /> GST Data Audit
+          </Button>
         </div>
 
         {/* Report Content Panels */}

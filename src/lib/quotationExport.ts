@@ -780,9 +780,7 @@ export async function exportQuotationPDF(
   const isDraft = !quotation.status || quotation.status === "draft";
   const effectiveCompany = isDraft
     ? ({ ...quotation.companySnapshot, ...company } as CompanySettings)
-    : quotation.companySnapshot
-    ? ({ ...company, ...quotation.companySnapshot } as CompanySettings)
-    : company;
+    : ((quotation.companySnapshot as CompanySettings) || company);
   const logoData = await getLogoDataUrl();
   const companyLogoData = effectiveCompany.logo || null;
   const ctx: PdfContext = {
