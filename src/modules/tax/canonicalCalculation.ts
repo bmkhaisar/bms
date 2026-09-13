@@ -37,6 +37,7 @@ export interface CanonicalLineItem {
   cessRate?: number;
   isTaxInclusive?: boolean;
   unit?: string;
+  taxTreatment?: string;
 }
 
 export interface CanonicalExtraCharge {
@@ -58,6 +59,8 @@ export interface CanonicalCalculationInput {
   documentDiscountValue?: number;
   documentDiscountType?: "percentage" | "fixed";
   amountPaid?: number;
+  gstCalculationMode?: "item_wise" | "overall";
+  overallGstRate?: number;
 }
 
 export interface CanonicalCalculationResult extends TaxTotals {
@@ -79,6 +82,9 @@ export function calculateCanonicalTotals(
     override: input.isInterState,
   });
 
+  const isOverallMode = input.gstCalculationMode === "overall" && input.overallGstRate !== undefined;
+  const overallRate = Number(input.overallGstRate) || 0;
+
   const taxParams: TaxCalculationParams = {
     items: (input.items || []).map((it) => {
       const rate = Number(it.rate) || 0;
@@ -90,12 +96,25 @@ export function calculateCanonicalTotals(
           ? Number(it.discountPercent)
           : 0;
       // Resolve GST rate with complete fallback tolerance (PRD Addendum § 25)
-      const gstRate =
+      let gstRate =
         it.gstRate !== undefined
           ? Number(it.gstRate)
           : it.taxRate !== undefined
           ? Number(it.taxRate)
           : 0;
+
+      // PRD §§ 41-45: If Overall GST mode is selected, apply document-level GST rate
+      // to all eligible taxable lines, but do NOT tax items classified as exempt, nil_rated, or non_gst!
+      const isExplicitlyExempt =
+        it.taxTreatment === "exempt" ||
+        it.taxTreatment === "nil_rated" ||
+        it.taxTreatment === "non_gst" ||
+        it.taxTreatment === "zero_rated";
+
+      if (isOverallMode) {
+        gstRate = isExplicitlyExempt ? 0 : overallRate;
+      }
+
       const cessRate = Number(it.cessRate) || 0;
 
       return {
@@ -110,13 +129,14 @@ export function calculateCanonicalTotals(
         discountValue: discountPct,
         discountType: "percentage",
         pricingMode: it.isTaxInclusive ? "inclusive" : "exclusive",
+        taxTreatment: (it.taxTreatment as any) || (isExplicitlyExempt ? (it.taxTreatment as any) : "taxable"),
       };
     }),
     extraCharges: (input.extraCharges || []).map((c) => ({
       name: c.name || "Charge",
       amount: Number(c.amount) || 0,
       taxable: c.isTaxable !== false,
-      gstRate: Number(c.gstRate) || 0,
+      gstRate: isOverallMode ? (c.isTaxable !== false ? overallRate : 0) : Number(c.gstRate) || 0,
     })),
     companyGstMode: normMode as any,
     companyStateCode: input.companyStateCode,
@@ -127,6 +147,8 @@ export function calculateCanonicalTotals(
     documentDiscountValue: input.documentDiscountValue,
     documentDiscountType: input.documentDiscountType || "fixed",
     amountPaid: input.amountPaid || 0,
+    gstCalculationMode: input.gstCalculationMode,
+    overallGstRate: input.overallGstRate,
   };
 
   const computed: TaxTotals = calculateDocumentTaxes(taxParams);
@@ -221,6 +243,8 @@ export function extractCanonicalInputFromInvoice(
     documentDiscountValue: Number(invoice.discountTotal) || 0,
     documentDiscountType: "fixed",
     amountPaid: Number(invoice.amountPaid) || 0,
+    gstCalculationMode: (invoice as any).gstCalculationMode,
+    overallGstRate: (invoice as any).overallGstRate,
   };
 }
 

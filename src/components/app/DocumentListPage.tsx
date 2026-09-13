@@ -8,8 +8,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LineItemsEditor } from "./LineItemsEditor";
+import { StructuredTermsEditor } from "./StructuredTermsEditor";
 import { computeLine, computeTotals, applyStockDelta } from "@/lib/calc";
-import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge, AddressSnapshot } from "@/lib/db";
+import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge, AddressSnapshot, BankAccount, TermsTemplate, StructuredTermItem } from "@/lib/db";
 import { db, nextNumber, uid, getCompany } from "@/lib/db";
 import { useEffect, useState } from "react";
 import { useLive } from "@/lib/useLive";
@@ -68,6 +69,8 @@ export function DocumentListPage<T extends AnyDoc>({
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.orderBy("name").toArray());
   const quotations = useLive<Quotation>(() => kind === "invoice" ? db().quotations.orderBy("createdAt").reverse().toArray() : Promise.resolve([]));
+  const bankAccounts = useLive<BankAccount>(() => db().bankAccounts.orderBy("bankName").toArray());
+  const termsTemplates = useLive<TermsTemplate>(() => db().termsTemplates.orderBy("name").toArray());
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [openCustomerDrawer, setOpenCustomerDrawer] = useState(false);
@@ -415,7 +418,11 @@ export function DocumentListPage<T extends AnyDoc>({
     const extraCharges = (editing as any).extraCharges || [];
     const extraChargesTotal = extraCharges.reduce((s: number, c: ExtraCharge) => s + (Number(c.amount) || 0), 0);
 
-    const totals = computeTotals(editing.items, isIgst, { enableGst });
+    const totals = computeTotals(editing.items, isIgst, {
+      enableGst,
+      gstCalculationMode: (editing as any).gstCalculationMode,
+      overallGstRate: (editing as any).overallGstRate,
+    });
     const finalGrandTotal = totals.grandTotal + extraChargesTotal;
     const party = partyById(partyId);
 
@@ -434,6 +441,27 @@ export function DocumentListPage<T extends AnyDoc>({
     if (kind === "invoice") {
       const inv = patched as Invoice;
       const cust = party as Customer | undefined;
+
+      // Freeze presentation-critical master snapshots (PRD §§ 7-9, 28)
+      if (!inv.companySnapshot && activeCompany) {
+        inv.companySnapshot = createCompanySnapshot(activeCompany);
+      }
+      if (!inv.signatorySnapshot && activeCompany) {
+        inv.signatorySnapshot = createSignatorySnapshot(activeCompany, inv.signatoryOverride);
+      }
+      if (inv.includeBankDetails !== false && !inv.bankDetailsSnapshot) {
+        const bank = (bankAccounts || []).find(b => b.id === inv.bankAccountId) ||
+                     (bankAccounts || []).find(b => b.isDefault) ||
+                     (bankAccounts || [])[0];
+        if (bank) {
+          inv.bankDetailsSnapshot = bank;
+          inv.bankSnapshot = bank;
+        }
+      }
+      if (inv.includeTerms !== false && !inv.termsSnapshot && inv.structuredTerms?.length) {
+        inv.termsSnapshot = inv.structuredTerms.map(t => t.text);
+        inv.structuredTermsSnapshot = inv.structuredTerms;
+      }
       const billToSnapshot: AddressSnapshot = inv.billToSnapshot || (inv as any).billingAddressSnapshot || {
         partyName: cust?.name || "",
         tradingName: cust?.tradingName,
@@ -798,7 +826,11 @@ export function DocumentListPage<T extends AnyDoc>({
     if (!quote) return;
     const inv = editing as unknown as Invoice;
     const items = quote.items.map(item => computeLine({ ...item }));
-    const totals = computeTotals(items, inv.isIgst, { enableGst });
+    const totals = computeTotals(items, inv.isIgst, {
+      enableGst,
+      gstCalculationMode: quote.gstCalculationMode,
+      overallGstRate: quote.overallGstRate,
+    });
     const amountPaid = Number(inv.amountPaid) || 0;
     const extraCharges = quote.extraCharges ? [...quote.extraCharges] : [];
     const extraChargesTotal = extraCharges.reduce((sum, chg) => sum + (Number(chg.amount) || 0), 0);
@@ -833,6 +865,15 @@ export function DocumentListPage<T extends AnyDoc>({
       balance: Math.max(0, finalGrandTotal - amountPaid),
       notes: quote.notes,
       terms: quote.terms,
+      termsSnapshot: quote.termsSnapshot,
+      structuredTermsSnapshot: quote.structuredTermsSnapshot,
+      includeTerms: quote.includeTerms !== false,
+      bankAccountId: quote.bankAccountId,
+      bankSnapshot: quote.bankSnapshot,
+      bankDetailsSnapshot: quote.bankDetailsSnapshot || quote.bankSnapshot,
+      includeBankDetails: quote.includeBankDetails !== false,
+      gstCalculationMode: quote.gstCalculationMode || "item_wise",
+      overallGstRate: quote.overallGstRate,
       convertedFromQuotationId: quote.id,
     } as T);
     toast.success(`Loaded items from quotation ${quote.number}`);
@@ -1513,8 +1554,92 @@ export function DocumentListPage<T extends AnyDoc>({
               </div>
 
 
+              {kind === "invoice" && (
+                <div className="space-y-4">
+                  <StructuredTermsEditor
+                    enabled={(editing as Invoice).includeTerms !== false}
+                    onEnabledChange={(v) => setEditing({ ...editing, includeTerms: v } as T)}
+                    terms={(editing as Invoice).structuredTerms || []}
+                    onChange={(terms) => setEditing({
+                      ...editing,
+                      structuredTerms: terms,
+                      termsSnapshot: terms.map(t => t.text),
+                      terms: terms.map((t, i) => `${i + 1}. ${t.text}`).join("\n"),
+                    } as T)}
+                    templates={termsTemplates}
+                    onApplyTemplate={(templateId) => {
+                      const tmpl = termsTemplates.find(t => t.id === templateId);
+                      if (!tmpl) return;
+                      const items: StructuredTermItem[] = (tmpl.structuredTerms && tmpl.structuredTerms.length > 0)
+                        ? tmpl.structuredTerms.map((t, idx) => ({ ...t, id: uid(), order: idx + 1 }))
+                        : (tmpl.terms || []).filter(t => t.enabled).map((t, idx) => ({
+                            id: uid(),
+                            order: idx + 1,
+                            text: t.text,
+                            format: "NUMBERED",
+                          }));
+                      setEditing({
+                        ...editing,
+                        termsTemplateId: templateId,
+                        structuredTerms: items,
+                        termsSnapshot: items.map(x => x.text),
+                        terms: items.map((x, i) => `${i + 1}. ${x.text}`).join("\n"),
+                      } as T);
+                    }}
+                    documentType="invoice"
+                  />
+
+                  {/* Bank Details Selector (PRD Correction #6, #26) */}
+                  <Card className="p-3.5 space-y-3">
+                    <div className="flex items-center justify-between border-b pb-2">
+                      <div>
+                        <div className="text-xs font-semibold text-foreground">Bank Settlement Details</div>
+                        <div className="text-[11px] text-muted-foreground">Select bank account to print on invoice</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="inv-include-bank" className="text-xs text-muted-foreground">Show on Invoice</Label>
+                        <Switch
+                          id="inv-include-bank"
+                          checked={(editing as Invoice).includeBankDetails !== false}
+                          onCheckedChange={(v) => setEditing({ ...editing, includeBankDetails: v } as T)}
+                        />
+                      </div>
+                    </div>
+
+                    {(editing as Invoice).includeBankDetails !== false && (
+                      <div className="space-y-2">
+                        <Select
+                          value={(editing as Invoice).bankAccountId || ""}
+                          onValueChange={(bankId) => {
+                            const b = bankAccounts.find(x => x.id === bankId);
+                            setEditing({
+                              ...editing,
+                              bankAccountId: bankId,
+                              bankSnapshot: b,
+                              bankDetailsSnapshot: b,
+                            } as T);
+                          }}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Select company bank account" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {bankAccounts.length === 0 && <SelectItem value="__none__" disabled>No bank accounts configured</SelectItem>}
+                            {bankAccounts.map(b => (
+                              <SelectItem key={b.id} value={b.id} className="text-xs">
+                                {b.bankName} — {b.accountNo} ({b.accountName}) {b.isDefault ? " ★" : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                  </Card>
+                </div>
+              )}
+
               <div className="space-y-1">
-                <Label className="text-xs">Notes & Payment Terms</Label>
+                <Label className="text-xs">Notes {kind === "invoice" ? "& Remarks" : "& Payment Terms"}</Label>
                 <Textarea rows={2} value={(editing as AnyDoc).notes ?? ""} onChange={e => setEditing({ ...editing, notes: e.target.value } as T)} />
               </div>
 

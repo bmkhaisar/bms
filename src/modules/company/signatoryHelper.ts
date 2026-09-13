@@ -6,8 +6,8 @@ import type {
   SignatureDateMode,
   SignatureMode,
   TypedSignatureStyle,
-} from "@/modules/company/types";
-import { formatDate } from "@/lib/format";
+} from "./types.ts";
+import { formatDate } from "../../lib/format.ts";
 
 /**
  * Open-Source SIL OFL 1.1 fonts for Typed Signature.

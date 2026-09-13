@@ -509,7 +509,9 @@ function BanksMaster() {
               <F label="Account No. *"><Input value={editing.accountNo} onChange={e => setEditing({ ...editing, accountNo: e.target.value })} /></F>
               <F label="IFSC *"><Input value={editing.ifsc} onChange={e => setEditing({ ...editing, ifsc: e.target.value })} /></F>
               <F label="Branch"><Input value={editing.branch || ""} onChange={e => setEditing({ ...editing, branch: e.target.value })} /></F>
+              <F label="Account Type"><Input placeholder="e.g. Current Account" value={editing.accountType || ""} onChange={e => setEditing({ ...editing, accountType: e.target.value })} /></F>
               <F label="UPI"><Input value={editing.upi || ""} onChange={e => setEditing({ ...editing, upi: e.target.value })} /></F>
+              <F label="SWIFT"><Input placeholder="e.g. SBININBB123" value={editing.swift || ""} onChange={e => setEditing({ ...editing, swift: e.target.value })} /></F>
             </div>
           )}
           <DialogFooter>

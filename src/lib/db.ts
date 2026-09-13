@@ -281,11 +281,25 @@ export interface Quotation {
   electricalSnapshot?: TechSpecSection[];
   termsSnapshot?: string[];
   bankSnapshot?: BankAccount;
+  bankDetailsSnapshot?: BankAccount;
   templateId?: ID;
   convertedInvoiceId?: ID;
   companySnapshot?: any;
   signatoryOverride?: any;
   signatorySnapshot?: any;
+  // Options & Structured Features
+  gstCalculationMode?: "item_wise" | "overall";
+  overallGstRate?: number;
+  includeGeneralInfo?: boolean;
+  includeTechSpecs?: boolean;
+  includeTerms?: boolean;
+  includeBankDetails?: boolean;
+  structuredSections?: QuotationSection[];
+  structuredTerms?: StructuredTermItem[];
+  structuredTermsSnapshot?: any[];
+  generalInformationSnapshot?: any[];
+  technicalSpecificationSnapshot?: any[];
+  closingMessage?: string;
   // References
   generalInfoTemplateId?: ID;
   techSpecTemplateId?: ID;
@@ -334,6 +348,17 @@ export interface Invoice {
   advanceGstAdjustedPaise?: number;
   advanceGstAdjusted?: number;
   notes?: string; terms?: string;
+  termsSnapshot?: string[];
+  structuredTerms?: StructuredTermItem[];
+  structuredTermsSnapshot?: any[];
+  termsTemplateId?: ID;
+  includeTerms?: boolean;
+  includeBankDetails?: boolean;
+  bankAccountId?: ID;
+  bankSnapshot?: BankAccount;
+  bankDetailsSnapshot?: BankAccount;
+  gstCalculationMode?: "item_wise" | "overall";
+  overallGstRate?: number;
   status: "draft" | "unpaid" | "partial" | "paid" | "posted" | "cancelled";
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
   voucherId?: string;
@@ -446,12 +471,48 @@ export interface Purchase {
   updatedAt?: number;
 }
 
-// --- New masters ---
+// --- New masters & Structured Presentation Models (PRD §§ 4, 11, 20, 25, 31) ---
 export interface SizePreset { id: ID; label: string; createdAt: number; }
+
+export type ValueType = "TEXT" | "MULTILINE" | "BULLET_LIST";
+
+export interface SectionRow {
+  id: string;
+  label: string;
+  valueType?: ValueType;
+  value: string;
+  bullets?: string[];
+  order?: number;
+}
+
+export interface QuotationSection {
+  id: string;
+  type: "GENERAL_INFO" | "SPEC_TABLE";
+  title: string;
+  subtitle?: string;
+  order: number;
+  rows: SectionRow[];
+}
+
+export type TermFormat = "NUMBERED" | "BULLET" | "PARAGRAPH";
+
+export interface StructuredTermItem {
+  id: string;
+  order: number;
+  text: string;
+  format?: TermFormat;
+  emphasis?: boolean;
+}
+
+export interface StructuredTermsSection {
+  title: string;
+  items: StructuredTermItem[];
+}
 
 export interface TermItem { id: string; text: string; enabled: boolean; }
 export interface TermsTemplate {
-  id: ID; name: string; isDefault?: boolean; terms: TermItem[]; createdAt: number;
+  id: ID; name: string; kind?: "quotation" | "invoice"; isDefault?: boolean;
+  terms: TermItem[]; structuredTerms?: StructuredTermItem[]; createdAt: number;
 }
 
 export interface GeneralInfoField { key: string; label: string; value: string; }
@@ -467,8 +528,17 @@ export interface TechSpecTemplate {
 }
 
 export interface BankAccount {
-  id: ID; bankName: string; accountName: string; accountNo: string;
-  ifsc: string; branch?: string; upi?: string; isDefault?: boolean; createdAt: number;
+  id: ID;
+  bankName: string;
+  accountName: string;
+  accountNo: string;
+  ifsc: string;
+  branch?: string;
+  accountType?: string;
+  upi?: string;
+  swift?: string;
+  isDefault?: boolean;
+  createdAt: number;
 }
 
 export interface QuotationTemplate {

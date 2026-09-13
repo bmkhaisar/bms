@@ -127,6 +127,15 @@ export async function convertQuotationToInvoice(
       status: "draft", // Correction 4: Draft invoice awaiting employee review
       notes: quotation.notes,
       terms: quotation.terms,
+      termsSnapshot: quotation.termsSnapshot,
+      structuredTermsSnapshot: quotation.structuredTermsSnapshot,
+      includeTerms: quotation.includeTerms !== false,
+      bankAccountId: quotation.bankAccountId,
+      bankSnapshot: quotation.bankSnapshot,
+      bankDetailsSnapshot: quotation.bankDetailsSnapshot || quotation.bankSnapshot,
+      includeBankDetails: quotation.includeBankDetails !== false,
+      gstCalculationMode: quotation.gstCalculationMode || "item_wise",
+      overallGstRate: quotation.overallGstRate,
       companySnapshot: quotation.companySnapshot,
       signatorySnapshot: quotation.signatorySnapshot,
       signatoryOverride: quotation.signatoryOverride,
@@ -134,6 +143,9 @@ export async function convertQuotationToInvoice(
       createdAt: now,
       version: 1,
     };
+
+    // Note: By default, General Information and Technical / Fabrication Specifications
+    // are Quotation-only commercial content and MUST NOT leak into Sales Invoices (PRD § 28, 29, Correction #12)
 
     // Save draft invoice to local IndexedDB
     await db().invoices.put(invoice);

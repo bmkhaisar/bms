@@ -73,6 +73,8 @@ export interface TaxCalculationParams {
   documentDiscountType?: DiscountType;
   enableGst?: boolean; // false for pure commercial Non-GST invoice
   amountPaid?: number;
+  gstCalculationMode?: "item_wise" | "overall";
+  overallGstRate?: number;
 }
 
 export interface ComputedTaxLine {
@@ -166,6 +168,8 @@ export interface TaxTotals {
     cess: number;
     totalTax: number;
   }>;
+  gstCalculationMode?: "item_wise" | "overall";
+  overallGstRate?: number;
 }
 
 export interface TaxSnapshot {

@@ -119,6 +119,8 @@ export interface Totals {
   grandTotal: number;
   extraChargesTotal?: number;
   extraChargesTaxTotal?: number;
+  gstCalculationMode?: "item_wise" | "overall";
+  overallGstRate?: number;
 }
 
 export function computeTotals(
@@ -131,6 +133,8 @@ export function computeTotals(
     placeOfSupply?: string;
     companyGstMode?: string;
     documentDiscountValue?: number;
+    gstCalculationMode?: "item_wise" | "overall";
+    overallGstRate?: number;
   }
 ): Totals {
   const result = calculateCanonicalTotals({
@@ -145,6 +149,7 @@ export function computeTotals(
       cessRate: Number(it.cessRate) || 0,
       isTaxInclusive: Boolean(it.isTaxInclusive),
       unit: it.unit,
+      taxTreatment: it.taxTreatment,
     })),
     extraCharges: (options?.extraCharges || []).map((c) => ({
       name: c.name || c.label || "Charge",
@@ -158,6 +163,8 @@ export function computeTotals(
     placeOfSupply: options?.placeOfSupply,
     companyGstMode: options?.companyGstMode,
     documentDiscountValue: options?.documentDiscountValue,
+    gstCalculationMode: options?.gstCalculationMode,
+    overallGstRate: options?.overallGstRate,
   });
 
   return {
@@ -171,6 +178,8 @@ export function computeTotals(
     grandTotal: result.grandTotal,
     extraChargesTotal: result.extraChargesTotal,
     extraChargesTaxTotal: result.extraChargesTaxTotal,
+    gstCalculationMode: options?.gstCalculationMode,
+    overallGstRate: options?.overallGstRate,
   };
 }
 

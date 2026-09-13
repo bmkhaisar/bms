@@ -3,7 +3,8 @@ import autoTable from "jspdf-autotable";
 import { formatMoney, formatDate, numberToWordsIndian } from "@/lib/format";
 import type { CompanySnapshot, SignatoryConfig, SignatorySnapshot } from "@/modules/company/types";
 import { resolveDocumentSignatory, createTypedSignatureDataUrl } from "@/modules/company/signatoryHelper";
-import type { LineItem, ExtraCharge } from "@/lib/db";
+import type { LineItem, ExtraCharge, BankAccount, StructuredTermItem } from "@/lib/db";
+import { formatCompanyAddress } from "@/lib/companyAddress";
 
 const PDF_CCY = "Rs. ";
 const money = (val: number) => formatMoney(val, PDF_CCY);
@@ -62,6 +63,15 @@ export interface NormalizedDocument {
   balance?: number;
   notes?: string;
   terms?: string;
+  termsSnapshot?: string[];
+  structuredTerms?: StructuredTermItem[];
+  includeTerms?: boolean;
+  bankAccountId?: string;
+  bankSnapshot?: BankAccount;
+  bankDetailsSnapshot?: BankAccount;
+  includeBankDetails?: boolean;
+  gstCalculationMode?: "item_wise" | "overall";
+  overallGstRate?: number;
   paymentMode?: string;
   enableGst?: boolean;
   watermarkMode?: "off" | "logo" | "company_logo" | "custom";
@@ -185,15 +195,13 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   doc.setFontSize(8.5);
   doc.setTextColor(75, 85, 99);
 
+  const compAddr = formatCompanyAddress(comp as any);
   const compAddressParts = [
-    comp.address,
-    comp.city && comp.state
-      ? `${comp.city}, ${comp.state} ${comp.pincode || ""}`
-      : comp.city || comp.state,
-    comp.phone ? `Phone: ${comp.phone}` : "",
-    comp.email ? `Email: ${comp.email}` : "",
-    isTaxDoc && comp.gstin ? `GSTIN: ${comp.gstin}` : "",
-    comp.pan ? `PAN: ${comp.pan}` : "",
+    ...compAddr.addressLines,
+    compAddr.cityStatePincode,
+    compAddr.contactLine,
+    isTaxDoc && compAddr.gstin ? `GSTIN: ${compAddr.gstin}` : "",
+    compAddr.pan ? `PAN: ${compAddr.pan}` : "",
   ].filter(Boolean);
 
   let compY = y + 9.5;
@@ -680,17 +688,23 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   y += 6;
 
   // 7. Settlement & Banking Details
-  if (docData.receiptDetails || comp.bankName || comp.upiId) {
+  if (docData.receiptDetails || (docData.includeBankDetails !== false && (docData.bankDetailsSnapshot || docData.bankSnapshot || comp.bankName || comp.upiId))) {
+    if (y > pageH - 45) {
+      doc.addPage();
+      renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
+      y = margin;
+    }
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
     doc.setTextColor(107, 114, 128);
     doc.text(docData.kind === "receipt" ? "RECEIPT VOUCHER SETTLEMENT & AUDIT" : "PAYMENT / BANK SETTLEMENT", margin, y);
-    y += 4;
+    y += 3.5;
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(75, 85, 99);
     if (docData.receiptDetails) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(75, 85, 99);
       if (docData.receiptDetails.natureOfSupply) {
         doc.text(`Nature of Supply: ${docData.receiptDetails.natureOfSupply} · Place of Supply: ${docData.receiptDetails.placeOfSupply || "—"}`, margin, y);
         y += 3.5;
@@ -706,38 +720,78 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
         y += 3.5;
       }
     } else {
-      if (comp.bankName) {
-        doc.text(
-          `Bank: ${comp.bankName} · A/C: ${comp.bankAccountNo || "—"} · IFSC: ${comp.bankIfsc || "—"}`,
-          margin,
-          y
-        );
-        y += 3.5;
-      }
-      if (comp.upiId) {
-        doc.text(`UPI VPA: ${comp.upiId}`, margin, y);
-        y += 3.5;
+      const rawBank: any = docData.bankDetailsSnapshot || docData.bankSnapshot || (comp.bankName ? {
+        accountName: (comp as any).bankAccountName || comp.legalName || comp.name,
+        accountNo: comp.bankAccountNo || (comp as any).bankAccount,
+        bankName: comp.bankName,
+        ifsc: comp.bankIfsc,
+        branch: (comp as any).bankBranch,
+        upi: comp.upiId,
+      } : null);
+
+      if (rawBank && (rawBank.bankName || rawBank.accountNo)) {
+        const bankRows: [string, string][] = [
+          ["Account Holder Name", rawBank.accountName || rawBank.accountHolderName || comp.legalName || comp.name || "Business Entity"],
+          ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || "—"],
+          ["Bank Name", rawBank.bankName || "—"],
+          ["IFSC Code", rawBank.ifsc || rawBank.bankIfsc || "—"],
+        ];
+        if (rawBank.branch) bankRows.push(["Branch", rawBank.branch]);
+        if (rawBank.upi) bankRows.push(["UPI ID / VPA", rawBank.upi]);
+
+        autoTable(doc, {
+          body: bankRows,
+          startY: y,
+          margin: { left: margin, right: Math.max(margin + 50, pageW / 2) },
+          styles: { font: "helvetica", fontSize: 7.5, cellPadding: 1.8, lineColor: [229, 231, 235], lineWidth: 0.1 },
+          columnStyles: { 0: { fontStyle: "bold", cellWidth: 38, fillColor: [249, 250, 251] } },
+          theme: "grid",
+        });
+        y = (doc as any).lastAutoTable.finalY + 4;
       }
     }
-    y += 3;
   }
 
-  // 8. Terms & Signatory
-  if (docData.terms || comp.terms) {
+  // 8. Terms & Conditions (Hanging indent, full multi-page support without slicing)
+  if (docData.includeTerms !== false && (docData.terms || docData.termsSnapshot?.length || comp.terms)) {
+    if (y > pageH - 35) {
+      doc.addPage();
+      renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
+      y = margin;
+    }
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
     doc.setTextColor(107, 114, 128);
     doc.text("TERMS & CONDITIONS", margin, y);
     y += 4;
 
+    const termLines: string[] = docData.termsSnapshot?.length
+      ? docData.termsSnapshot
+      : (docData.terms || comp.terms || "").split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
+
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     doc.setTextColor(107, 114, 128);
-    const termLines = (docData.terms || comp.terms || "").split("\n").slice(0, 3);
-    for (const tl of termLines) {
-      doc.text(tl, margin, y);
-      y += 3.5;
+
+    for (let i = 0; i < termLines.length; i++) {
+      const t = termLines[i].replace(/^\d+[.)]\s*/, "");
+      const lines = doc.splitTextToSize(t, pageW - margin * 2 - 8);
+      const termH = lines.length * 3.4 + 1.5;
+
+      if (y + termH > pageH - 25) {
+        doc.addPage();
+        renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
+        y = margin;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.text(`${i + 1}.`, margin, y);
+      doc.setFont("helvetica", "normal");
+      doc.text(lines, margin + 6, y);
+      y += termH;
     }
+    y += 2;
   }
 
   // 9. Authorized Signatory Block

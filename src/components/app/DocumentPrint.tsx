@@ -1,6 +1,7 @@
 import type { CompanySettings, Invoice, Quotation, Purchase, Receipt, Customer, Supplier } from "@/lib/db";
 import { formatDate, formatMoney, numberToWordsIndian } from "@/lib/format";
 import { SignatoryBlock } from "@/components/app/SignatoryBlock";
+import { formatCompanyAddress } from "@/lib/companyAddress";
 
 export type DocumentKind = "invoice" | "quotation" | "purchase" | "receipt";
 
@@ -18,6 +19,7 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
   const anyDoc = doc as Invoice; // for shared field access with fallback
   const items = "items" in doc ? doc.items : [];
   const grandTotal = (doc as Invoice).grandTotal ?? (doc as Receipt).amount;
+  const compAddr = formatCompanyAddress(company);
 
   return (
     <div id="print-doc" className="mx-auto max-w-[210mm] bg-white p-6 text-[12px] text-black print:p-0">
@@ -25,9 +27,13 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
         <div className="flex items-start gap-3">
           {company.logo && <img src={company.logo} alt="Logo" className="h-16 w-16 object-contain" />}
           <div>
-            <div className="text-xl font-bold">{company.name}</div>
-            {company.address && <div className="whitespace-pre-line text-[11px]">{company.address}</div>}
-            {company.mobile && <div className="text-[11px]">Mob: {company.mobile}</div>}
+            <div className="text-xl font-bold">{compAddr.companyName}</div>
+            {compAddr.addressLines.map((line, i) => (
+              <div key={i} className="text-[11px] text-gray-700">{line}</div>
+            ))}
+            {compAddr.cityStatePincode && <div className="text-[11px] text-gray-700">{compAddr.cityStatePincode}</div>}
+            {compAddr.contactLine && <div className="text-[11px] text-gray-600">{compAddr.contactLine}</div>}
+            {compAddr.gstin && <div className="text-[11px] font-semibold text-gray-900">GSTIN: {compAddr.gstin}</div>}
           </div>
         </div>
         <div className="text-right">

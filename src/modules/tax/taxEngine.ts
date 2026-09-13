@@ -342,6 +342,7 @@ export function calculateDocumentTaxes(params: TaxCalculationParams): TaxTotals 
   let subtotalPaise = 0;
   let lineDiscountsPaise = 0;
   let taxablePaise = 0;
+  let eligibleTaxablePaise = 0;
   let cgstPaise = 0;
   let sgstPaise = 0;
   let igstPaise = 0;
@@ -352,6 +353,14 @@ export function calculateDocumentTaxes(params: TaxCalculationParams): TaxTotals 
     subtotalPaise += toPaise(l.grossAmount);
     lineDiscountsPaise += toPaise(l.discountAmount);
     taxablePaise += toPaise(l.taxableValue);
+    const isExempt =
+      l.taxTreatment === "exempt" ||
+      l.taxTreatment === "nil_rated" ||
+      l.taxTreatment === "non_gst" ||
+      l.taxTreatment === "zero_rated";
+    if (!isExempt) {
+      eligibleTaxablePaise += toPaise(l.taxableValue);
+    }
     cgstPaise += toPaise(l.cgstAmount);
     sgstPaise += toPaise(l.sgstAmount);
     igstPaise += toPaise(l.igstAmount);
@@ -389,8 +398,27 @@ export function calculateDocumentTaxes(params: TaxCalculationParams): TaxTotals 
     igstPaise += toPaise(c.igstAmount);
   }
 
-  const totalGstPaise = cgstPaise + sgstPaise + igstPaise + cessPaise;
   const netTaxablePaise = Math.max(0, taxablePaise - docDiscountPaise);
+  const netEligibleTaxablePaise = Math.max(0, eligibleTaxablePaise - docDiscountPaise);
+
+  // PRD Correction #13: Overall GST applies one document rate consistently to all eligible taxable components
+  // including line discounts, document discount, and taxable extra charges (exempt items stay protected at 0%).
+  if (params.gstCalculationMode === "overall" && params.overallGstRate !== undefined && enableGst) {
+    const overallRate = Number(params.overallGstRate) || 0;
+    const overallTaxablePaise = netEligibleTaxablePaise + extraChargesTaxablePaise;
+    const overallGstPaise = overallRate > 0 ? Math.round((overallTaxablePaise * overallRate) / 100) : 0;
+    if (isInterState) {
+      igstPaise = overallGstPaise;
+      cgstPaise = 0;
+      sgstPaise = 0;
+    } else {
+      cgstPaise = Math.round(overallGstPaise / 2);
+      sgstPaise = overallGstPaise - cgstPaise;
+      igstPaise = 0;
+    }
+  }
+
+  const totalGstPaise = cgstPaise + sgstPaise + igstPaise + cessPaise;
   const netBeforeRoundPaise =
     netTaxablePaise + totalGstPaise + extraChargesBasePaise;
 

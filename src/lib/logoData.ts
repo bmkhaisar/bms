@@ -1,4 +1,4 @@
-import logo from "@/assets/bms-logo.png.asset.json";
+const logo = { url: "/bms-logo.png" };
 
 let cached: string | null = null;
 

@@ -8,9 +8,12 @@ import {
 import type {
   Quotation, CompanySettings, Customer, QuotationTemplate,
   GeneralInfoField, TechSpecSection, BankAccount, LineItem,
-} from "./db";
-import { formatDate, formatMoney, numberToWordsIndian } from "./format";
-import { getLogoDataUrl, getLogoBytes } from "./logoData";
+  QuotationSection, SectionRow, StructuredTermItem,
+} from "./db.ts";
+import { formatDate, formatMoney, numberToWordsIndian } from "./format.ts";
+import { getLogoDataUrl, getLogoBytes } from "./logoData.ts";
+import { formatCompanyAddress } from "./companyAddress.ts";
+import { resolveDocumentModel } from "./documentModel.ts";
 
 const FOOTER_MARK = "Built by MMA";
 // jsPDF's built-in Helvetica lacks the ₹ glyph (renders as superscript 1).
@@ -51,57 +54,111 @@ interface PdfContext {
 
 async function pdfHeader(ctx: PdfContext, isCover = false): Promise<number> {
   const { doc, company, template, accent, logoData, companyLogoData, pageW, margin } = ctx;
-  const headerH = isCover ? 32 : 22;
 
-  // Accent bar
+  // Top Accent bar
   doc.setFillColor(accent[0], accent[1], accent[2]);
-  doc.rect(0, 0, pageW, isCover ? 3 : 2, "F");
+  doc.rect(0, 0, pageW, isCover ? 3.5 : 2, "F");
 
-  // PRD § 30: Display current tenant Company Logo when configured. Do NOT use BMS logo fallback.
   const logo = companyLogoData || (company as any)?.logoUrl || (company as any)?.logo || null;
-  if (template.showLogo && logo) {
-    try {
-      const size = isCover ? 22 : 14;
-      doc.addImage(logo, "PNG", margin, isCover ? 8 : 5, size, size);
-    } catch { /* ignore */ }
-  }
+  const companyAddr = formatCompanyAddress(company);
 
-  const textX = template.showLogo && logo ? margin + (isCover ? 26 : 18) : margin;
-
-  doc.setFont(template.fontFamily, "bold");
-  doc.setFontSize(isCover ? 16 : 12);
-  doc.setTextColor(20, 20, 20);
-  doc.text(company.name || "Company", textX, isCover ? 15 : 10);
-
-  doc.setFont(template.fontFamily, "normal");
-  doc.setFontSize(8);
-  doc.setTextColor(90, 90, 90);
-  // Only name, address, and phone in the top header (per user preference).
-  const lines: string[] = [];
-  if (company.address) lines.push(company.address.replace(/\n/g, ", "));
-  if (company.mobile) lines.push(`Mob: ${company.mobile}`);
-
-  let y = isCover ? 20 : 14;
-  for (const t of lines) {
-    doc.text(t, textX, y, { maxWidth: pageW - textX - margin - 40 });
-    y += 4;
-  }
-
-  // Right block: QUOTATION title (cover only)
   if (isCover) {
+    let textX = margin;
+    if (template.showLogo && logo) {
+      try {
+        doc.addImage(logo, "PNG", margin, 7, 20, 20);
+        textX = margin + 24;
+      } catch { /* ignore */ }
+    }
+
+    doc.setFont(template.fontFamily, "bold");
+    doc.setFontSize(15);
+    doc.setTextColor(20, 20, 20);
+    doc.text(companyAddr.companyName, textX, 13);
+
+    doc.setFont(template.fontFamily, "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(70, 70, 70);
+
+    let y = 17.5;
+    // 1. Street Address Lines
+    for (const line of companyAddr.addressLines) {
+      doc.text(line, textX, y, { maxWidth: pageW - textX - margin - 58 });
+      y += 3.6;
+    }
+    // 2. City, State - Pincode
+    if (companyAddr.cityStatePincode) {
+      doc.text(companyAddr.cityStatePincode, textX, y, { maxWidth: pageW - textX - margin - 58 });
+      y += 3.6;
+    }
+    // 3. Contact Phone & Email
+    if (companyAddr.contactLine) {
+      doc.text(companyAddr.contactLine, textX, y, { maxWidth: pageW - textX - margin - 58 });
+      y += 3.6;
+    }
+    // 4. GSTIN
+    if (companyAddr.gstin) {
+      doc.setFont(template.fontFamily, "bold");
+      doc.setTextColor(40, 40, 40);
+      doc.text(`GSTIN: ${companyAddr.gstin}`, textX, y);
+      doc.setFont(template.fontFamily, "normal");
+      doc.setTextColor(70, 70, 70);
+      y += 3.6;
+    }
+
+    // Right block: QUOTATION title box
+    const boxW = 56;
+    const boxH = 14;
+    const boxX = pageW - margin - boxW;
     doc.setDrawColor(accent[0], accent[1], accent[2]);
     doc.setLineWidth(0.4);
-    doc.rect(pageW - margin - 55, 8, 55, 12);
-    doc.setFont(template.fontFamily, "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(accent[0], accent[1], accent[2]);
-    doc.text("QUOTATION", pageW - margin - 27.5, 15, { align: "center" });
-    doc.setFontSize(8);
-    doc.setTextColor(60, 60, 60);
-    doc.text(`No: ${ctx.quotation.number}`, pageW - margin - 27.5, 24, { align: "center" });
-  }
+    doc.setFillColor(250, 252, 255);
+    doc.rect(boxX, 7, boxW, boxH, "FD");
 
-  return headerH;
+    doc.setFont(template.fontFamily, "bold");
+    doc.setFontSize(12);
+    doc.setTextColor(accent[0], accent[1], accent[2]);
+    doc.text("QUOTATION", boxX + boxW / 2, 13.5, { align: "center" });
+
+    doc.setFont(template.fontFamily, "bold");
+    doc.setFontSize(8.5);
+    doc.setTextColor(50, 50, 50);
+    doc.text(`No: ${ctx.quotation.number}`, boxX + boxW / 2, 18.5, { align: "center" });
+
+    return Math.max(34, y + 2);
+  } else {
+    // Continuation page compact header
+    doc.setFont(template.fontFamily, "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(30, 30, 30);
+    doc.text(companyAddr.companyName, margin, 8);
+
+    doc.setFont(template.fontFamily, "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 100, 100);
+    const summaryAddr = [companyAddr.cityStatePincode, companyAddr.phone ? `Ph: ${companyAddr.phone}` : ""].filter(Boolean).join(" · ");
+    if (summaryAddr) {
+      doc.text(summaryAddr, margin, 12);
+    }
+
+    // Right: Document reference
+    doc.setFont(template.fontFamily, "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(accent[0], accent[1], accent[2]);
+    doc.text(`Quotation: ${ctx.quotation.number}`, pageW - margin, 8, { align: "right" });
+
+    doc.setFont(template.fontFamily, "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`Date: ${formatDate(ctx.quotation.date)}`, pageW - margin, 12, { align: "right" });
+
+    // Subtle divider line
+    doc.setDrawColor(220, 225, 230);
+    doc.setLineWidth(0.3);
+    doc.line(margin, 15, pageW - margin, 15);
+
+    return 18;
+  }
 }
 
 function pdfFooter(ctx: PdfContext, pageNum: number, totalPages: number) {
@@ -287,22 +344,46 @@ async function drawCover(ctx: PdfContext): Promise<number> {
   y = (doc as any).lastAutoTable.finalY + 4;
 
   // Totals + extras
-  const rightX = pageW - margin - 70;
+  const rightX = pageW - margin - 75;
   const rows: [string, string][] = [
     ["Subtotal", money(quotation.subtotal)],
-    ["Discount", `- ${money(quotation.discountTotal)}`],
-    ["GST", money(quotation.gstTotal)],
   ];
+  if (quotation.discountTotal && quotation.discountTotal > 0) {
+    rows.push(["Discount", `- ${money(quotation.discountTotal)}`]);
+  }
+
+  // GST Breakdown: Support Overall GST vs Item-wise GST (PRD §§ 41-45, Correction #10, #13)
+  if (quotation.gstCalculationMode === "overall" && quotation.overallGstRate !== undefined) {
+    const rate = quotation.overallGstRate;
+    if (quotation.isIgst) {
+      rows.push([`IGST (${rate}%)`, money(quotation.igstTotal ?? quotation.gstTotal)]);
+    } else {
+      rows.push([`CGST (${rate / 2}%)`, money(quotation.cgstTotal ?? quotation.gstTotal / 2)]);
+      rows.push([`SGST (${rate / 2}%)`, money(quotation.sgstTotal ?? quotation.gstTotal / 2)]);
+    }
+  } else {
+    if (quotation.isIgst) {
+      rows.push(["IGST", money(quotation.igstTotal ?? quotation.gstTotal)]);
+    } else if (quotation.cgstTotal || quotation.sgstTotal) {
+      rows.push(["CGST", money(quotation.cgstTotal ?? quotation.gstTotal / 2)]);
+      rows.push(["SGST", money(quotation.sgstTotal ?? quotation.gstTotal / 2)]);
+    } else {
+      rows.push(["GST", money(quotation.gstTotal)]);
+    }
+  }
+
   for (const c of quotation.extraCharges || []) {
     if (c.amount) rows.push([c.label || "Charge", money(c.amount)]);
   }
-  rows.push(["Round Off", money(quotation.roundOff)]);
+  if (quotation.roundOff) {
+    rows.push(["Round Off", money(quotation.roundOff)]);
+  }
 
   autoTable(doc, {
     body: rows, startY: y,
     margin: { left: rightX, right: margin },
     styles: { font: template.fontFamily, fontSize: 9, cellPadding: 1.5 },
-    columnStyles: { 0: { fontStyle: "bold", cellWidth: 30 }, 1: { halign: "right" } },
+    columnStyles: { 0: { fontStyle: "bold", cellWidth: 35 }, 1: { halign: "right" } },
     theme: "plain",
   });
   y = (doc as any).lastAutoTable.finalY + 1;
@@ -326,8 +407,16 @@ async function drawCover(ctx: PdfContext): Promise<number> {
   return y + wl.length * 4;
 }
 
-async function drawSectionsPage(ctx: PdfContext, title: string, sections: Array<{ heading: string; rows: [string, string][] }>) {
-  const { doc, template, accent, pageW, margin } = ctx;
+async function drawSectionsPage(
+  ctx: PdfContext,
+  title: string,
+  sections: Array<{
+    heading: string;
+    subtitle?: string;
+    rows: Array<[string, string] | { label: string; value: string; bullets?: string[] }>;
+  }>
+) {
+  const { doc, template, accent, pageW, pageH, margin } = ctx;
   doc.addPage();
   let y = (await pdfHeader(ctx, false)) + 6;
 
@@ -339,20 +428,57 @@ async function drawSectionsPage(ctx: PdfContext, title: string, sections: Array<
   doc.setDrawColor(accent[0], accent[1], accent[2]);
   doc.setLineWidth(0.4);
   doc.line(margin, y, pageW - margin, y);
-  y += 4;
+  y += 5;
 
   for (const s of sections) {
-    if (s.rows.length === 0) continue;
+    if (!s.rows || s.rows.length === 0) continue;
+
+    // Orphan heading prevention: ensure space for heading + at least 2 rows (~35mm)
+    if (y > pageH - 45) {
+      doc.addPage();
+      y = (await pdfHeader(ctx, false)) + 6;
+    }
+
     doc.setFont(template.fontFamily, "bold");
     doc.setFontSize(10);
-    doc.setTextColor(40, 40, 40);
+    doc.setTextColor(30, 30, 30);
     doc.text(s.heading, margin, y + 4);
+    let topOffset = 6;
+    if (s.subtitle) {
+      doc.setFont(template.fontFamily, "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(100, 100, 100);
+      doc.text(s.subtitle, margin, y + 8);
+      topOffset = 10;
+    }
+
+    const tableBody = s.rows.map(r => {
+      if (Array.isArray(r)) return [r[0], r[1]];
+      let val = r.value || "";
+      if (r.bullets && r.bullets.length > 0) {
+        val = r.bullets.map(b => `• ${b}`).join("\n");
+      }
+      return [r.label, val];
+    });
+
     autoTable(doc, {
-      body: s.rows, startY: y + 6,
+      body: tableBody,
+      startY: y + topOffset,
       margin: { left: margin, right: margin },
-      styles: { font: template.fontFamily, fontSize: 8.5, cellPadding: 2, lineColor: [220, 220, 220], lineWidth: 0.1 },
-      columnStyles: { 0: { fontStyle: "bold", cellWidth: 55, fillColor: [248, 250, 252] }, 1: {} },
+      styles: {
+        font: template.fontFamily,
+        fontSize: 8.5,
+        cellPadding: 2.5,
+        lineColor: [220, 225, 230],
+        lineWidth: 0.1,
+        overflow: "linebreak",
+      },
+      columnStyles: {
+        0: { fontStyle: "bold", cellWidth: 55, fillColor: [248, 250, 252], textColor: [40, 40, 40] },
+        1: { textColor: [30, 30, 30] },
+      },
       theme: "grid",
+      showHead: "everyPage",
     });
     y = (doc as any).lastAutoTable.finalY + 6;
   }
@@ -366,82 +492,193 @@ async function drawTermsPage(ctx: PdfContext) {
   doc.setFont(template.fontFamily, "bold");
   doc.setFontSize(13);
   doc.setTextColor(accent[0], accent[1], accent[2]);
-  doc.text("Terms, Conditions & Payment", margin, y);
+  doc.text("Terms, Conditions & Settlement", margin, y);
   y += 3;
   doc.setDrawColor(accent[0], accent[1], accent[2]);
+  doc.setLineWidth(0.4);
   doc.line(margin, y, pageW - margin, y);
   y += 6;
 
-  const terms = quotation.termsSnapshot?.length ? quotation.termsSnapshot : (quotation.terms ? quotation.terms.split(/\n+/) : company.terms ? company.terms.split(/\n+/) : []);
-  if (terms.length) {
-    doc.setFont(template.fontFamily, "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(40, 40, 40);
-    doc.text("Terms & Conditions", margin, y);
-    y += 4;
-    doc.setFont(template.fontFamily, "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(30, 30, 30);
-    for (let i = 0; i < terms.length; i++) {
-      const t = terms[i].trim();
-      if (!t) continue;
-      const lines = doc.splitTextToSize(`${i + 1}. ${t.replace(/^\d+[.)]\s*/, "")}`, pageW - margin * 2 - 4);
-      doc.text(lines, margin + 2, y);
-      y += lines.length * 4.5 + 1;
-      if (y > pageH - 40) { doc.addPage(); y = (await pdfHeader(ctx, false)) + 6; }
+  // 1. Terms & Conditions Section (Hanging Indent, Auto-Pagination, Structured Support)
+  if (quotation.includeTerms !== false) {
+    let termItems: Array<{ text: string; format?: string; title?: string }> = [];
+
+    if (quotation.structuredTermsSnapshot?.length) {
+      for (const sec of quotation.structuredTermsSnapshot) {
+        if (sec.title) termItems.push({ text: sec.title, title: sec.title });
+        for (const item of sec.items || []) {
+          termItems.push({ text: item.text, format: item.format || sec.format || "numbered" });
+        }
+      }
+    } else if (quotation.termsSnapshot?.length) {
+      termItems = quotation.termsSnapshot.map(t => ({ text: t, format: "numbered" }));
+    } else {
+      const raw = quotation.terms || company.terms || "";
+      const lines = raw.split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
+      termItems = lines.map(l => ({ text: l.replace(/^\d+[.)]\s*/, ""), format: "numbered" }));
     }
-    y += 4;
+
+    if (termItems.length > 0) {
+      doc.setFont(template.fontFamily, "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(30, 30, 30);
+      doc.text("Terms & Conditions", margin, y);
+      y += 4.5;
+
+      let numIdx = 1;
+      for (const t of termItems) {
+        if (t.title) {
+          // Section header within terms
+          if (y > pageH - 35) {
+            doc.addPage();
+            y = (await pdfHeader(ctx, false)) + 6;
+          }
+          doc.setFont(template.fontFamily, "bold");
+          doc.setFontSize(9);
+          doc.setTextColor(accent[0], accent[1], accent[2]);
+          doc.text(t.title, margin + 2, y);
+          y += 4;
+          continue;
+        }
+
+        const body = t.text.trim();
+        if (!body) continue;
+
+        // Hanging Indent: Number aligned at margin + 2, text lines wrapped at margin + 9
+        const isNumbered = t.format !== "bullet" && t.format !== "paragraph";
+        const isBullet = t.format === "bullet";
+        const textIndent = isNumbered ? 9 : isBullet ? 7 : 2;
+        const bulletWidth = isNumbered ? 7 : isBullet ? 5 : 0;
+        const maxTextW = pageW - margin * 2 - textIndent - 2;
+
+        doc.setFont(template.fontFamily, "normal");
+        doc.setFontSize(8.5);
+        const textLines = doc.splitTextToSize(body, maxTextW);
+
+        // Check if full term fits on current page
+        const termH = textLines.length * 3.8 + 2;
+        if (y + termH > pageH - 25) {
+          doc.addPage();
+          y = (await pdfHeader(ctx, false)) + 6;
+        }
+
+        // Draw number or bullet
+        if (isNumbered) {
+          doc.setFont(template.fontFamily, "bold");
+          doc.setTextColor(70, 70, 70);
+          doc.text(`${numIdx}.`, margin + 2, y);
+          numIdx++;
+        } else if (isBullet) {
+          doc.setFont(template.fontFamily, "bold");
+          doc.setTextColor(accent[0], accent[1], accent[2]);
+          doc.text("•", margin + 2, y);
+        }
+
+        // Draw wrapped body text starting with exact hanging indent
+        doc.setFont(template.fontFamily, "normal");
+        doc.setTextColor(35, 35, 35);
+        doc.text(textLines, margin + textIndent, y);
+
+        y += termH;
+      }
+      y += 4;
+    }
   }
 
-  const bank = quotation.bankSnapshot;
-  if (bank) {
-    doc.setFont(template.fontFamily, "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(accent[0], accent[1], accent[2]);
-    doc.text("Bank Details", margin, y);
-    y += 4;
-    autoTable(doc, {
-      body: [
-        ["Bank", bank.bankName],
-        ["A/C Name", bank.accountName],
-        ["A/C No.", bank.accountNo],
-        ["IFSC", bank.ifsc],
-        ...(bank.branch ? [["Branch", bank.branch]] : []),
-        ...(bank.upi ? [["UPI", bank.upi]] : []),
-      ],
-      startY: y,
-      margin: { left: margin, right: pageW / 2 },
-      styles: { font: template.fontFamily, fontSize: 9, cellPadding: 2 },
-      columnStyles: { 0: { fontStyle: "bold", cellWidth: 30, fillColor: [248, 250, 252] } },
-      theme: "grid",
-    });
-    y = (doc as any).lastAutoTable.finalY + 6;
+  // 2. Bank Details Section (PRD §§ 8-9, 78, 79 — Clean bordered table)
+  if (quotation.includeBankDetails !== false) {
+    const rawBank: any = quotation.bankDetailsSnapshot || quotation.bankSnapshot || (
+      company.bankName ? {
+        bankName: company.bankName,
+        accountName: (company as any).bankAccountName || (company as any).legalName || company.name,
+        accountNo: company.bankAccount || (company as any).bankAccountNo,
+        ifsc: company.bankIfsc,
+        branch: (company as any).bankBranch,
+        upi: (company as any).upiId,
+      } : null
+    );
+
+    if (rawBank && (rawBank.bankName || rawBank.accountNo)) {
+      if (y > pageH - 45) {
+        doc.addPage();
+        y = (await pdfHeader(ctx, false)) + 6;
+      }
+
+      doc.setFont(template.fontFamily, "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(accent[0], accent[1], accent[2]);
+      doc.text("Bank Settlement Details", margin, y);
+      y += 3.5;
+
+      const bankRows: [string, string][] = [
+        ["Account Holder Name", rawBank.accountName || rawBank.accountHolderName || (company as any).legalName || company.name || "Business Entity"],
+        ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || "—"],
+        ["Bank Name", rawBank.bankName || "—"],
+        ["IFSC Code", rawBank.ifsc || rawBank.bankIfsc || "—"],
+      ];
+      if (rawBank.branch) bankRows.push(["Branch", rawBank.branch]);
+      if (rawBank.accountType) bankRows.push(["Account Type", rawBank.accountType]);
+      if (rawBank.upi) bankRows.push(["UPI ID / VPA", rawBank.upi]);
+      if (rawBank.swift) bankRows.push(["SWIFT Code", rawBank.swift]);
+
+      autoTable(doc, {
+        body: bankRows,
+        startY: y,
+        margin: { left: margin, right: margin + 35 },
+        styles: {
+          font: template.fontFamily,
+          fontSize: 8.5,
+          cellPadding: 2,
+          lineColor: [220, 225, 230],
+          lineWidth: 0.1,
+        },
+        columnStyles: {
+          0: { fontStyle: "bold", cellWidth: 44, fillColor: [248, 250, 252], textColor: [40, 40, 40] },
+          1: { textColor: [20, 20, 20] },
+        },
+        theme: "grid",
+      });
+      y = (doc as any).lastAutoTable.finalY + 8;
+    }
   }
 
-  // Signature block
-  if (y > pageH - 60) { doc.addPage(); y = (await pdfHeader(ctx, false)) + 6; }
-  y = Math.max(y, pageH - 60);
+  // 3. Closing Message & Authorized Signatory Block (PRD § 80 — Non-destructive signature & stamp)
+  if (y > pageH - 52) {
+    doc.addPage();
+    y = (await pdfHeader(ctx, false)) + 6;
+  }
+  y = Math.max(y, pageH - 52);
+
   doc.setFont(template.fontFamily, "italic");
-  doc.setFontSize(9);
-  doc.setTextColor(60, 60, 60);
-  doc.text("Thank you for your business.", margin, y);
+  doc.setFontSize(8.5);
+  doc.setTextColor(80, 80, 80);
+  doc.text(quotation.closingMessage || "Thank you for your business. We look forward to working with you.", margin, y);
 
   const sigX = pageW - margin - 60;
   doc.setFont(template.fontFamily, "normal");
-  doc.setFontSize(9);
+  doc.setFontSize(8.5);
   doc.setTextColor(30, 30, 30);
-  doc.text(`For ${company.name}`, sigX, y);
+  doc.text(`For ${company.name || "Business Entity"}`, sigX, y);
+
   if (company.signature) {
-    try { doc.addImage(company.signature, "PNG", sigX, y + 3, 40, 14); } catch { /* ignore */ }
+    try { doc.addImage(company.signature, "PNG", sigX, y + 3, 38, 13); } catch { /* ignore */ }
   }
   if (company.stamp) {
-    try { doc.addImage(company.stamp, "PNG", sigX + 42, y + 3, 18, 18); } catch { /* ignore */ }
+    try { doc.addImage(company.stamp, "PNG", sigX + 40, y + 2, 18, 18); } catch { /* ignore */ }
   }
-  doc.setDrawColor(150);
+
+  doc.setDrawColor(180, 180, 180);
+  doc.setLineWidth(0.3);
   doc.line(sigX, y + 22, sigX + 60, y + 22);
+
   doc.setFontSize(8);
-  doc.setTextColor(80, 80, 80);
+  doc.setTextColor(60, 60, 60);
   doc.text(company.authorizedSignatory || "Authorized Signatory", sigX, y + 26);
+  if ((company as any).designation) {
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 100, 100);
+    doc.text((company as any).designation, sigX, y + 30);
+  }
 }
 
 export async function exportQuotationPDF(
@@ -450,7 +687,8 @@ export async function exportQuotationPDF(
   customer?: Customer,
   template?: QuotationTemplate,
 ): Promise<Blob> {
-  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+  const jsPDFConstructor: any = typeof jsPDF === "function" ? jsPDF : (jsPDF as any).jsPDF || (jsPDF as any).default || jsPDF;
+  const doc = new jsPDFConstructor({ unit: "mm", format: "a4", orientation: "portrait" });
   const tpl = template || defaultTemplate();
   const logoData = await getLogoDataUrl();
   const companyLogoData = company.logo || null;
@@ -463,33 +701,87 @@ export async function exportQuotationPDF(
     margin: 12,
   };
 
+  // 1. Compact Page 1: Header, Quotation Details, Bill To/Ship To, Line Items, Totals, Amount in Words
   await drawCover(ctx);
 
-  if (quotation.generalInfoSnapshot?.length) {
-    await drawSectionsPage(ctx, "General Information", [
-      { heading: "Configuration & Site", rows: quotation.generalInfoSnapshot.map(f => [f.label, f.value] as [string, string]) },
-    ]);
+  // 2. Supplementary Section: General Information (PRD §§ 8, 9, 81 — Quotation only)
+  if (quotation.includeGeneralInfo !== false) {
+    let genRows: Array<{ label: string; value: string; bullets?: string[] }> = [];
+    if (quotation.structuredSections) {
+      const sec = quotation.structuredSections.find(s => s.type === "GENERAL_INFO");
+      if (sec && sec.rows) {
+        genRows = sec.rows.map(r => ({
+          label: r.label,
+          value: r.value,
+          bullets: r.bullets || (r.valueType === "BULLET_LIST" ? r.value.split(/\r?\n+/).map(b => b.trim()).filter(Boolean) : undefined),
+        }));
+      }
+    } else if (quotation.generalInformationSnapshot?.length) {
+      const sec: any = quotation.generalInformationSnapshot.find((s: any) => s.type === "GENERAL_INFO");
+      if (sec && sec.rows) {
+        genRows = sec.rows.map((r: any) => ({
+          label: r.label,
+          value: r.value,
+          bullets: r.bullets || (r.valueType === "BULLET_LIST" ? r.value.split(/\r?\n+/).map((b: string) => b.trim()).filter(Boolean) : undefined),
+        }));
+      }
+    } else if (quotation.generalInfoSnapshot?.length) {
+      genRows = quotation.generalInfoSnapshot.map((f: any) => ({
+        label: f.label,
+        value: f.value,
+        bullets: f.value && f.value.includes("•") ? f.value.split("•").map((b: string) => b.trim()).filter(Boolean) : undefined,
+      }));
+    }
+
+    if (genRows.length > 0) {
+      await drawSectionsPage(ctx, "General Information", [
+        { heading: "Commercial & Site Information", rows: genRows },
+      ]);
+    }
   }
 
-  if (quotation.techSpecSnapshot?.length) {
-    await drawSectionsPage(ctx, "Fabrication / Technical Specifications",
-      quotation.techSpecSnapshot.map(sec => ({
-        heading: sec.title,
-        rows: sec.rows.map(r => [r.label, r.value] as [string, string]),
-      })));
+  // 3. Supplementary Section: Technical / Fabrication Specifications (PRD §§ 8, 9, 82 — Quotation only)
+  if (quotation.includeTechSpecs !== false) {
+    let specSections: Array<{ heading: string; subtitle?: string; rows: Array<{ label: string; value: string }> }> = [];
+
+    if (quotation.structuredSections) {
+      const specs = quotation.structuredSections.filter(s => s.type === "SPEC_TABLE");
+      specSections = specs.map(s => ({
+        heading: s.title,
+        subtitle: s.subtitle,
+        rows: s.rows.map((r: any) => ({ label: r.label, value: r.value })),
+      }));
+    } else if (quotation.technicalSpecificationSnapshot?.length) {
+      const specs = quotation.technicalSpecificationSnapshot.filter((s: any) => s.type === "SPEC_TABLE");
+      specSections = specs.map((s: any) => ({
+        heading: s.title,
+        subtitle: s.subtitle,
+        rows: (s.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
+      }));
+    } else {
+      if (quotation.techSpecSnapshot?.length) {
+        specSections.push(...quotation.techSpecSnapshot.map((sec: any) => ({
+          heading: sec.title,
+          rows: (sec.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
+        })));
+      }
+      if (quotation.electricalSnapshot?.length) {
+        specSections.push(...quotation.electricalSnapshot.map(sec => ({
+          heading: sec.title,
+          rows: sec.rows.map(r => ({ label: r.label, value: r.value })),
+        })));
+      }
+    }
+
+    if (specSections.length > 0) {
+      await drawSectionsPage(ctx, "Technical / Fabrication Specifications", specSections);
+    }
   }
 
-  if (quotation.electricalSnapshot?.length) {
-    await drawSectionsPage(ctx, "Electrical / Additional Specifications",
-      quotation.electricalSnapshot.map(sec => ({
-        heading: sec.title,
-        rows: sec.rows.map(r => [r.label, r.value] as [string, string]),
-      })));
-  }
-
+  // 4. Terms, Bank & Signatory Page (PRD §§ 78, 79, 80)
   await drawTermsPage(ctx);
 
-  // Page numbers + footer on all pages
+  // 5. Running page numbers & footer on all pages
   const total = doc.getNumberOfPages();
   for (let i = 1; i <= total; i++) {
     doc.setPage(i);

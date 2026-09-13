@@ -28,12 +28,25 @@ import { CustomerInsightDrawer } from "./CustomerInsightDrawer";
 import { PartyAddressSelect } from "./PartyAddressSelect";
 import { formatAddressLines } from "./AddressDrawer";
 import { LineItemsEditor } from "./LineItemsEditor";
+import { GeneralInformationEditor } from "./GeneralInformationEditor";
+import { TechnicalSpecificationsEditor } from "./TechnicalSpecificationsEditor";
+import { StructuredTermsEditor } from "./StructuredTermsEditor";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 import {
   db, uid, type Quotation, type LineItem, type Customer, type Product, type ExtraCharge,
   type SizePreset, type TermsTemplate, type GeneralInfoTemplate, type TechSpecTemplate,
   type BankAccount, type QuotationTemplate, type TermItem, type GeneralInfoField, type TechSpecSection,
-  type AddressSnapshot,
+  type AddressSnapshot, type QuotationSection, type SectionRow, type StructuredTermItem,
 } from "@/lib/db";
 import { useLive } from "@/lib/useLive";
 import { computeLine, computeTotals, round2 } from "@/lib/calc";
@@ -61,6 +74,7 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
   const [quickCustomerOpen, setQuickCustomerOpen] = useState(false);
   const [quickProductOpen, setQuickProductOpen] = useState(false);
   const [insightCustomerId, setInsightCustomerId] = useState<string | null>(null);
+  const [pendingGstMode, setPendingGstMode] = useState<"item_wise" | "overall" | null>(null);
 
   useEffect(() => {
     setQ(initial);
@@ -77,7 +91,10 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
     [q.items, rowIds],
   );
 
-  const totals = computeTotals(q.items, false);
+  const totals = computeTotals(q.items, false, {
+    gstCalculationMode: q.gstCalculationMode,
+    overallGstRate: q.overallGstRate,
+  });
   const extrasTotal = (q.extraCharges || []).reduce((s, c) => s + (Number(c.amount) || 0), 0);
   const beforeRound = totals.subtotal - totals.discountTotal + totals.gstTotal + extrasTotal;
   const grand = Math.round(beforeRound);
@@ -243,9 +260,27 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
       subtotal: totals.subtotal,
       discountTotal: totals.discountTotal,
       gstTotal: totals.gstTotal,
+      cgstTotal: totals.cgstTotal,
+      sgstTotal: totals.sgstTotal,
+      igstTotal: totals.igstTotal,
       extraChargesTotal: round2(extrasTotal),
       roundOff,
       grandTotal: grand,
+      gstCalculationMode: q.gstCalculationMode || "item_wise",
+      overallGstRate: q.overallGstRate,
+      includeGeneralInfo: q.includeGeneralInfo !== false,
+      includeTechSpecs: q.includeTechSpecs !== false,
+      includeTerms: q.includeTerms !== false,
+      includeBankDetails: q.includeBankDetails !== false,
+      bankAccountId: q.bankAccountId,
+      bankSnapshot: q.bankSnapshot,
+      bankDetailsSnapshot: q.bankSnapshot || q.bankDetailsSnapshot,
+      termsSnapshot: q.termsSnapshot,
+      structuredTerms: q.structuredTerms,
+      structuredTermsSnapshot: q.structuredTerms && q.structuredTerms.length > 0 ? [{ title: "Terms & Conditions", format: "numbered", items: q.structuredTerms }] : q.structuredTermsSnapshot,
+      structuredSections: q.structuredSections,
+      generalInformationSnapshot: q.structuredSections?.filter(s => s.type === "GENERAL_INFO") || q.generalInformationSnapshot,
+      technicalSpecificationSnapshot: q.structuredSections?.filter(s => s.type === "SPEC_TABLE") || q.technicalSpecificationSnapshot,
     };
     // Save any custom sizes typed in items
     for (const it of finalQ.items) if (it.size) await saveSizeIfNew(it.size);
@@ -547,16 +582,80 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
                 </div>
               </div>
 
-              <div className="ml-auto max-w-md rounded-md border bg-muted/30 p-4 text-sm">
-                <Row label="Subtotal" v={formatMoney(totals.subtotal)} />
-                <Row label="Discount" v={`- ${formatMoney(totals.discountTotal)}`} />
-                <Row label="GST" v={formatMoney(totals.gstTotal)} />
-                {(q.extraCharges || []).filter(c => c.amount).map((c, i) => (
-                  <Row key={i} label={c.label || "Extra"} v={formatMoney(c.amount)} />
-                ))}
-                <Row label="Round Off" v={formatMoney(roundOff)} />
-                <div className="mt-2 flex justify-between border-t pt-2 text-lg font-semibold">
-                  <span>Grand Total</span><span className="font-mono">{formatMoney(grand)}</span>
+              {/* GST Calculation Mode & Totals Panel */}
+              <div className="mt-4 flex flex-col md:flex-row items-start justify-between gap-4">
+                <div className="p-3.5 rounded-lg border bg-card/80 max-w-md w-full space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-xs font-bold text-foreground">GST Calculation Mode</Label>
+                      <p className="text-[11px] text-muted-foreground">Choose line-wise taxes or a single overall document rate</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <Select
+                      value={q.gstCalculationMode || "item_wise"}
+                      onValueChange={(val: "item_wise" | "overall") => {
+                        if (val === "overall" && (q.gstCalculationMode || "item_wise") === "item_wise") {
+                          const hasDiverse = q.items.some(it => (it.gstRate || 0) > 0);
+                          if (hasDiverse) {
+                            setPendingGstMode("overall");
+                            return;
+                          }
+                        }
+                        setQ({ ...q, gstCalculationMode: val, overallGstRate: q.overallGstRate ?? 18 });
+                      }}
+                    >
+                      <SelectTrigger className="w-40 h-8 text-xs font-semibold">
+                        <SelectValue placeholder="GST Mode" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="item_wise">Item-wise GST</SelectItem>
+                        <SelectItem value="overall">Overall GST</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    {q.gstCalculationMode === "overall" && (
+                      <div className="flex items-center gap-1.5">
+                        <Select
+                          value={String(q.overallGstRate ?? 18)}
+                          onValueChange={(val) => setQ({ ...q, overallGstRate: Number(val) })}
+                        >
+                          <SelectTrigger className="w-24 h-8 text-xs font-mono font-bold">
+                            <SelectValue placeholder="Rate" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="0">0%</SelectItem>
+                            <SelectItem value="5">5%</SelectItem>
+                            <SelectItem value="12">12%</SelectItem>
+                            <SelectItem value="18">18% (Standard)</SelectItem>
+                            <SelectItem value="28">28%</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <span className="text-xs text-muted-foreground font-medium">Rate</span>
+                      </div>
+                    )}
+                  </div>
+                  {q.gstCalculationMode === "overall" && (
+                    <p className="text-[10px] text-muted-foreground italic">
+                      Overall {q.overallGstRate ?? 18}% GST applied to eligible taxable lines and charges. Exempt items remain protected at 0%.
+                    </p>
+                  )}
+                </div>
+
+                <div className="max-w-md w-full rounded-md border bg-muted/30 p-4 text-sm">
+                  <Row label="Subtotal" v={formatMoney(totals.subtotal)} />
+                  <Row label="Discount" v={`- ${formatMoney(totals.discountTotal)}`} />
+                  <Row
+                    label={q.gstCalculationMode === "overall" ? `GST (Overall ${q.overallGstRate ?? 18}%)` : "GST"}
+                    v={formatMoney(totals.gstTotal)}
+                  />
+                  {(q.extraCharges || []).filter(c => c.amount).map((c, i) => (
+                    <Row key={i} label={c.label || "Extra"} v={formatMoney(c.amount)} />
+                  ))}
+                  <Row label="Round Off" v={formatMoney(roundOff)} />
+                  <div className="mt-2 flex justify-between border-t pt-2 text-lg font-semibold">
+                    <span>Grand Total</span><span className="font-mono">{formatMoney(grand)}</span>
+                  </div>
                 </div>
               </div>
             </Card>
@@ -564,215 +663,290 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
 
           {/* ============ GENERAL INFO ============ */}
           <TabsContent value="general">
-            <Card className="p-4">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <Label className="text-xs">Apply template:</Label>
-                <Select value={q.generalInfoTemplateId || ""} onValueChange={applyGeneralInfo}>
-                  <SelectTrigger className="w-64"><SelectValue placeholder="Choose template" /></SelectTrigger>
-                  <SelectContent>
-                    {genTemplates.length === 0 && <SelectItem value="__none__" disabled>Create templates in Masters</SelectItem>}
-                    {genTemplates.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Button size="sm" variant="outline" onClick={() => setQ({ ...q, generalInfoSnapshot: [...(q.generalInfoSnapshot || []), { key: "", label: "", value: "" }] })}>
-                  <Plus className="mr-1 h-3 w-3" /> Add field
-                </Button>
-                {q.generalInfoSnapshot?.length ? (
-                  <Button size="sm" variant="ghost" onClick={() => setQ({ ...q, generalInfoSnapshot: [], generalInfoTemplateId: undefined })}>Clear</Button>
-                ) : null}
-              </div>
-              <div className="space-y-2">
-                {(q.generalInfoSnapshot || []).length === 0 && (
-                  <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">No general information added — page will be omitted from PDF/DOCX.</div>
-                )}
-                {(q.generalInfoSnapshot || []).map((f, i) => (
-                  <div key={i} className="grid grid-cols-1 gap-2 md:grid-cols-[220px_1fr_auto]">
-                    <Input placeholder="Label (e.g. Configuration)" value={f.label} onChange={e => updateGeneralField(i, { label: e.target.value })} />
-                    <Textarea rows={1} placeholder="Value" value={f.value} onChange={e => updateGeneralField(i, { value: e.target.value })} />
-                    <Button size="icon" variant="ghost" onClick={() => {
-                      const list = [...(q.generalInfoSnapshot || [])]; list.splice(i, 1); setQ({ ...q, generalInfoSnapshot: list });
-                    }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                  </div>
-                ))}
-              </div>
-            </Card>
+            <GeneralInformationEditor
+              enabled={q.includeGeneralInfo !== false}
+              onEnabledChange={(v) => setQ({ ...q, includeGeneralInfo: v })}
+              rows={
+                (q.structuredSections?.find(s => s.type === "GENERAL_INFO")?.rows) ||
+                (q.generalInfoSnapshot?.map((f, i) => ({
+                  id: f.key || uid(),
+                  label: f.label,
+                  value: f.value,
+                  order: i + 1,
+                  valueType: "TEXT" as const,
+                })) || [])
+              }
+              onChange={(rows) => {
+                const otherSecs = (q.structuredSections || []).filter(s => s.type !== "GENERAL_INFO");
+                const genSec: QuotationSection = {
+                  id: "sec-gen-info",
+                  type: "GENERAL_INFO",
+                  title: "General Information",
+                  order: 0,
+                  rows,
+                };
+                setQ({
+                  ...q,
+                  structuredSections: [genSec, ...otherSecs],
+                  generalInfoSnapshot: rows.map(r => ({ key: r.id, label: r.label, value: r.value })),
+                });
+              }}
+              templates={genTemplates}
+              selectedTemplateId={q.generalInfoTemplateId}
+              onApplyTemplate={(templateId) => {
+                const tmpl = genTemplates.find(t => t.id === templateId);
+                if (!tmpl) return;
+                const rows: SectionRow[] = tmpl.fields.map((f, i) => ({
+                  id: uid(),
+                  label: f.label,
+                  value: f.value,
+                  valueType: "TEXT",
+                  order: i + 1,
+                }));
+                const otherSecs = (q.structuredSections || []).filter(s => s.type !== "GENERAL_INFO");
+                const genSec: QuotationSection = {
+                  id: "sec-gen-info",
+                  type: "GENERAL_INFO",
+                  title: tmpl.name || "General Information",
+                  order: 0,
+                  rows,
+                };
+                setQ({
+                  ...q,
+                  generalInfoTemplateId: templateId,
+                  structuredSections: [genSec, ...otherSecs],
+                  generalInfoSnapshot: rows.map(r => ({ key: r.id, label: r.label, value: r.value })),
+                });
+              }}
+            />
           </TabsContent>
 
           {/* ============ TECHNICAL SPEC ============ */}
           <TabsContent value="tech">
-            <SectionEditor
-              title="Technical Specifications"
-              value={q.techSpecSnapshot || []}
-              onChange={v => setQ({ ...q, techSpecSnapshot: v })}
-              templates={techTemplates.filter(t => t.kind !== "electrical")}
-              onApplyTemplate={applyTechSpec}
-            />
-          </TabsContent>
-
-          {/* ============ ELECTRICAL ============ */}
-          <TabsContent value="electrical">
-            <SectionEditor
-              title="Electrical / Additional Specifications"
-              value={q.electricalSnapshot || []}
-              onChange={v => setQ({ ...q, electricalSnapshot: v })}
-              templates={techTemplates.filter(t => t.kind === "electrical")}
-              onApplyTemplate={applyTechSpec}
+            <TechnicalSpecificationsEditor
+              enabled={q.includeTechSpecs !== false}
+              onEnabledChange={(v) => setQ({ ...q, includeTechSpecs: v })}
+              sections={(q.structuredSections || []).filter(s => s.type === "SPEC_TABLE")}
+              onChange={(specSecs) => {
+                const genSecs = (q.structuredSections || []).filter(s => s.type === "GENERAL_INFO");
+                setQ({
+                  ...q,
+                  structuredSections: [...genSecs, ...specSecs],
+                  techSpecSnapshot: specSecs.map(s => ({
+                    title: s.title,
+                    rows: (s.rows || []).map(r => ({ label: r.label, value: r.value })),
+                  })),
+                });
+              }}
+              templates={techTemplates}
+              onApplyTemplate={(templateId) => {
+                const tmpl = techTemplates.find(t => t.id === templateId);
+                if (!tmpl) return;
+                const newSections: QuotationSection[] = tmpl.sections.map((sec, idx) => ({
+                  id: uid(),
+                  type: "SPEC_TABLE",
+                  title: sec.title,
+                  order: idx + 1,
+                  rows: sec.rows.map((r, rIdx) => ({
+                    id: uid(),
+                    label: r.label,
+                    value: r.value,
+                    order: rIdx + 1,
+                  })),
+                }));
+                const genSecs = (q.structuredSections || []).filter(s => s.type === "GENERAL_INFO");
+                setQ({
+                  ...q,
+                  techSpecTemplateId: templateId,
+                  structuredSections: [...genSecs, ...newSections],
+                  techSpecSnapshot: tmpl.sections.map(s => ({ title: s.title, rows: [...s.rows] })),
+                });
+              }}
             />
           </TabsContent>
 
           {/* ============ TERMS & BANK ============ */}
           <TabsContent value="terms">
             <div className="grid gap-4 lg:grid-cols-2">
-              <Card className="p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <div className="text-sm font-medium">Terms & Conditions</div>
-                  <Select value={q.termsTemplateId || ""} onValueChange={applyTermsTemplate}>
-                    <SelectTrigger className="w-56"><SelectValue placeholder="Load template" /></SelectTrigger>
-                    <SelectContent>
-                      {termsTemplates.length === 0 && <SelectItem value="__none__" disabled>Create in Masters</SelectItem>}
-                      {termsTemplates.map(t => <SelectItem key={t.id} value={t.id}>{t.name}{t.isDefault ? " ★" : ""}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {q.termsTemplateId ? (
-                  <div className="space-y-1.5">
-                    {(termsTemplates.find(t => t.id === q.termsTemplateId)?.terms || []).map(t => {
-                      const active = (q.termsSnapshot || []).includes(t.text);
-                      return (
-                        <div key={t.id} className="flex items-start gap-2 rounded-md border p-2">
-                          <Checkbox checked={active} onCheckedChange={() => toggleTerm(t.text)} />
-                          <div className={`text-sm ${active ? "" : "text-muted-foreground line-through"}`}>{t.text}</div>
+              <div className="space-y-4">
+                <StructuredTermsEditor
+                  enabled={q.includeTerms !== false}
+                  onEnabledChange={(v) => setQ({ ...q, includeTerms: v })}
+                  terms={q.structuredTerms || []}
+                  onChange={(terms) => setQ({
+                    ...q,
+                    structuredTerms: terms,
+                    termsSnapshot: terms.map(t => t.text),
+                    terms: terms.map((t, i) => `${i + 1}. ${t.text}`).join("\n"),
+                  })}
+                  templates={termsTemplates}
+                  onApplyTemplate={(templateId) => {
+                    const tmpl = termsTemplates.find(t => t.id === templateId);
+                    if (!tmpl) return;
+                    const items: StructuredTermItem[] = (tmpl.structuredTerms && tmpl.structuredTerms.length > 0)
+                      ? tmpl.structuredTerms.map((t, idx) => ({ ...t, id: uid(), order: idx + 1 }))
+                      : (tmpl.terms || []).filter(t => t.enabled).map((t, idx) => ({
+                          id: uid(),
+                          order: idx + 1,
+                          text: t.text,
+                          format: "NUMBERED",
+                        }));
+                    setQ({
+                      ...q,
+                      termsTemplateId: templateId,
+                      structuredTerms: items,
+                      termsSnapshot: items.map(x => x.text),
+                      terms: items.map((x, i) => `${i + 1}. ${x.text}`).join("\n"),
+                    });
+                  }}
+                  documentType="quotation"
+                />
+              </div>
+
+              <div className="space-y-4">
+                <Card className="p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold">Bank Settlement Details</div>
+                      <div className="text-xs text-muted-foreground">Bank account printed on document</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground font-medium">Show on PDF</span>
+                      <Switch
+                        checked={q.includeBankDetails !== false}
+                        onCheckedChange={(v) => setQ({ ...q, includeBankDetails: v })}
+                      />
+                    </div>
+                  </div>
+
+                  {q.includeBankDetails !== false && (
+                    <>
+                      <div className="mb-3">
+                        <Select value={q.bankAccountId || ""} onValueChange={applyBank}>
+                          <SelectTrigger><SelectValue placeholder="Select company bank account" /></SelectTrigger>
+                          <SelectContent>
+                            {banks.length === 0 && <SelectItem value="__none__" disabled>Add bank in Masters / Settings</SelectItem>}
+                            {banks.map(b => (
+                              <SelectItem key={b.id} value={b.id}>
+                                {b.bankName} — {b.accountNo} {b.isDefault ? " ★" : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {q.bankSnapshot ? (
+                        <div className="rounded-md border bg-muted/30 p-3.5 text-xs space-y-1.5">
+                          <div className="font-bold text-sm text-foreground">{q.bankSnapshot.bankName}</div>
+                          <div><span className="text-muted-foreground">A/C Name:</span> <span className="font-semibold">{q.bankSnapshot.accountName}</span></div>
+                          <div><span className="text-muted-foreground">A/C No:</span> <span className="font-mono font-semibold">{q.bankSnapshot.accountNo}</span></div>
+                          <div><span className="text-muted-foreground">IFSC:</span> <span className="font-mono font-semibold">{q.bankSnapshot.ifsc}</span></div>
+                          {q.bankSnapshot.branch && <div><span className="text-muted-foreground">Branch:</span> {q.bankSnapshot.branch}</div>}
+                          {q.bankSnapshot.upi && <div><span className="text-muted-foreground">UPI:</span> <span className="font-mono">{q.bankSnapshot.upi}</span></div>}
                         </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <Textarea rows={8} placeholder="One term per line" value={q.terms || ""} onChange={e => {
-                    const lines = e.target.value.split("\n").map(x => x.replace(/^\d+[.)]\s*/, "").trim()).filter(Boolean);
-                    setQ({ ...q, terms: e.target.value, termsSnapshot: lines });
-                  }} />
-                )}
-              </Card>
+                      ) : (
+                        <div className="rounded-md border border-dashed p-6 text-center text-xs text-muted-foreground">No bank selected.</div>
+                      )}
+                    </>
+                  )}
+                </Card>
 
-              <Card className="p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <div className="text-sm font-medium">Bank Details</div>
-                  <Select value={q.bankAccountId || ""} onValueChange={applyBank}>
-                    <SelectTrigger className="w-56"><SelectValue placeholder="Select bank" /></SelectTrigger>
-                    <SelectContent>
-                      {banks.length === 0 && <SelectItem value="__none__" disabled>Add in Masters</SelectItem>}
-                      {banks.map(b => <SelectItem key={b.id} value={b.id}>{b.bankName}{b.isDefault ? " ★" : ""}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {q.bankSnapshot ? (
-                  <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                    <div className="font-semibold">{q.bankSnapshot.bankName}</div>
-                    <div>A/C Name: {q.bankSnapshot.accountName}</div>
-                    <div>A/C No: <span className="font-mono">{q.bankSnapshot.accountNo}</span></div>
-                    <div>IFSC: <span className="font-mono">{q.bankSnapshot.ifsc}</span></div>
-                    {q.bankSnapshot.upi && <div>UPI: <span className="font-mono">{q.bankSnapshot.upi}</span></div>}
+                {/* Signatory & Stamp Document Appearance Override */}
+                <Card className="p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium">Signatory & Stamp (Document Appearance)</div>
+                      <div className="text-xs text-muted-foreground">
+                        Use company defaults or customize signature and stamp visibility for this quotation.
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Use Company Default</span>
+                      <Switch
+                        checked={!q.signatoryOverride}
+                        onCheckedChange={(useDefault) => {
+                          setQ({
+                            ...q,
+                            signatoryOverride: useDefault ? undefined : {
+                              showSignature: true,
+                              showStamp: true,
+                              showSignatoryName: true,
+                              showDesignation: true,
+                              showSignatureDate: true,
+                              signatureDateMode: "document_date",
+                            },
+                          });
+                        }}
+                      />
+                    </div>
                   </div>
-                ) : (
-                  <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">No bank selected.</div>
-                )}
-              </Card>
 
-              {/* Signatory & Stamp Document Appearance Override */}
-              <Card className="p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-medium">Signatory & Stamp (Document Appearance)</div>
-                    <div className="text-xs text-muted-foreground">
-                      Use company defaults or customize signature and stamp visibility for this quotation.
+                  {q.signatoryOverride && (
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2 rounded-lg border bg-muted/20 p-3">
+                      <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
+                        <span className="text-xs">Show Signature</span>
+                        <Switch
+                          checked={q.signatoryOverride.showSignature ?? true}
+                          onCheckedChange={(v) =>
+                            setQ({
+                              ...q,
+                              signatoryOverride: { ...q.signatoryOverride, showSignature: v },
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
+                        <span className="text-xs">Show Stamp</span>
+                        <Switch
+                          checked={q.signatoryOverride.showStamp ?? true}
+                          onCheckedChange={(v) =>
+                            setQ({
+                              ...q,
+                              signatoryOverride: { ...q.signatoryOverride, showStamp: v },
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
+                        <span className="text-xs">Show Signatory Name</span>
+                        <Switch
+                          checked={q.signatoryOverride.showSignatoryName ?? true}
+                          onCheckedChange={(v) =>
+                            setQ({
+                              ...q,
+                              signatoryOverride: { ...q.signatoryOverride, showSignatoryName: v },
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
+                        <span className="text-xs">Show Designation</span>
+                        <Switch
+                          checked={q.signatoryOverride.showDesignation ?? true}
+                          onCheckedChange={(v) =>
+                            setQ({
+                              ...q,
+                              signatoryOverride: { ...q.signatoryOverride, showDesignation: v },
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="flex items-center justify-between rounded-md border bg-background p-2.5 sm:col-span-2">
+                        <span className="text-xs">Show Signature Date</span>
+                        <Switch
+                          checked={q.signatoryOverride.showSignatureDate ?? true}
+                          onCheckedChange={(v) =>
+                            setQ({
+                              ...q,
+                              signatoryOverride: { ...q.signatoryOverride, showSignatureDate: v },
+                            })
+                          }
+                        />
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-muted-foreground">Use Company Default</span>
-                    <Switch
-                      checked={!q.signatoryOverride}
-                      onCheckedChange={(useDefault) => {
-                        setQ({
-                          ...q,
-                          signatoryOverride: useDefault ? undefined : {
-                            showSignature: true,
-                            showStamp: true,
-                            showSignatoryName: true,
-                            showDesignation: true,
-                            showSignatureDate: true,
-                            signatureDateMode: "document_date",
-                          },
-                        });
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {q.signatoryOverride && (
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2 rounded-lg border bg-muted/20 p-3">
-                    <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
-                      <span className="text-xs">Show Signature</span>
-                      <Switch
-                        checked={q.signatoryOverride.showSignature ?? true}
-                        onCheckedChange={(v) =>
-                          setQ({
-                            ...q,
-                            signatoryOverride: { ...q.signatoryOverride, showSignature: v },
-                          })
-                        }
-                      />
-                    </div>
-                    <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
-                      <span className="text-xs">Show Stamp</span>
-                      <Switch
-                        checked={q.signatoryOverride.showStamp ?? true}
-                        onCheckedChange={(v) =>
-                          setQ({
-                            ...q,
-                            signatoryOverride: { ...q.signatoryOverride, showStamp: v },
-                          })
-                        }
-                      />
-                    </div>
-                    <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
-                      <span className="text-xs">Show Signatory Name</span>
-                      <Switch
-                        checked={q.signatoryOverride.showSignatoryName ?? true}
-                        onCheckedChange={(v) =>
-                          setQ({
-                            ...q,
-                            signatoryOverride: { ...q.signatoryOverride, showSignatoryName: v },
-                          })
-                        }
-                      />
-                    </div>
-                    <div className="flex items-center justify-between rounded-md border bg-background p-2.5">
-                      <span className="text-xs">Show Designation</span>
-                      <Switch
-                        checked={q.signatoryOverride.showDesignation ?? true}
-                        onCheckedChange={(v) =>
-                          setQ({
-                            ...q,
-                            signatoryOverride: { ...q.signatoryOverride, showDesignation: v },
-                          })
-                        }
-                      />
-                    </div>
-                    <div className="flex items-center justify-between rounded-md border bg-background p-2.5 sm:col-span-2">
-                      <span className="text-xs">Show Signature Date</span>
-                      <Switch
-                        checked={q.signatoryOverride.showSignatureDate ?? true}
-                        onCheckedChange={(v) =>
-                          setQ({
-                            ...q,
-                            signatoryOverride: { ...q.signatoryOverride, showSignatureDate: v },
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
-                )}
-              </Card>
+                  )}
+                </Card>
+              </div>
             </div>
           </TabsContent>
         </Tabs>
@@ -812,6 +986,31 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
         open={Boolean(insightCustomerId)}
         onOpenChange={(o) => !o && setInsightCustomerId(null)}
       />
+
+      <AlertDialog open={!!pendingGstMode} onOpenChange={(open) => !open && setPendingGstMode(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch to Overall GST Rate?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Changing to Overall GST will apply the document-level rate ({q.overallGstRate ?? 18}%) across all eligible taxable items and charges for this quotation.
+              Individual product master settings will not be permanently deleted.
+              Exempt and nil-rated items remain protected at 0%.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingGstMode(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setQ({ ...q, gstCalculationMode: "overall", overallGstRate: q.overallGstRate ?? 18 });
+                setPendingGstMode(null);
+                toast.info(`Overall GST ${q.overallGstRate ?? 18}% applied to quotation`);
+              }}
+            >
+              Apply Overall GST
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
