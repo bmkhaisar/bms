@@ -1400,11 +1400,11 @@ export function DocumentListPage<T extends AnyDoc>({
       <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setEditing(null); }}>
         <DialogContent className="flex h-[min(95dvh,840px)] max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-5xl flex-col overflow-hidden gap-0 p-0">
           <DialogHeader className="shrink-0 border-b px-4 py-3 sm:px-6">
-            <DialogTitle className="flex items-center justify-between text-base">
+            <DialogTitle className="flex items-center justify-between gap-3 text-base pr-8 sm:pr-10">
               <span>{editing && rows.find(r => r.id === editing.id) ? `Edit ${title.slice(0, -1)}` : `New ${title.slice(0, -1)}`}</span>
               {kind === "invoice" && (
-                <div className="flex items-center gap-2 text-xs font-normal">
-                  <span className="text-muted-foreground">GST Mode:</span>
+                <div className="flex items-center gap-2 text-xs font-normal shrink-0">
+                  <span className="text-muted-foreground hidden xs:inline">GST Mode:</span>
                   <Select value={enableGst ? "gst" : "nongst"} onValueChange={v => setEnableGst(v === "gst")}>
                     <SelectTrigger className="h-7 w-36 text-xs">
                       <SelectValue />
@@ -2054,7 +2054,7 @@ export function DocumentListPage<T extends AnyDoc>({
       <Dialog open={!!preview} onOpenChange={o => !o && setPreview(null)}>
         <DialogContent className="max-w-5xl max-h-[95vh] flex flex-col">
           <DialogHeader className="shrink-0">
-            <DialogTitle className="flex items-center justify-between gap-2">
+            <DialogTitle className="flex items-center justify-between gap-2 pr-8 sm:pr-10">
               <span>{preview?.number} · Document Preview</span>
               <div className="flex gap-2">
                 <Button
