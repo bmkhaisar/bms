@@ -44,6 +44,7 @@ try {
   ]);
   const data = dataSnapshot.val() || {};
   const memberships = membershipsSnapshot.val() || {};
+  const quotations = Object.values(data.quotations || {});
   console.log(JSON.stringify({
     companyExists: companySnapshot.exists(),
     companyDataExists: dataSnapshot.exists(),
@@ -52,6 +53,9 @@ try {
     accountGroupCount: Object.keys(data.accountGroups || {}).length,
     ledgerCount: Object.keys(data.ledgers || {}).length,
     productCount: Object.keys(data.products || {}).length,
+    quotationCount: quotations.length,
+    quotationsUsingFirebaseEmptyItemsSemantics: quotations.filter((quotation) => !Array.isArray(quotation?.items)).length,
+    quotationsUsingFirebaseEmptyExtraChargesSemantics: quotations.filter((quotation) => !Array.isArray(quotation?.extraCharges)).length,
     activeMembershipCount: Object.values(memberships).filter((entry) => entry?.status === "active").length,
   }, null, 2));
   process.exit(0);

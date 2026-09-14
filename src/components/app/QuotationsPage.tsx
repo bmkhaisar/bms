@@ -30,9 +30,11 @@ import { appQueryClient } from "@/lib/queryClient";
 import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
 import { authoritativeDeleteDraft, authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
 import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYearFn";
+import { normalizeQuotationRecord } from "@/modules/documents/quotationNormalization";
 
 export function QuotationsPage() {
-  const rows = useLive<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
+  const rawRows = useLive<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
+  const rows = useMemo(() => rawRows.map(normalizeQuotationRecord), [rawRows]);
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const templates = useLive<QuotationTemplate>(() => db().quotationTemplates.orderBy("name").toArray());
   const [optimisticOverrides, setOptimisticOverrides] = useState<Map<string, Quotation | null>>(new Map());

@@ -56,6 +56,7 @@ import { createCompanySnapshot } from "@/modules/company/types";
 import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 import { extractTableRowsFromMarkdown, extractTermsFromMarkdown } from "@/lib/markdownDoc";
 import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
+import { normalizeQuotationRecord } from "@/modules/documents/quotationNormalization";
 
 interface Props {
   initial: Quotation;
@@ -65,6 +66,7 @@ interface Props {
 }
 
 export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props) {
+  const normalizedInitial = useMemo(() => normalizeQuotationRecord(initial), [initial]);
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const products = useLive<Product>(() => db().products.orderBy("name").toArray());
   const sizes = useLive<SizePreset>(() => db().sizes.orderBy("label").toArray());
@@ -75,9 +77,9 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
   const quoteTemplates = useLive<QuotationTemplate>(() => db().quotationTemplates.orderBy("name").toArray());
   const { activeCompany } = useActiveCompany();
 
-  const [q, setQ] = useState<Quotation>(initial);
+  const [q, setQ] = useState<Quotation>(normalizedInitial);
   const [saving, setSaving] = useState(false);
-  const [rowIds, setRowIds] = useState<string[]>(() => initial.items.map(() => uid()));
+  const [rowIds, setRowIds] = useState<string[]>(() => normalizedInitial.items.map(() => uid()));
   const [quickCustomerOpen, setQuickCustomerOpen] = useState(false);
   const [quickProductOpen, setQuickProductOpen] = useState(false);
   const [insightCustomerId, setInsightCustomerId] = useState<string | null>(null);
@@ -85,9 +87,9 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
   const draftFlushRef = useRef<Quotation | null>(null);
 
   useEffect(() => {
-    setQ(initial);
-    setRowIds(initial.items.map(() => uid()));
-  }, [initial.id]);
+    setQ(normalizedInitial);
+    setRowIds(normalizedInitial.items.map(() => uid()));
+  }, [normalizedInitial]);
 
   useEffect(() => {
     setRowIds(ids => q.items.map((_, idx) => ids[idx] || uid()));

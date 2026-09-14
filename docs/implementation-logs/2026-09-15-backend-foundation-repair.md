@@ -54,3 +54,31 @@ No existing ledger or balance was overwritten.
 - Local runtime: HTTP 200 at `http://127.0.0.1:8080/`
 
 No credentials, tokens, account values, or private keys were printed.
+
+## Canonical ledger and quotation follow-up
+
+The later invoice failure for `led_<company>_sales` revealed that the canonical
+chart initializer contained only cash and opening-offset ledgers even though the
+document posting service has always required sales, purchase, output GST, input
+GST, and advance-GST-adjustment ledgers. Those five ledgers now live in the one
+shared default-ledger definition used by both company initialization and the
+posting engine's additive self-heal.
+
+The controlled tenant repair reported exactly five missing system ledgers and
+created only those records. The post-repair audit reports 27 groups and 8 ledgers;
+a second dry run reports zero missing foundation records. Existing records and
+balances were preserved.
+
+The quotation-tab crash was caused by applying JavaScript `.length`/`.map()` to
+RTDB array fields that can legitimately arrive as `null` or numeric-key objects,
+especially for legacy or empty data. A shared quotation normalizer now canonicalizes
+these fields at the centralized realtime ingress, list boundary, and edit-form
+boundary. Empty arrays are intentionally normalized on read rather than repeatedly
+rewritten in RTDB, because RTDB represents an empty collection as no child value.
+
+Follow-up verification:
+
+- Targeted document, Firebase/realtime, quotation/PDF, and foundation suite: 43 passed, 0 failed
+- TypeScript (`tsc --noEmit`): PASS
+- Firebase Admin Auth, token verification, Platform Admin claim, and RTDB: READY
+- Production Vercel/Nitro build: PASS

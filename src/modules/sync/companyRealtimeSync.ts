@@ -10,6 +10,7 @@ import { firebaseDb } from "@/config/firebase";
 import { ref, onValue, off, type Unsubscribe } from "firebase/database";
 import { db } from "@/lib/db";
 import { cacheEntitiesBulk, removeCachedEntity, purgeCompanyCacheAndOutbox } from "./dexieCache";
+import { normalizeQuotationRecord } from "@/modules/documents/quotationNormalization";
 
 export interface CompanyRealtimeSyncOptions {
   companyId: string;
@@ -33,7 +34,7 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     { name: "purchases", table: db().purchases, entityType: "purchase" },
     { name: "receipts", table: db().receipts, entityType: "receipt" },
     { name: "payments", table: db().payments, entityType: "payment" },
-    { name: "quotations", table: db().quotations, entityType: "quotation" },
+    { name: "quotations", table: db().quotations, entityType: "quotation", normalize: normalizeQuotationRecord },
     { name: "products", table: db().products, entityType: "product" },
     { name: "categories", table: db().categories, entityType: "category" },
     { name: "productSizes", table: db().productSizes, entityType: "productSize" },
@@ -86,7 +87,10 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
           }
 
           const val = snapshot.val();
-          const records = Object.entries(val).map(([id, record]: [string, any]) => ({ ...record, id: record?.id || id }));
+          const records = Object.entries(val).map(([id, record]: [string, any]) => {
+            const raw = { ...record, id: record?.id || id };
+            return "normalize" in col && col.normalize ? col.normalize(raw) : raw;
+          });
           const cloudIds = new Set(records.map((r: any) => r.id));
 
           // 1. Authoritative Deletion Reconciliation: purge local rows no longer present in Firebase cloud
