@@ -19,8 +19,8 @@ import { toast } from "sonner";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database";
-import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
+import { ref, set, remove as rtdbRemove } from "firebase/database";
+import { cacheEntity, removeCachedEntity } from "@/modules/sync/dexieCache";
 import { createSupplierWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 import { performOptimisticMutation } from "@/lib/mutationPipeline";
 import { checkEntityHistoricalUsage, type HistoricalUsageResult } from "@/lib/historicalUsage";
@@ -47,7 +47,7 @@ export function SuppliersPage() {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Supplier>(() => db().suppliers.orderBy("name").toArray());
-  const [cloudRows, setCloudRows] = useState<Supplier[]>([]);
+  const [, setCloudRows] = useState<Supplier[]>([]);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "ALL" | "INACTIVE">("ACTIVE");
   const [open, setOpen] = useState(false);
@@ -60,69 +60,8 @@ export function SuppliersPage() {
     usage: HistoricalUsageResult;
   } | null>(null);
 
-  // 1. Initial cached retrieval + Realtime Firebase synchronization
-  useEffect(() => {
-    if (!activeCompany?.id || !user?.uid) return;
-
-    let active = true;
-
-    // Load from Dexie cache immediately for fast startup (zero-flash)
-    getCachedEntities<Supplier>({
-      uid: user.uid,
-      companyId: activeCompany.id,
-      entityType: "supplier",
-    }).then((cached) => {
-      if (active && cached.length > 0) {
-        setCloudRows(cached);
-      }
-    });
-
-    if (!firebaseDb) return;
-
-    const suppliersRef = ref(firebaseDb, `companyData/${activeCompany.id}/suppliers`);
-    const onData = (snap: any) => {
-      if (!active) return;
-      if (snap.exists()) {
-        const val = snap.val();
-        const list: Supplier[] = Object.values(val);
-        setCloudRows(list);
-
-        // Update Dexie cache in background
-        cacheEntitiesBulk(
-          list.map((s) => ({
-            uid: user.uid,
-            companyId: activeCompany.id,
-            entityType: "supplier",
-            entityId: s.id,
-            data: s,
-          }))
-        );
-
-        // Sync into local legacy Dexie store
-        for (const s of list) {
-          db().suppliers.put(s);
-        }
-      } else {
-        setCloudRows([]);
-      }
-    };
-
-    onValue(suppliersRef, onData);
-
-    return () => {
-      active = false;
-      off(suppliersRef, "value", onData);
-    };
-  }, [activeCompany?.id, user?.uid]);
-
-  // Synchronize local dexieRows into cloudRows on mount if cloudRows was empty
-  useEffect(() => {
-    if (cloudRows.length === 0 && dexieRows.length > 0) {
-      setCloudRows(dexieRows);
-    }
-  }, [dexieRows]);
-
-  const rows = activeCompany?.id && cloudRows.length > 0 ? cloudRows : dexieRows;
+  // The company-level ordered realtime synchronizer is the single read owner.
+  const rows = dexieRows;
 
   // Deep-link support
   useEffect(() => {
@@ -299,7 +238,7 @@ export function SuppliersPage() {
       };
 
       const isNew =
-        !cloudRows.some((s) => s.id === supplierToSave.id) &&
+        !rows.some((s) => s.id === supplierToSave.id) &&
         !dexieRows.some((s) => s.id === supplierToSave.id);
 
       await performOptimisticMutation<Supplier>({

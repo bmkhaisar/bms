@@ -783,10 +783,10 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
         upi: comp.upiId,
       } : null);
 
-      if (rawBank && (rawBank.bankName || rawBank.accountNo)) {
+      if (rawBank && (rawBank.bankName || rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || rawBank.bankAccount || rawBank.bankAccountNumber)) {
         const bankRows: [string, string][] = [
           ["Account Holder Name", rawBank.accountHolderName || rawBank.accountName || (comp as any).accountHolderName || (comp as any).bankAccountHolderName || comp.legalName || comp.name || "Business Entity"],
-          ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || "—"],
+          ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || rawBank.bankAccount || rawBank.bankAccountNumber || (comp as any).bankAccountNo || (comp as any).bankAccount || "—"],
           ["Bank Name", rawBank.bankName || "—"],
           ["IFSC Code", rawBank.ifsc || rawBank.bankIfsc || "—"],
         ];

@@ -32,8 +32,8 @@ import { formatMoney } from "@/lib/format";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database";
-import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
+import { ref, set, remove as rtdbRemove } from "firebase/database";
+import { cacheEntity, removeCachedEntity } from "@/modules/sync/dexieCache";
 import { allocatePartyCode, createPartyWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 import { CustomerInsightDrawer } from "@/components/app/CustomerInsightDrawer";
 import { AddressDrawer } from "@/components/app/AddressDrawer";
@@ -81,7 +81,7 @@ export function PartiesPage() {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Party>(() => db().parties.orderBy("name").toArray());
-  const [cloudRows, setCloudRows] = useState<Party[]>([]);
+  const [, setCloudRows] = useState<Party[]>([]);
   const [q, setQ] = useState("");
   const [activeTab, setActiveTab] = useState<"ALL" | "SUNDRY_DEBTORS" | "SUNDRY_CREDITORS" | "ADVANCE" | "CREDIT" | "INACTIVE">("ALL");
   const [open, setOpen] = useState(false);
@@ -97,90 +97,8 @@ export function PartiesPage() {
     usage: HistoricalUsageResult;
   } | null>(null);
 
-  // 1. Initial cached retrieval + Realtime Firebase sync
-  useEffect(() => {
-    if (!activeCompany?.id || !user?.uid) return;
-
-    let active = true;
-
-    // Zero-flash immediate load from Dexie cache
-    getCachedEntities<Party>({
-      uid: user.uid,
-      companyId: activeCompany.id,
-      entityType: "party",
-    }).then((cached) => {
-      if (active && cached.length > 0) {
-        setCloudRows(cached);
-      }
-    });
-
-    const rtdb = firebaseDb;
-    if (!rtdb) return;
-
-    const partiesRef = ref(rtdb, `companyData/${activeCompany.id}/parties`);
-    const onData = (snap: any) => {
-      if (!active) return;
-      if (snap.exists()) {
-        const val = snap.val();
-        const list: Party[] = Object.values(val);
-        setCloudRows(list);
-
-        cacheEntitiesBulk(
-          list.map((p) => ({
-            uid: user.uid,
-            companyId: activeCompany.id,
-            entityType: "party",
-            entityId: p.id,
-            data: p,
-          }))
-        );
-
-        for (const p of list) {
-          db().parties.put(p);
-          if (isSundryDebtor(p.partyType)) {
-            db().customers.put(p as any);
-          }
-          if (isSundryCreditor(p.partyType)) {
-            db().suppliers.put(p as any);
-          }
-        }
-      } else {
-        // Fallback: If no dedicated /parties yet, hydrate from /customers and /suppliers
-        const customersRef = ref(rtdb, `companyData/${activeCompany.id}/customers`);
-        onValue(customersRef, (custSnap) => {
-          if (!active) return;
-          if (custSnap.exists()) {
-            const custList: Party[] = Object.values(custSnap.val()).map((c: any) => ({
-              ...c,
-              partyType: c.partyType || "CUSTOMER",
-              paymentPolicy: c.paymentPolicy || "CREDIT",
-              country: c.country || "India",
-            }));
-            setCloudRows(custList);
-            for (const p of custList) {
-              db().parties.put(p);
-            }
-          }
-        }, { onlyOnce: true });
-      }
-    };
-
-    onValue(partiesRef, onData);
-
-    return () => {
-      active = false;
-      off(partiesRef, "value", onData);
-    };
-  }, [activeCompany?.id, user?.uid]);
-
-  // Synchronize local dexieRows into cloudRows on mount if cloudRows was empty
-  useEffect(() => {
-    if (cloudRows.length === 0 && dexieRows.length > 0) {
-      setCloudRows(dexieRows);
-    }
-  }, [dexieRows]);
-
-  const rows = activeCompany?.id && cloudRows.length > 0 ? cloudRows : dexieRows;
+  // The company-level ordered realtime synchronizer is the single read owner.
+  const rows = dexieRows;
 
   // Filter based on tab and search
   const filtered = useMemo(() => {
@@ -415,7 +333,7 @@ export function PartiesPage() {
       };
 
       const isNew =
-        !cloudRows.some((p) => p.id === partyData.id) &&
+        !rows.some((p) => p.id === partyData.id) &&
         !dexieRows.some((p) => p.id === partyData.id);
 
       if (isNew && activeCompany?.id && !partyData.partyCode) {

@@ -4,6 +4,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useRef,
   type ReactNode,
 } from "react";
 import { ref, onValue, off, get } from "firebase/database";
@@ -11,6 +12,7 @@ import { firebaseDb } from "@/config/firebase";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import type { Company, Membership, FinancialYear } from "../types";
 import { hasCapability, type Capability } from "@/modules/auth/permissions";
+import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYearFn";
 
 export interface CompanySummary {
   id: string;
@@ -45,7 +47,9 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
   const [financialYears, setFinancialYears] = useState<FinancialYear[]>([]);
   const [activeFinancialYearId, setActiveFinancialYearId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [resolvedUserId, setResolvedUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const repairingFinancialYearRef = useRef<Set<string>>(new Set());
 
   // Register cleanup on canonical logout
   useEffect(() => {
@@ -57,6 +61,7 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
       setFinancialYears([]);
       setActiveFinancialYearId(null);
       setLoading(false);
+      setResolvedUserId(null);
       setError(null);
     });
   }, [registerLogoutCleanup]);
@@ -74,15 +79,10 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
     }
 
     setLoading(true);
+    setResolvedUserId(null);
     const userCompaniesRef = ref(firebaseDb, `userCompanies/${user.uid}`);
 
-    // Failsafe timeout: ensure loading resolves even if RTDB socket stalls
-    const failsafeTimer = setTimeout(() => {
-      setLoading(false);
-    }, 4000);
-
     const onUserCompaniesChange = async (snapshot: any) => {
-      clearTimeout(failsafeTimer);
       const val = snapshot.val();
       if (!val) {
         setCompanies([]);
@@ -91,6 +91,7 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
         setActiveMembership(null);
         setFinancialYears([]);
         setLoading(false);
+        setResolvedUserId(user.uid);
         return;
       }
 
@@ -141,18 +142,18 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
         setActiveCompanyId(null);
       }
       setLoading(false);
+      setResolvedUserId(user.uid);
     };
 
     onValue(userCompaniesRef, onUserCompaniesChange, (err) => {
-      clearTimeout(failsafeTimer);
       console.warn("Failed to listen to userCompanies:", err);
       setCompanies([]);
       setActiveCompanyId(null);
       setLoading(false);
+      setResolvedUserId(user.uid);
     });
 
     return () => {
-      clearTimeout(failsafeTimer);
       off(userCompaniesRef, "value", onUserCompaniesChange);
     };
   }, [user]);
@@ -217,6 +218,18 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
     };
   }, [user, activeCompanyId, activeFinancialYearId]);
 
+  // Permanence invariant: a usable company must always have a server-backed current financial year.
+  useEffect(() => {
+    if (!user || !activeCompanyId || !activeCompany || financialYears.length > 0 || repairingFinancialYearRef.current.has(activeCompanyId)) return;
+    repairingFinancialYearRef.current.add(activeCompanyId);
+    user.getIdToken().then((idToken) => ensureActiveFinancialYearServerFn({ data: { idToken, companyId: activeCompanyId } }))
+      .then((result) => {
+        if (!result.success) setError(result.error || "Could not initialize the current financial year.");
+      })
+      .catch((failure) => setError(failure instanceof Error ? failure.message : String(failure)))
+      .finally(() => repairingFinancialYearRef.current.delete(activeCompanyId));
+  }, [user, activeCompanyId, activeCompany, financialYears.length]);
+
   const switchCompany = useCallback((companyId: string) => {
     // Immediately clear previous company state so child views never render stale records (PRD #62)
     setActiveCompany(null);
@@ -250,7 +263,7 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
         activeMembership,
         financialYears,
         activeFinancialYear,
-        loading,
+        loading: loading || Boolean(user && resolvedUserId !== user.uid),
         error,
         isOwner,
         can,

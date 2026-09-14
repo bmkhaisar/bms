@@ -9,7 +9,7 @@
 import { firebaseDb } from "@/config/firebase";
 import { ref, onValue, off, type Unsubscribe } from "firebase/database";
 import { db } from "@/lib/db";
-import { cacheEntitiesBulk, removeCachedEntity } from "./dexieCache";
+import { cacheEntitiesBulk, removeCachedEntity, purgeCompanyCacheAndOutbox } from "./dexieCache";
 
 export interface CompanyRealtimeSyncOptions {
   companyId: string;
@@ -35,14 +35,40 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     { name: "payments", table: db().payments, entityType: "payment" },
     { name: "quotations", table: db().quotations, entityType: "quotation" },
     { name: "products", table: db().products, entityType: "product" },
+    { name: "categories", table: db().categories, entityType: "category" },
     { name: "productSizes", table: db().productSizes, entityType: "productSize" },
+    { name: "termsTemplates", table: db().termsTemplates, entityType: "termsTemplate" },
+    { name: "generalInfoTemplates", table: db().generalInfoTemplates, entityType: "generalInfoTemplate" },
+    { name: "techSpecTemplates", table: db().techSpecTemplates, entityType: "techSpecTemplate" },
+    { name: "bankAccounts", table: db().bankAccounts, entityType: "bankAccount" },
+    { name: "quotationTemplates", table: db().quotationTemplates, entityType: "quotationTemplate" },
   ];
+
+  // Serialize snapshots per collection so a slow older reconciliation can never overwrite a newer event.
+  const queues = new Map<string, Promise<void>>();
+
+  const resetRef = ref(firebaseDb, `companyData/${companyId}/operationalReset`);
+  const resetUnsub = onValue(resetRef, async (snapshot) => {
+    const resetAt = Number(snapshot.val()?.completedAt || 0);
+    if (!resetAt) return;
+    const markerKey = `bms-reset:${companyId}`;
+    if (Number(localStorage.getItem(markerKey) || 0) >= resetAt) return;
+    await Promise.all([
+      db().invoices.clear(), db().quotations.clear(), db().purchases.clear(), db().receipts.clear(), db().payments.clear(),
+      db().parties.clear(), db().customers.clear(), db().suppliers.clear(), db().productSizes.clear(),
+    ]);
+    await purgeCompanyCacheAndOutbox(companyId);
+    localStorage.setItem(markerKey, String(resetAt));
+  });
+  unsubs.push(resetUnsub);
 
   for (const col of collections) {
     const colRef = ref(firebaseDb, `companyData/${companyId}/${col.name}`);
     const unsub = onValue(
       colRef,
-      async (snapshot) => {
+      (snapshot) => {
+        const prior = queues.get(col.name) || Promise.resolve();
+        const next = prior.then(async () => {
         try {
           if (!snapshot.exists() || !snapshot.val()) {
             // Cloud collection is completely empty: purge Dexie table & cache for this collection
@@ -60,7 +86,7 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
           }
 
           const val = snapshot.val();
-          const records = Object.values(val) as any[];
+          const records = Object.entries(val).map(([id, record]: [string, any]) => ({ ...record, id: record?.id || id }));
           const cloudIds = new Set(records.map((r: any) => r.id));
 
           // 1. Authoritative Deletion Reconciliation: purge local rows no longer present in Firebase cloud
@@ -96,6 +122,8 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
         } catch (err) {
           console.warn(`[companyRealtimeSync] Failed to sync ${col.name}:`, err);
         }
+        });
+        queues.set(col.name, next);
       },
       (error) => {
         console.warn(`[companyRealtimeSync] Listener error on ${col.name}:`, error);

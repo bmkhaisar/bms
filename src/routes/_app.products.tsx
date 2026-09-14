@@ -21,8 +21,8 @@ import { formatMoney } from "@/lib/format";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database";
-import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
+import { ref, set, remove as rtdbRemove } from "firebase/database";
+import { cacheEntity, removeCachedEntity } from "@/modules/sync/dexieCache";
 import { QuickCreateCategoryModal } from "@/components/app/QuickCreateCategoryModal";
 import { ProductInsightDrawer } from "@/components/app/ProductInsightDrawer";
 import { performOptimisticMutation } from "@/lib/mutationPipeline";
@@ -56,8 +56,7 @@ function ProductsPage() {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Product>(() => db().products.orderBy("name").toArray());
-  const [cloudRows, setCloudRows] = useState<Product[]>([]);
-  const [cloudLoaded, setCloudLoaded] = useState(false);
+  const [, setCloudRows] = useState<Product[]>([]);
   const cats = useLive<Category>(() => db().categories.orderBy("name").toArray());
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "ALL" | "INACTIVE">("ACTIVE");
@@ -73,79 +72,8 @@ function ProductsPage() {
     usage: HistoricalUsageResult;
   } | null>(null);
 
-  // 1. Initial cached retrieval + Realtime Firebase synchronization
-  useEffect(() => {
-    if (!activeCompany?.id || !user?.uid) return;
-
-    let active = true;
-
-    // Load from Dexie cache immediately for instant startup (zero-flash)
-    getCachedEntities<Product>({
-      uid: user.uid,
-      companyId: activeCompany.id,
-      entityType: "product",
-    }).then((cached) => {
-      if (active && cached.length > 0) {
-        setCloudRows(cached);
-      }
-    });
-
-    if (!firebaseDb) return;
-
-    const productsRef = ref(firebaseDb, `companyData/${activeCompany.id}/products`);
-    const onData = (snap: any) => {
-      if (!active) return;
-      if (snap.exists()) {
-        const val = snap.val();
-        const list: Product[] = Object.values(val);
-        setCloudRows(list);
-        setCloudLoaded(true);
-
-        // Deletion reconciliation: purge local rows no longer present in Firebase cloud
-        const cloudIds = new Set(list.map((p) => p.id));
-        db().products.toArray().then((localRows) => {
-          const toDelete = localRows.filter((r) => !cloudIds.has(r.id)).map((r) => r.id);
-          if (toDelete.length > 0) {
-            db().products.bulkDelete(toDelete);
-          }
-        });
-
-        // Update Dexie cache in background
-        cacheEntitiesBulk(
-          list.map((p) => ({
-            uid: user.uid,
-            companyId: activeCompany.id,
-            entityType: "product",
-            entityId: p.id,
-            data: p,
-          }))
-        );
-
-        // Sync into local legacy Dexie store
-        db().products.bulkPut(list);
-      } else {
-        setCloudRows([]);
-        setCloudLoaded(true);
-        db().products.clear();
-      }
-    };
-
-    onValue(productsRef, onData);
-
-    return () => {
-      active = false;
-      off(productsRef, "value", onData);
-    };
-  }, [activeCompany?.id, user?.uid]);
-
-  // If dexie has rows and cloudRows is empty, populate cloudRows before cloud loads
-  useEffect(() => {
-    if (!cloudLoaded && cloudRows.length === 0 && dexieRows.length > 0) {
-      setCloudRows(dexieRows);
-    }
-  }, [cloudLoaded, dexieRows]);
-
-  const rows = activeCompany?.id && cloudLoaded ? cloudRows : (cloudRows.length > 0 ? cloudRows : dexieRows);
+  // The company-level ordered realtime synchronizer is the single read owner.
+  const rows = dexieRows;
 
   // Deep-link support: auto-filter and open product editor if id or q present in URL
   useEffect(() => {
@@ -323,7 +251,7 @@ function ProductsPage() {
       };
 
       const isNew =
-        !cloudRows.some((p) => p.id === productToSave.id) &&
+        !rows.some((p) => p.id === productToSave.id) &&
         !dexieRows.some((p) => p.id === productToSave.id);
 
       await performOptimisticMutation<Product>({

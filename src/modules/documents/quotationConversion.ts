@@ -6,7 +6,7 @@ import { postInvoiceTransaction } from "@/modules/accounting/services/documentPo
 import { ensureCustomerLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 import type { Company } from "@/modules/company/types";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, set, update } from "firebase/database";
+import { ref, get, update } from "firebase/database";
 import { cacheEntity } from "@/modules/sync/dexieCache";
 
 export interface ConvertQuotationOptions {
@@ -36,12 +36,27 @@ export async function convertQuotationToInvoice(
   options?: ConvertQuotationOptions
 ): Promise<QuotationConversionResult> {
   try {
-    // 1. Idempotency Check: Prevent duplicate conversion
+    // 1. Idempotency Check: Firebase is authoritative; Dexie is only a cache.
     if (quotation.convertedInvoiceId) {
       const existing = await db().invoices.get(quotation.convertedInvoiceId);
       if (existing) {
         toast.info(`Quotation was already converted to Invoice ${existing.number}`);
         return { success: true, invoice: existing, isExisting: true };
+      }
+    }
+
+    if (options?.activeCompany?.id && firebaseDb) {
+      const cloudQuotation = await get(ref(firebaseDb, `companyData/${options.activeCompany.id}/quotations/${quotation.id}`));
+      const convertedInvoiceId = cloudQuotation.val()?.convertedInvoiceId as string | undefined;
+      if (convertedInvoiceId) {
+        const cloudInvoice = await get(ref(firebaseDb, `companyData/${options.activeCompany.id}/invoices/${convertedInvoiceId}`));
+        if (cloudInvoice.exists()) {
+          const existing = cloudInvoice.val() as Invoice;
+          await db().invoices.put(existing);
+          await db().quotations.update(quotation.id, { status: "converted", convertedInvoiceId });
+          toast.info(`Quotation was already converted to Invoice ${existing.number}`);
+          return { success: true, invoice: existing, isExisting: true };
+        }
       }
     }
 
@@ -91,11 +106,13 @@ export async function convertQuotationToInvoice(
     }
 
     // 5. Construct independent DRAFT invoice (PRD § 35: Preserve party, address snapshot, signatory, items)
-    const invoiceId = uid();
+    // Stable ID closes the duplicate window if two devices convert the same quotation concurrently.
+    const invoiceId = quotation.convertedInvoiceId || `inv_from_${quotation.id}`;
     const invoice: Invoice = {
       id: invoiceId,
       number,
       date: now,
+      financialYearId: options?.financialYearId || quotation.financialYearId,
       customerId: quotation.customerId,
       customerSnapshot,
       billToPartyId: quotation.billToPartyId || quotation.customerId,
@@ -139,6 +156,9 @@ export async function convertQuotationToInvoice(
       companySnapshot: quotation.companySnapshot,
       signatorySnapshot: quotation.signatorySnapshot,
       signatoryOverride: quotation.signatoryOverride,
+      sourceType: "QUOTATION",
+      sourceQuotationId: quotation.id,
+      sourceQuotationNumber: quotation.number,
       convertedFromQuotationId: quotation.id,
       createdAt: now,
       version: 1,
@@ -147,53 +167,42 @@ export async function convertQuotationToInvoice(
     // Note: By default, General Information and Technical / Fabrication Specifications
     // are Quotation-only commercial content and MUST NOT leak into Sales Invoices (PRD § 28, 29, Correction #12)
 
-    // Save draft invoice to local IndexedDB
-    await db().invoices.put(invoice);
-
-    // 6. Update quotation status and link convertedInvoiceId idempotently in local DB
-    await db().quotations.update(quotation.id, {
-      status: "converted",
-      convertedInvoiceId: invoiceId,
-    });
-
-    // Mirror to cloud RTDB draft if company is active
+    // 6. Commit both sides of the link in one authoritative RTDB multi-path update.
     if (options?.activeCompany?.id && firebaseDb) {
-      try {
-        const invRef = ref(firebaseDb, `companyData/${options.activeCompany.id}/invoices/${invoice.id}`);
-        await set(invRef, sanitizeForFirebase({
+      const rootUpdates: Record<string, unknown> = {
+        [`companyData/${options.activeCompany.id}/invoices/${invoice.id}`]: sanitizeForFirebase({
           ...invoice,
           companyId: options.activeCompany.id,
           financialYearId: options.financialYearId,
           updatedAt: now,
-        }));
-
-        const quoteRef = ref(firebaseDb, `companyData/${options.activeCompany.id}/quotations/${quotation.id}`);
-        await update(quoteRef, {
-          status: "converted",
-          convertedInvoiceId: invoiceId,
-          updatedAt: now,
-        });
-
-        await cacheEntity({
-          uid: options.user?.uid || "",
-          companyId: options.activeCompany.id,
-          entityType: "invoices",
-          entityId: invoice.id,
-          data: invoice,
-          financialYearId: options.financialYearId,
-          name: invoice.number,
-        });
-      } catch (err) {
-        console.warn("Could not mirror draft invoice to RTDB:", err);
-      }
+        }),
+        [`companyData/${options.activeCompany.id}/quotations/${quotation.id}/status`]: "converted",
+        [`companyData/${options.activeCompany.id}/quotations/${quotation.id}/convertedInvoiceId`]: invoiceId,
+        [`companyData/${options.activeCompany.id}/quotations/${quotation.id}/updatedAt`]: now,
+      };
+      await update(ref(firebaseDb), rootUpdates);
     }
+
+    // Only reconcile local caches after cloud acknowledgement.
+    await db().invoices.put(invoice);
+    await db().quotations.update(quotation.id, { status: "converted", convertedInvoiceId: invoiceId });
+
+    if (options?.activeCompany?.id) await cacheEntity({
+      uid: options.user?.uid || "",
+      companyId: options.activeCompany.id,
+      entityType: "invoice",
+      entityId: invoice.id,
+      data: invoice,
+      financialYearId: options.financialYearId,
+      name: invoice.number,
+    });
 
     // Also update Dexie bms_cache_v1 if company scoped
     if (options?.activeCompany?.id) {
       await cacheEntity({
         uid: options.user?.uid || "",
         companyId: options.activeCompany.id,
-        entityType: "quotations",
+        entityType: "quotation",
         entityId: quotation.id,
         data: {
           ...quotation,

@@ -18,9 +18,8 @@ import {
   isSundryCreditor,
   normalizePartyType,
 } from "@/lib/db";
-import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, get, set, update } from "firebase/database";
 import { cacheEntitiesBulk } from "@/modules/sync/dexieCache";
+import { migrateLegacyPartiesServerFn } from "@/functions/migrateLegacyPartiesFn";
 
 export interface PartyDisplayInfo {
   name: string;
@@ -171,152 +170,18 @@ export function resolvePartyNameFromCollections(
 export async function migrateLegacyCustomersAndSuppliersToParties(params: {
   companyId: string;
   uid: string;
+  idToken: string;
 }): Promise<{
   migratedCount: number;
   partiesCount: number;
 }> {
-  const { companyId, uid } = params;
-
-  // 1. Fetch all local and existing parties
-  const existingParties = await db().parties.toArray();
-  const existingPartyIds = new Set(existingParties.map((p) => p.id));
-  const existingPartyGstins = new Set(existingParties.map((p) => p.gstin?.trim().toUpperCase()).filter(Boolean));
-  const existingPartyNames = new Set(existingParties.map((p) => p.name.trim().toLowerCase()));
-
-  // 2. Fetch legacy customers
-  const legacyCustomers = await db().customers.toArray();
-  const legacySuppliers = await db().suppliers.toArray();
-
-  const toCreate: Party[] = [];
-  let migratedCount = 0;
-
-  for (const c of legacyCustomers) {
-    if (existingPartyIds.has(c.id)) {
-      continue;
-    }
-    const cleanGstin = c.gstin?.trim().toUpperCase();
-    if (cleanGstin && existingPartyGstins.has(cleanGstin)) {
-      continue;
-    }
-    const cleanName = c.name?.trim().toLowerCase();
-    if (cleanName && existingPartyNames.has(cleanName)) {
-      continue;
-    }
-
-    const newParty: Party = {
-      id: c.id, // Preserve same ID so historical invoice.customerId directly matches!
-      name: c.name,
-      company: c.company,
-      partyType: "SUNDRY_DEBTOR",
-      paymentPolicy: c.paymentPolicy || "CREDIT",
-      mobile: c.mobile,
-      phone: c.phone,
-      email: c.email,
-      gstin: c.gstin,
-      pan: c.pan,
-      address: c.address || c.billingAddress,
-      billingAddress: c.billingAddress || c.address,
-      shippingAddress: c.shippingAddress || c.billingAddress || c.address,
-      city: c.city,
-      state: c.state,
-      stateCode: c.stateCode,
-      country: c.country || "India",
-      pincode: c.pincode || "000000",
-      creditLimit: c.creditLimit,
-      creditDays: c.creditDays ?? 30,
-      openingBalance: (c as any).openingBalance || 0,
-      createdAt: c.createdAt || Date.now(),
-      notes: c.notes,
-    };
-
-    toCreate.push(newParty);
-    existingPartyIds.add(newParty.id);
-    if (cleanGstin) existingPartyGstins.add(cleanGstin);
-    if (cleanName) existingPartyNames.add(cleanName);
-    migratedCount++;
+  const { companyId, uid, idToken } = params;
+  const result = await migrateLegacyPartiesServerFn({ data: { companyId, idToken } });
+  if (!result.success) throw new Error(result.error || "Legacy party migration failed");
+  const parties = (result.parties || []) as Party[];
+  if (parties.length) {
+    await db().parties.bulkPut(parties);
+    await cacheEntitiesBulk(parties.map((party) => ({ uid, companyId, entityType: "party", entityId: party.id, data: party })));
   }
-
-  for (const s of legacySuppliers) {
-    if (existingPartyIds.has(s.id)) {
-      continue;
-    }
-    const cleanGstin = s.gstin?.trim().toUpperCase();
-    if (cleanGstin && existingPartyGstins.has(cleanGstin)) {
-      continue;
-    }
-    const cleanName = s.name?.trim().toLowerCase();
-    if (cleanName && existingPartyNames.has(cleanName)) {
-      continue;
-    }
-
-    const newParty: Party = {
-      id: s.id, // Preserve same ID so historical purchase.supplierId directly matches!
-      name: s.name,
-      company: s.company,
-      partyType: "SUNDRY_CREDITOR",
-      paymentPolicy: "CREDIT",
-      mobile: s.mobile,
-      phone: s.phone,
-      email: s.email,
-      gstin: s.gstin,
-      pan: s.pan,
-      address: s.address,
-      billingAddress: s.address,
-      shippingAddress: s.address,
-      city: s.city,
-      state: s.state,
-      stateCode: s.stateCode,
-      country: s.country || "India",
-      pincode: s.pincode || "000000",
-      openingBalance: (s as any).openingBalance || 0,
-      createdAt: s.createdAt || Date.now(),
-      notes: s.notes,
-    };
-
-    toCreate.push(newParty);
-    existingPartyIds.add(newParty.id);
-    if (cleanGstin) existingPartyGstins.add(cleanGstin);
-    if (cleanName) existingPartyNames.add(cleanName);
-    migratedCount++;
-  }
-
-  if (toCreate.length > 0) {
-    // 1. Put into Dexie parties table
-    for (const p of toCreate) {
-      await db().parties.put(p);
-    }
-
-    // 2. Sync to Firebase RTDB & Dexie cache
-    if (firebaseDb) {
-      const updates: Record<string, unknown> = {};
-      for (const p of toCreate) {
-        updates[`companyData/${companyId}/parties/${p.id}`] = sanitizeForFirebase(p);
-      }
-      try {
-        await update(ref(firebaseDb), updates);
-      } catch (err) {
-        console.warn("RTDB party migration warning:", err);
-      }
-    }
-
-    try {
-      await cacheEntitiesBulk(
-        toCreate.map((p) => ({
-          uid,
-          companyId,
-          entityType: "party",
-          entityId: p.id,
-          data: p,
-        }))
-      );
-    } catch (cErr) {
-      console.warn("Party cache bulk warning:", cErr);
-    }
-  }
-
-  const finalTotal = await db().parties.count();
-  return {
-    migratedCount,
-    partiesCount: finalTotal,
-  };
+  return { migratedCount: result.migratedCount, partiesCount: result.partiesCount };
 }

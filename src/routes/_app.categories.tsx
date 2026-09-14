@@ -14,8 +14,8 @@ import { toast } from "sonner";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database";
-import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
+import { ref, set, remove as rtdbRemove } from "firebase/database";
+import { cacheEntity, removeCachedEntity } from "@/modules/sync/dexieCache";
 import { performOptimisticMutation } from "@/lib/mutationPipeline";
 
 export const Route = createFileRoute("/_app/categories")({
@@ -27,74 +27,15 @@ export function CategoriesPage() {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Category>(() => db().categories.orderBy("name").toArray());
-  const [cloudRows, setCloudRows] = useState<Category[]>([]);
+  const [, setCloudRows] = useState<Category[]>([]);
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Category | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // 1. Initial cached retrieval + Realtime Firebase sync
-  useEffect(() => {
-    if (!activeCompany?.id || !user?.uid) return;
-
-    let active = true;
-
-    // Zero-flash immediate load from Dexie cache
-    getCachedEntities<Category>({
-      uid: user.uid,
-      companyId: activeCompany.id,
-      entityType: "category",
-    }).then((cached) => {
-      if (active && cached.length > 0) {
-        setCloudRows(cached);
-      }
-    });
-
-    if (!firebaseDb) return;
-
-    const catRef = ref(firebaseDb, `companyData/${activeCompany.id}/categories`);
-    const onData = (snap: any) => {
-      if (!active) return;
-      if (snap.exists()) {
-        const val = snap.val();
-        const list: Category[] = Object.values(val);
-        setCloudRows(list);
-
-        cacheEntitiesBulk(
-          list.map((c) => ({
-            uid: user.uid,
-            companyId: activeCompany.id,
-            entityType: "category",
-            entityId: c.id,
-            data: c,
-          }))
-        );
-
-        for (const c of list) {
-          db().categories.put(c);
-        }
-      } else {
-        setCloudRows([]);
-      }
-    };
-
-    onValue(catRef, onData);
-
-    return () => {
-      active = false;
-      off(catRef, "value", onData);
-    };
-  }, [activeCompany?.id, user?.uid]);
-
-  // Synchronize local dexieRows into cloudRows on mount if cloudRows was empty
-  useEffect(() => {
-    if (cloudRows.length === 0 && dexieRows.length > 0) {
-      setCloudRows(dexieRows);
-    }
-  }, [dexieRows]);
-
-  const rows = activeCompany?.id && cloudRows.length > 0 ? cloudRows : dexieRows;
+  // The company-level ordered realtime synchronizer is the single read owner.
+  const rows = dexieRows;
 
   async function save() {
     const trimmed = name.trim();

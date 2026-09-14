@@ -39,7 +39,7 @@ import { downloadDocumentPDF, type NormalizedDocument } from "@/lib/documentRend
 import { createCompanySnapshot } from "@/modules/company/types";
 import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
-import { authoritativeDeleteDraft, authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
+import { authoritativeDeleteDraft, authoritativeSaveEntity, authoritativeVoidPosted } from "@/modules/sync/canonicalMutationService";
 
 export const Route = createFileRoute("/_app/receipts")({
   head: () => ({ meta: [{ title: "Receipts & Payments — BMS NEXT" }] }),
@@ -58,6 +58,8 @@ export function ReceiptsAndPaymentsPage() {
 
   // Payments data
   const suppliers = useLive<Supplier>(() => db().suppliers.orderBy("name").toArray());
+  const payments = useLive<Payment>(() => db().payments.orderBy("createdAt").reverse().toArray());
+  const purchases = useLive<Purchase>(() => db().purchases.orderBy("createdAt").reverse().toArray());
 
   // Accounting Ledgers for real settlement
   const { ledgers } = useAccounting();
@@ -71,6 +73,7 @@ export function ReceiptsAndPaymentsPage() {
   const [editingReceipt, setEditingReceipt] = useState<Receipt | null>(null);
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [deleteReceiptId, setDeleteReceiptId] = useState<string | null>(null);
+  const [deletePaymentId, setDeletePaymentId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Advance Refund state
@@ -332,7 +335,7 @@ export function ReceiptsAndPaymentsPage() {
         const customer = customers.find((c) => c.id === editingReceipt.customerId);
         const customerLedgerId = customer?.ledgerId || `led_${activeCompany.id}_cust_${editingReceipt.customerId}`;
 
-        await postReceiptTransaction({
+        const result = await postReceiptTransaction({
           companyId: activeCompany.id,
           financialYearId: activeFinancialYear.id,
           receipt: editingReceipt,
@@ -342,6 +345,7 @@ export function ReceiptsAndPaymentsPage() {
           idToken,
           uid: user.uid,
         });
+        if (!result.success) throw new Error(result.error || "Receipt posting failed");
       } else {
         const frozenReceipt: Receipt = {
           ...editingReceipt,
@@ -362,7 +366,7 @@ export function ReceiptsAndPaymentsPage() {
       }
 
       // Update linked invoice balance if applicable
-      if (editingReceipt.invoiceId) {
+      if (editingReceipt.invoiceId && !(activeCompany?.id && activeFinancialYear?.id && user)) {
         const inv = await db().invoices.get(editingReceipt.invoiceId);
         if (inv) {
           const paid = inv.amountPaid + editingReceipt.amount;
@@ -420,7 +424,7 @@ export function ReceiptsAndPaymentsPage() {
         const supplier = suppliers.find((s) => s.id === editingPayment.supplierId);
         const supplierLedgerId = supplier?.ledgerId || `led_${activeCompany.id}_supp_${editingPayment.supplierId}`;
 
-        await postPaymentTransaction({
+        const result = await postPaymentTransaction({
           companyId: activeCompany.id,
           financialYearId: activeFinancialYear.id,
           payment: editingPayment,
@@ -430,6 +434,7 @@ export function ReceiptsAndPaymentsPage() {
           idToken,
           uid: user.uid,
         });
+        if (!result.success) throw new Error(result.error || "Payment posting failed");
       } else {
         await db().payments.put(editingPayment);
       }
@@ -459,20 +464,23 @@ export function ReceiptsAndPaymentsPage() {
       const r = await db().receipts.get(id);
 
       if (activeCompany?.id) {
-        await authoritativeDeleteDraft({
-          companyId: activeCompany.id,
-          kind: "receipt",
-          id,
-          uid: user?.uid,
-        });
+        if (r?.voucherId && r.postingStatus === "posted") {
+          const idToken = await user?.getIdToken();
+          await authoritativeVoidPosted({ companyId: activeCompany.id, financialYearId: activeFinancialYear?.id, kind: "receipt", doc: r, user, idToken, reversalReason: "Receipt deleted from active records" });
+        } else {
+          await authoritativeDeleteDraft({ companyId: activeCompany.id, kind: "receipt", id, uid: user?.uid });
+        }
       } else {
         await db().receipts.delete(id);
       }
 
-      if (r?.invoiceId) {
-        const inv = await db().invoices.get(r.invoiceId);
+      const allocations = r?.allocatedInvoices?.length
+        ? r.allocatedInvoices
+        : r?.invoiceId ? [{ invoiceId: r.invoiceId, amountPaise: Math.round(r.amount * 100) }] : [];
+      for (const allocation of allocations) {
+        const inv = await db().invoices.get(allocation.invoiceId);
         if (inv) {
-          inv.amountPaid = Math.max(0, inv.amountPaid - r.amount);
+          inv.amountPaid = Math.max(0, inv.amountPaid - allocation.amountPaise / 100);
           inv.balance = Math.max(0, inv.grandTotal - inv.amountPaid);
           inv.status = inv.balance <= 0.01 ? "paid" : inv.amountPaid > 0 ? "partial" : "unpaid";
           if (activeCompany?.id) {
@@ -494,6 +502,39 @@ export function ReceiptsAndPaymentsPage() {
     } catch (err: any) {
       console.error("[removeReceipt] Failed to remove receipt from cloud:", err);
       toast.error(err?.message || "Failed to remove receipt from cloud");
+      throw err;
+    }
+  }
+
+  async function removePayment(id: string) {
+    const payment = await db().payments.get(id);
+    if (!payment) return;
+    try {
+      if (activeCompany?.id) {
+        if (payment.voucherId && payment.postingStatus === "posted") {
+          const idToken = await user?.getIdToken();
+          await authoritativeVoidPosted({ companyId: activeCompany.id, financialYearId: activeFinancialYear?.id, kind: "payment", doc: payment, user, idToken, reversalReason: "Payment deleted from active records" });
+        } else {
+          await authoritativeDeleteDraft({ companyId: activeCompany.id, kind: "payment", id, uid: user?.uid });
+        }
+      } else await db().payments.delete(id);
+      const allocations = payment.allocatedPurchases?.length
+        ? payment.allocatedPurchases
+        : payment.purchaseId ? [{ purchaseId: payment.purchaseId, amountPaise: Math.round(payment.amount * 100) }] : [];
+      for (const allocation of allocations) {
+        const purchase = await db().purchases.get(allocation.purchaseId);
+        if (purchase) {
+          purchase.amountPaid = Math.max(0, purchase.amountPaid - allocation.amountPaise / 100);
+          purchase.balance = Math.max(0, purchase.grandTotal - purchase.amountPaid);
+          purchase.status = purchase.balance <= 0.01 ? "paid" : purchase.amountPaid > 0 ? "partial" : "unpaid";
+          if (activeCompany?.id) await authoritativeSaveEntity({ companyId: activeCompany.id, financialYearId: activeFinancialYear?.id, kind: "purchase", entity: purchase, uid: user?.uid, action: "update" });
+          else await db().purchases.put(purchase);
+        }
+      }
+      toast.success("Payment deleted from active records");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to delete payment");
+      throw err;
     }
   }
 
@@ -646,20 +687,26 @@ export function ReceiptsAndPaymentsPage() {
         </TabsContent>
 
         <TabsContent value="payments" className="space-y-4">
-          <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm p-6">
-            <div className="flex flex-col items-center justify-center gap-3 text-center py-8">
-              <ArrowUpRight className="h-10 w-10 text-rose-500/70" />
-              <div>
-                <h3 className="text-base font-semibold">Supplier Payment Dispatches</h3>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Click 'New Payment' to post debits to Supplier Payables against Cash or Bank Liquidity.
-                </p>
-              </div>
-              <Button onClick={openNewPayment} className="gap-2 mt-2">
-                <ArrowUpRight className="h-4 w-4" /> Record Supplier Payment
-              </Button>
-            </div>
-          </Card>
+          {payments.length === 0 ? (
+            <EmptyState title="No supplier payments yet" description="Record a supplier payment and optionally link it to a purchase." action={<Button onClick={openNewPayment} className="mt-2 gap-2"><ArrowUpRight className="h-4 w-4" /> Record Supplier Payment</Button>} />
+          ) : (
+            <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm overflow-hidden">
+              <Table className="text-xs">
+                <TableHeader><TableRow><TableHead>Payment #</TableHead><TableHead>Date</TableHead><TableHead>Supplier</TableHead><TableHead>Purchase</TableHead><TableHead className="text-right">Amount</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+                <TableBody>{payments.map((payment) => (
+                  <TableRow key={payment.id}>
+                    <TableCell className="font-mono font-medium">{payment.number}</TableCell>
+                    <TableCell>{formatDate(payment.date)}</TableCell>
+                    <TableCell>{suppliers.find((s) => s.id === payment.supplierId)?.name || "—"}</TableCell>
+                    <TableCell className="font-mono">{purchases.find((p) => p.id === payment.purchaseId)?.number || "On account"}</TableCell>
+                    <TableCell className="text-right font-mono font-semibold">{formatMoney(payment.amount)}</TableCell>
+                    <TableCell><span className="rounded bg-muted px-2 py-0.5 text-[10px] uppercase">{payment.postingStatus || "draft"}</span></TableCell>
+                    <TableCell className="text-right"><Button size="icon" variant="ghost" title="Delete Payment" onClick={() => setDeletePaymentId(payment.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></TableCell>
+                  </TableRow>
+                ))}</TableBody>
+              </Table>
+            </Card>
+          )}
         </TabsContent>
       </Tabs>
 
@@ -785,7 +832,6 @@ export function ReceiptsAndPaymentsPage() {
                   placeholder="0.00"
                 />
               </div>
-
               {/* PRD Addendum § 12: User-Friendly Advance Form */}
               {editingReceipt.allocationType === "ADVANCE" && (
                 <div className="sm:col-span-2 space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
@@ -1221,6 +1267,21 @@ export function ReceiptsAndPaymentsPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label className="text-xs">Apply Against Purchase</Label>
+                <Select
+                  value={editingPayment.purchaseId || "none"}
+                  onValueChange={(v) => setEditingPayment((current) => current ? { ...current, purchaseId: v === "none" ? undefined : v } : current)}
+                >
+                  <SelectTrigger><SelectValue placeholder="On account / select purchase" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">On account</SelectItem>
+                    {purchases.filter((p) => p.supplierId === editingPayment.supplierId && p.balance > 0).map((p) => (
+                      <SelectItem key={p.id} value={p.id}>{p.number} · Balance {formatMoney(p.balance)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Settlement Ledger (Cash/Bank) *</Label>
                 <Select
@@ -1307,10 +1368,19 @@ export function ReceiptsAndPaymentsPage() {
         onOpenChange={(v) => !v && setDeleteReceiptId(null)}
         title="Delete Receipt?"
         description="This will remove the receipt record and adjust outstanding invoice balances."
-        onConfirm={() => {
-          if (deleteReceiptId) removeReceipt(deleteReceiptId);
-          setDeleteReceiptId(null);
-        }}
+        destructive
+        busyText="Deleting…"
+        onConfirm={async () => { if (deleteReceiptId) await removeReceipt(deleteReceiptId); setDeleteReceiptId(null); }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deletePaymentId)}
+        onOpenChange={(v) => !v && setDeletePaymentId(null)}
+        title="Delete Payment?"
+        description="The payment will leave active records, its accounting voucher will be reversed, and any linked purchase balance will be restored."
+        destructive
+        busyText="Deleting…"
+        onConfirm={async () => { if (deletePaymentId) await removePayment(deletePaymentId); setDeletePaymentId(null); }}
       />
 
       {/* PRD Addendum § 10: Advance Cancellation / Refund Dialog */}

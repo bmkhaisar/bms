@@ -25,13 +25,11 @@ import { useInitialLoading } from "@/lib/useInitialLoading";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { getNextDocumentNumber } from "@/lib/numberingClient";
-import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, set, onValue } from "firebase/database";
-import { cacheEntity, removeCachedEntity } from "@/modules/sync/dexieCache";
 import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
 import { appQueryClient } from "@/lib/queryClient";
 import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
 import { authoritativeDeleteDraft, authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
+import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYearFn";
 
 export function QuotationsPage() {
   const rows = useLive<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
@@ -51,33 +49,6 @@ export function QuotationsPage() {
   const { activeCompany, activeFinancialYear } = useActiveCompany();
 
   useEffect(() => { getCompany().then(setCompany); }, []);
-
-  // Realtime Cloud Synchronization with Firebase RTDB and local Dexie indexing
-  useEffect(() => {
-    if (!activeCompany?.id || !firebaseDb) return;
-    const qRef = ref(firebaseDb, `companyData/${activeCompany.id}/quotations`);
-    const unsub = onValue(qRef, async (snap) => {
-      if (snap.exists()) {
-        const val = snap.val();
-        const serverQuotes = Object.values(val) as Quotation[];
-        for (const quote of serverQuotes) {
-          if (quote && quote.id) {
-            await db().quotations.put(quote);
-            await cacheEntity({
-              uid: user?.uid || "",
-              companyId: activeCompany.id,
-              entityType: "quotations",
-              entityId: quote.id,
-              data: quote,
-              financialYearId: activeFinancialYear?.id,
-              name: quote.number,
-            });
-          }
-        }
-      }
-    });
-    return () => unsub();
-  }, [activeCompany?.id, activeFinancialYear?.id, user?.uid]);
 
   // Deep-link support: auto-filter and open quotation editor/preview
   useEffect(() => {
@@ -135,35 +106,45 @@ export function QuotationsPage() {
   });
   const pager = usePagination(filtered, 12);
 
+  async function resolveFinancialYear(idToken?: string) {
+    if (activeFinancialYear) return activeFinancialYear;
+    if (!activeCompany?.id || !idToken) throw new Error("A signed-in company is required.");
+    const result = await ensureActiveFinancialYearServerFn({ data: { idToken, companyId: activeCompany.id } });
+    if (!result.success) throw new Error(result.error || "A current financial year is required.");
+    return result.financialYear as any;
+  }
+
   async function openNew() {
     let idToken: string | undefined;
     try { idToken = await user?.getIdToken(); } catch {}
+    const financialYear = await resolveFinancialYear(idToken);
     const number = await getNextDocumentNumber({
       kind: "quotation",
       companyId: activeCompany?.id,
-      financialYearId: activeFinancialYear?.id,
-      fyName: activeFinancialYear?.name,
+      financialYearId: financialYear.id,
+      fyName: financialYear.name,
       idToken,
       customPrefix: activeCompany?.quotationPrefix,
     });
     setEditing({
       id: uid(), number, date: Date.now(), customerId: "",
       items: [], subtotal: 0, discountTotal: 0, gstTotal: 0, roundOff: 0, grandTotal: 0,
-      status: "draft", createdAt: Date.now(), extraCharges: [],
+      status: "draft", createdAt: Date.now(), financialYearId: financialYear.id, extraCharges: [],
     });
   }
   async function duplicate(r: Quotation) {
     let idToken: string | undefined;
     try { idToken = await user?.getIdToken(); } catch {}
+    const financialYear = await resolveFinancialYear(idToken);
     const number = await getNextDocumentNumber({
       kind: "quotation",
       companyId: activeCompany?.id,
-      financialYearId: activeFinancialYear?.id,
-      fyName: activeFinancialYear?.name,
+      financialYearId: financialYear.id,
+      fyName: financialYear.name,
       idToken,
       customPrefix: activeCompany?.quotationPrefix,
     });
-    setEditing({ ...r, id: uid(), number, createdAt: Date.now(), date: Date.now(), status: "draft" });
+    setEditing({ ...r, id: uid(), number, financialYearId: financialYear.id, createdAt: Date.now(), date: Date.now(), status: "draft" });
   }
   async function saveQuotation(next: Quotation) {
     const comp = activeCompany || company;
@@ -179,7 +160,7 @@ export function QuotationsPage() {
       if (activeCompany?.id) {
         await authoritativeSaveEntity({
           companyId: activeCompany.id,
-          financialYearId: activeFinancialYear?.id,
+          financialYearId: toSave.financialYearId || activeFinancialYear?.id,
           kind: "quotation",
           entity: toSave,
           uid: user?.uid,
@@ -200,6 +181,23 @@ export function QuotationsPage() {
       console.error("[saveQuotation] Failed to save quotation:", err);
       toast.error(err?.message || "Failed to save quotation to cloud");
     }
+  }
+
+  async function saveQuotationDraft(next: Quotation) {
+    const draft: Quotation = { ...next, status: "draft", updatedAt: Date.now() };
+    if (activeCompany?.id) {
+      await authoritativeSaveEntity({
+        companyId: activeCompany.id,
+        financialYearId: draft.financialYearId || activeFinancialYear?.id,
+        kind: "quotation",
+        entity: draft,
+        uid: user?.uid,
+        action: rows.some((row) => row.id === draft.id) ? "update" : "create",
+      });
+    } else {
+      await db().quotations.put(draft);
+    }
+    setOptimisticOverrides((current) => new Map(current).set(draft.id, draft));
   }
 
   async function remove(id: string) {
@@ -233,10 +231,11 @@ export function QuotationsPage() {
   async function handleConvert(r: Quotation) {
     let idToken: string | undefined;
     try { idToken = await user?.getIdToken(); } catch {}
+    const financialYear = await resolveFinancialYear(idToken);
     await convertQuotationToInvoice(r, {
       activeCompany,
-      financialYearId: activeFinancialYear?.id,
-      fyName: activeFinancialYear?.name,
+      financialYearId: r.financialYearId || financialYear.id,
+      fyName: financialYear.name,
       user,
       idToken,
       companySettings: company,
@@ -395,6 +394,7 @@ export function QuotationsPage() {
             <QuotationForm
               initial={editing}
               onSave={saveQuotation}
+              onDraftSave={saveQuotationDraft}
               onCancel={() => setEditing(null)}
             />
           )}

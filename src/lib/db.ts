@@ -266,6 +266,7 @@ export interface ExtraCharge {
 
 export interface Quotation {
   id: ID; number: string; date: number;
+  financialYearId?: ID;
   validity?: number; // ms timestamp
   preparedBy?: string;
   siteLocation?: string;
@@ -283,6 +284,7 @@ export interface Quotation {
   notes?: string; terms?: string;
   status: "draft" | "sent" | "accepted" | "converted" | "rejected" | "cancelled" | "voided" | "deleted";
   createdAt: number;
+  updatedAt?: number;
   billToPartyId?: string;
   billToSnapshot?: AddressSnapshot;
   shipToPartyId?: string;
@@ -337,6 +339,7 @@ export interface Quotation {
 
 export interface Invoice {
   id: ID; number: string; date: number; dueDate?: number;
+  financialYearId?: ID;
   customerId: ID; customerSnapshot?: Partial<Customer>;
   companySnapshot?: any;
   taxSnapshot?: any;
@@ -395,6 +398,10 @@ export interface Invoice {
   status: "draft" | "unpaid" | "partial" | "paid" | "posted" | "cancelled" | "voided" | "deleted";
   postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
   voucherId?: string;
+  /** Immutable document provenance. Direct invoices never pretend to originate from quotations. */
+  sourceType?: "DIRECT" | "QUOTATION";
+  sourceQuotationId?: ID;
+  sourceQuotationNumber?: string;
   convertedFromQuotationId?: ID;
   version?: number;
   amendedFromId?: ID;
@@ -476,10 +483,16 @@ export interface Payment {
   signatoryOverride?: any;
   signatorySnapshot?: any;
   reference?: string; notes?: string; createdAt: number;
+  allocatedPurchases?: {
+    purchaseId: string;
+    purchaseNumber: string;
+    amountPaise: number;
+  }[];
 }
 
 export interface Purchase {
   id: ID; number: string; date: number; supplierId: ID;
+  financialYearId?: ID;
   supplierInvoiceNumber?: string;
   supplierInvoiceDate?: number | string;
   supplierSnapshot?: Partial<Supplier>;

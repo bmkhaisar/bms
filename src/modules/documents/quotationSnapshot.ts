@@ -24,7 +24,7 @@ export function freezeQuotationSnapshots(
       ? banks.find((b) => b.isDefault) || banks[0]
       : undefined;
 
-  const resolvedBank =
+  const rawResolvedBank =
     quotation.bankDetailsSnapshot ||
     quotation.bankSnapshot ||
     defaultBank ||
@@ -53,6 +53,14 @@ export function freezeQuotationSnapshots(
           createdAt: Date.now(),
         }
       : undefined);
+  const resolvedBank = rawResolvedBank ? {
+    ...rawResolvedBank,
+    accountHolderName: (rawResolvedBank as any).accountHolderName || (rawResolvedBank as any).accountName || comp?.accountHolderName || comp?.bankAccountHolderName || comp?.legalName || comp?.name,
+    accountName: (rawResolvedBank as any).accountName || (rawResolvedBank as any).accountHolderName || comp?.accountHolderName || comp?.bankAccountHolderName || comp?.legalName || comp?.name,
+    accountNo: (rawResolvedBank as any).accountNo || (rawResolvedBank as any).bankAccountNo || (rawResolvedBank as any).accountNumber || (rawResolvedBank as any).bankAccount || (rawResolvedBank as any).bankAccountNumber || comp?.bankAccountNo || comp?.bankAccount || "—",
+    bankName: (rawResolvedBank as any).bankName || comp?.bankName || "—",
+    ifsc: (rawResolvedBank as any).ifsc || (rawResolvedBank as any).bankIfsc || comp?.bankIfsc || "—",
+  } : undefined;
 
   const resolvedTerms =
     quotation.termsSnapshot ||

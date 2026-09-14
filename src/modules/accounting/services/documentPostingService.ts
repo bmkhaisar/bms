@@ -184,6 +184,8 @@ export async function postInvoiceTransaction(params: {
 
       if (voucherRes.success && voucherRes.voucher) {
         voucherId = voucherRes.voucher.id;
+      } else {
+        throw new Error(voucherRes.error || "Authoritative invoice voucher posting failed");
       }
     }
 
@@ -432,6 +434,8 @@ export async function postPurchaseTransaction(params: {
 
       if (voucherRes.success && voucherRes.voucher) {
         voucherId = voucherRes.voucher.id;
+      } else {
+        throw new Error(voucherRes.error || "Authoritative purchase voucher posting failed");
       }
     }
 
@@ -672,6 +676,8 @@ export async function postReceiptTransaction(params: {
 
       if (voucherRes.success && voucherRes.voucher) {
         voucherId = voucherRes.voucher.id;
+      } else {
+        throw new Error(voucherRes.error || "Authoritative receipt voucher posting failed");
       }
     }
 
@@ -703,14 +709,42 @@ export async function postReceiptTransaction(params: {
         : undefined,
     };
 
-    // Authoritative persistence to Firebase RTDB FIRST (PRD § 56)
+    const previousReceipt = await db().receipts.get(updatedReceipt.id);
+    const receiptAllocations = updatedReceipt.allocatedInvoices?.length
+      ? updatedReceipt.allocatedInvoices
+      : updatedReceipt.invoiceId
+        ? [{ invoiceId: updatedReceipt.invoiceId, invoiceNumber: "", amountPaise }]
+        : [];
+    const previousReceiptAllocations = previousReceipt?.allocatedInvoices?.length
+      ? previousReceipt.allocatedInvoices
+      : previousReceipt?.invoiceId
+        ? [{ invoiceId: previousReceipt.invoiceId, invoiceNumber: "", amountPaise: Math.round(previousReceipt.amount * 100) }]
+        : [];
+    const invoiceDeltas = new Map<string, number>();
+    for (const allocation of previousReceiptAllocations) invoiceDeltas.set(allocation.invoiceId, (invoiceDeltas.get(allocation.invoiceId) || 0) - allocation.amountPaise);
+    for (const allocation of receiptAllocations) invoiceDeltas.set(allocation.invoiceId, (invoiceDeltas.get(allocation.invoiceId) || 0) + allocation.amountPaise);
+    const linkedInvoices: Invoice[] = [];
+    for (const [invoiceId, deltaPaise] of invoiceDeltas) {
+      const invoice = await db().invoices.get(invoiceId);
+      if (!invoice) continue;
+      const paidDelta = deltaPaise / 100;
+      const amountPaid = Math.min(invoice.grandTotal, Math.max(0, Number(invoice.amountPaid || 0) + paidDelta));
+      const balance = Math.max(0, invoice.grandTotal - amountPaid);
+      linkedInvoices.push({ ...invoice, amountPaid, balance, status: balance <= 0.01 ? "paid" : amountPaid > 0 ? "partial" : "unpaid", updatedAt: Date.now() });
+    }
+
+    // Authoritative multi-path persistence: receipt and receivable balances move together.
     if (firebaseDb) {
-      const recRef = ref(firebaseDb, `companyData/${companyId}/receipts/${receipt.id}`);
-      await set(recRef, sanitizeForFirebase(updatedReceipt));
+      const updates: Record<string, unknown> = {
+        [`companyData/${companyId}/receipts/${receipt.id}`]: sanitizeForFirebase(updatedReceipt),
+      };
+      for (const invoice of linkedInvoices) updates[`companyData/${companyId}/invoices/${invoice.id}`] = sanitizeForFirebase(invoice);
+      await update(ref(firebaseDb), updates);
     }
 
     // Save to local Dexie database & cache
     await db().receipts.put(updatedReceipt);
+    if (linkedInvoices.length) await db().invoices.bulkPut(linkedInvoices);
     await cacheEntity({
       uid,
       companyId,
@@ -785,6 +819,8 @@ export async function postPaymentTransaction(params: {
 
       if (voucherRes.success && voucherRes.voucher) {
         voucherId = voucherRes.voucher.id;
+      } else {
+        throw new Error(voucherRes.error || "Authoritative payment voucher posting failed");
       }
     }
 
@@ -803,14 +839,42 @@ export async function postPaymentTransaction(params: {
       signatorySnapshot,
     };
 
-    // Authoritative persistence to Firebase RTDB FIRST (PRD § 56)
+    const previousPayment = await db().payments.get(updatedPayment.id);
+    const paymentAllocations = updatedPayment.allocatedPurchases?.length
+      ? updatedPayment.allocatedPurchases
+      : updatedPayment.purchaseId
+        ? [{ purchaseId: updatedPayment.purchaseId, purchaseNumber: "", amountPaise }]
+        : [];
+    const previousPaymentAllocations = previousPayment?.allocatedPurchases?.length
+      ? previousPayment.allocatedPurchases
+      : previousPayment?.purchaseId
+        ? [{ purchaseId: previousPayment.purchaseId, purchaseNumber: "", amountPaise: Math.round(previousPayment.amount * 100) }]
+        : [];
+    const purchaseDeltas = new Map<string, number>();
+    for (const allocation of previousPaymentAllocations) purchaseDeltas.set(allocation.purchaseId, (purchaseDeltas.get(allocation.purchaseId) || 0) - allocation.amountPaise);
+    for (const allocation of paymentAllocations) purchaseDeltas.set(allocation.purchaseId, (purchaseDeltas.get(allocation.purchaseId) || 0) + allocation.amountPaise);
+    const linkedPurchases: Purchase[] = [];
+    for (const [purchaseId, deltaPaise] of purchaseDeltas) {
+      const purchase = await db().purchases.get(purchaseId);
+      if (!purchase) continue;
+      const paidDelta = deltaPaise / 100;
+      const amountPaid = Math.min(purchase.grandTotal, Math.max(0, Number(purchase.amountPaid || 0) + paidDelta));
+      const balance = Math.max(0, purchase.grandTotal - amountPaid);
+      linkedPurchases.push({ ...purchase, amountPaid, balance, status: balance <= 0.01 ? "paid" : amountPaid > 0 ? "partial" : "unpaid", updatedAt: Date.now() });
+    }
+
+    // Authoritative multi-path persistence: payment and payable balances move together.
     if (firebaseDb) {
-      const payRef = ref(firebaseDb, `companyData/${companyId}/payments/${payment.id}`);
-      await set(payRef, sanitizeForFirebase(updatedPayment));
+      const updates: Record<string, unknown> = {
+        [`companyData/${companyId}/payments/${payment.id}`]: sanitizeForFirebase(updatedPayment),
+      };
+      for (const purchase of linkedPurchases) updates[`companyData/${companyId}/purchases/${purchase.id}`] = sanitizeForFirebase(purchase);
+      await update(ref(firebaseDb), updates);
     }
 
     // Save to local Dexie database & cache
     await db().payments.put(updatedPayment);
+    if (linkedPurchases.length) await db().purchases.bulkPut(linkedPurchases);
     await cacheEntity({
       uid,
       companyId,

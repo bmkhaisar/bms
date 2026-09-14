@@ -375,6 +375,16 @@ export async function clearActiveCompanyCache(companyId: string): Promise<void> 
   await db.cachedEntities.where("companyId").equals(companyId).delete();
 }
 
+/** Used only after an explicit server-side operational reset marker is observed. */
+export async function purgeCompanyCacheAndOutbox(companyId: string): Promise<void> {
+  if (typeof window === "undefined") return;
+  const cacheDb = getCacheDb();
+  await cacheDb.transaction("rw", [cacheDb.cachedEntities, cacheDb.outbox], async () => {
+    await cacheDb.cachedEntities.where("companyId").equals(companyId).delete();
+    await cacheDb.outbox.where("companyId").equals(companyId).delete();
+  });
+}
+
 /**
  * Purges cached records for a specific user upon logout or explicit cache clear.
  */

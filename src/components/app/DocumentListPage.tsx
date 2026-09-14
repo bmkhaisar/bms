@@ -13,7 +13,7 @@ import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, Compan
 import { db, nextNumber, uid, getCompany } from "@/lib/db";
 import { useAccounting } from "@/modules/accounting/useAccounting";
 import { migrateLegacyCustomersAndSuppliersToParties } from "@/modules/accounting/domain/partyResolver";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useLive } from "@/lib/useLive";
 import { toDateInput, fromDateInput, formatDate, formatMoney } from "@/lib/format";
 import { toast } from "sonner";
@@ -22,9 +22,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { Copy, Download, FileText, Pencil, Plus, Printer, Trash2, UserPlus, Truck, HandCoins, Loader2, AlertTriangle } from "lucide-react";
 import { ListToolbar, EmptyState, usePagination, Pager } from "./ListHelpers";
 import { cn } from "@/lib/utils";
-import { DocumentPrint, type DocumentKind } from "./DocumentPrint";
-import { printElement } from "@/lib/pdf";
-import { downloadDocumentPDF, type NormalizedDocument } from "@/lib/documentRenderer";
+import { downloadDocumentPDF, generateDocumentPDFBlobUrl, type NormalizedDocument } from "@/lib/documentRenderer";
 import { ListSkeleton } from "./Skeletons";
 import { useInitialLoading } from "@/lib/useInitialLoading";
 import { convertQuotationToInvoice as doConvertQuotation } from "@/modules/documents/quotationConversion";
@@ -49,14 +47,15 @@ import { CalculationReconciliationModal } from "./CalculationReconciliationModal
 import { getPartyFinancialInsight } from "@/modules/accounting/services/partyAdvanceService";
 import { validateDocumentTotals } from "@/modules/tax/canonicalCalculation";
 import { formatAddressLines } from "./AddressDrawer";
-import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, set, remove as rtdbRemove, onValue } from "firebase/database";
+import { firebaseDb } from "@/config/firebase";
+import { ref, update } from "firebase/database";
 import { removeCachedEntity } from "@/modules/sync/dexieCache";
 import { saveDraft, loadDraft, clearDraft } from "@/lib/draftAutosave";
 import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
 import { reverseVoucherServerFn } from "@/functions/reverseVoucherFn";
 import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
 import { authoritativeDeleteDraft, authoritativeVoidPosted, authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
+import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYearFn";
 
 type AnyDoc = Invoice | Quotation | Purchase;
 
@@ -92,6 +91,7 @@ export function DocumentListPage<T extends AnyDoc>({
   const [receiptAmount, setReceiptAmount] = useState<number>(0);
   const [editing, setEditing] = useState<T | null>(null);
   const [preview, setPreview] = useState<T | null>(null);
+  const [previewPdfUrl, setPreviewPdfUrl] = useState<string>("");
   const [deleteTargetDoc, setDeleteTargetDoc] = useState<{ doc: T; isPosted: boolean } | null>(null);
   const [isDeletingDoc, setIsDeletingDoc] = useState<boolean>(false);
   const [recoverableDraft, setRecoverableDraft] = useState<{ data: T; savedAt: number } | null>(null);
@@ -115,6 +115,7 @@ export function DocumentListPage<T extends AnyDoc>({
   const [chargeName, setChargeName] = useState("");
   const [chargeAmount, setChargeAmount] = useState<number>(0);
   const [savingDoc, setSavingDoc] = useState<boolean>(false);
+  const draftFlushRef = useRef<(() => void) | null>(null);
   const [recordingReceipt, setRecordingReceipt] = useState<boolean>(false);
 
   // Customer Advance Tracker (PRD §§ 21-22)
@@ -176,7 +177,7 @@ export function DocumentListPage<T extends AnyDoc>({
     const isInv = kind === "invoice";
     const party = (doc as any).customerSnapshot || (doc as any).supplierSnapshot || (partyById((doc as any).customerId ?? (doc as Purchase).supplierId) || { name: "Client" }) as any;
     const docCompany = (doc as any).companySnapshot || activeCompany || company || {};
-    const isTaxDoc = enableGst && (doc.gstTotal > 0 || (doc as Invoice).isIgst);
+    const isTaxDoc = doc.gstTotal > 0 || Boolean((doc as Invoice).isIgst);
 
     const billSnapshot = (doc as any).billToSnapshot || (doc as any).billingAddressSnapshot;
     const shipSnapshot = (doc as any).shippingAddressSnapshot;
@@ -384,9 +385,25 @@ export function DocumentListPage<T extends AnyDoc>({
   const { user } = useAuth();
   const { activeCompany, activeFinancialYear } = useActiveCompany();
 
+  useEffect(() => {
+    if (!preview) {
+      setPreviewPdfUrl("");
+      return;
+    }
+    const url = generateDocumentPDFBlobUrl(getNormalizedDoc(preview));
+    setPreviewPdfUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [preview, activeCompany?.id, company]);
+
   async function openNew() {
     let idToken: string | undefined;
     try { idToken = await user?.getIdToken(); } catch {}
+    let resolvedFinancialYear = activeFinancialYear;
+    if (!resolvedFinancialYear && activeCompany?.id && idToken) {
+      const ensured = await ensureActiveFinancialYearServerFn({ data: { idToken, companyId: activeCompany.id } });
+      if (!ensured.success) throw new Error(ensured.error || "A current financial year is required.");
+      resolvedFinancialYear = ensured.financialYear as any;
+    }
     const customPrefix =
       kind === "invoice"
         ? activeCompany?.invoicePrefix
@@ -397,8 +414,8 @@ export function DocumentListPage<T extends AnyDoc>({
     const number = await getNextDocumentNumber({
       kind,
       companyId: activeCompany?.id,
-      financialYearId: activeFinancialYear?.id,
-      fyName: activeFinancialYear?.name,
+      financialYearId: resolvedFinancialYear?.id,
+      fyName: resolvedFinancialYear?.name,
       idToken,
       customPrefix,
     });
@@ -409,16 +426,16 @@ export function DocumentListPage<T extends AnyDoc>({
     const base = {
       id: uid(), number, date: Date.now(), items: [] as LineItem[],
       subtotal: 0, discountTotal: 0, gstTotal: 0, roundOff: 0, grandTotal: 0,
-      createdAt: Date.now(), extraCharges: [] as ExtraCharge[], extraChargesTotal: 0,
+      createdAt: Date.now(), financialYearId: resolvedFinancialYear?.id, extraCharges: [] as ExtraCharge[], extraChargesTotal: 0,
       gstCalculationMode: "overall" as const,
       overallGstRate: 18,
     };
     if (kind === "invoice") {
-      setEditing({ ...base, customerId: "", cgstTotal: 0, sgstTotal: 0, igstTotal: 0, isIgst: false, amountPaid: 0, balance: 0, status: "unpaid", gstCalculationMode: "overall", overallGstRate: 18 } as unknown as T);
+      setEditing({ ...base, customerId: "", cgstTotal: 0, sgstTotal: 0, igstTotal: 0, isIgst: false, amountPaid: 0, balance: 0, status: "draft", postingStatus: "draft", sourceType: "DIRECT", gstCalculationMode: "overall", overallGstRate: 18 } as unknown as T);
     } else if (kind === "quotation") {
       setEditing({ ...base, customerId: "", status: "draft", gstCalculationMode: "overall", overallGstRate: 18 } as unknown as T);
     } else {
-      setEditing({ ...base, supplierId: "", amountPaid: 0, balance: 0, status: "unpaid" } as unknown as T);
+      setEditing({ ...base, supplierId: "", amountPaid: 0, balance: 0, status: "draft", postingStatus: "draft" } as unknown as T);
     }
     const saved = loadDraft<T>(kind);
     if (saved && saved.data && (saved.data.items?.length > 0 || (saved.data as any).customerId || (saved.data as Purchase).supplierId)) {
@@ -431,12 +448,12 @@ export function DocumentListPage<T extends AnyDoc>({
 
   // Idempotent migration of legacy customers/suppliers to unified Party Master
   useEffect(() => {
-    if (activeCompany?.id) {
-      migrateLegacyCustomersAndSuppliersToParties({
-        companyId: activeCompany.id,
-        uid: user?.uid || "",
-      }).catch(console.error);
-    }
+    if (!activeCompany?.id || !user) return;
+    user.getIdToken().then((idToken) => migrateLegacyCustomersAndSuppliersToParties({
+      companyId: activeCompany.id,
+      uid: user.uid,
+      idToken,
+    })).catch(console.error);
   }, [activeCompany?.id, user?.uid]);
 
   function openEdit(r: T) {
@@ -446,51 +463,48 @@ export function DocumentListPage<T extends AnyDoc>({
     setOpen(true);
   }
 
-  // Periodic autosave for in-flight document draft (PRD § 50)
+  async function persistWorkingDraft(value: T) {
+    const isAlreadyPosted = (value as any).postingStatus === "posted" || Boolean((value as any).voucherId);
+    const hasContent = (value.items && value.items.length > 0) || Boolean((value as any).customerId) || Boolean((value as Purchase).supplierId);
+    if (!hasContent || isAlreadyPosted || savingDoc) return;
+    const draft = {
+      ...value,
+      status: "draft",
+      ...(kind === "quotation" ? {} : { postingStatus: "draft" }),
+      updatedAt: Date.now(),
+    } as T;
+    saveDraft(kind, draft);
+    if (activeCompany?.id) {
+      await authoritativeSaveEntity({
+        companyId: activeCompany.id,
+        financialYearId: (draft as any).financialYearId || activeFinancialYear?.id,
+        kind,
+        entity: draft,
+        uid: user?.uid,
+        action: rows.some((row) => row.id === draft.id) ? "update" : "create",
+      });
+    } else {
+      const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
+      await table.put(draft as any);
+    }
+  }
+
+  // Debounced Firebase-backed autosave. Previewing or changing routes cannot discard a working document.
   useEffect(() => {
     if (!open || !editing) return;
     const hasContent = (editing.items && editing.items.length > 0) || Boolean((editing as any).customerId) || Boolean((editing as Purchase).supplierId);
     if (hasContent) {
       const timer = setTimeout(() => {
-        saveDraft(kind, editing);
-      }, 3000);
+        persistWorkingDraft(editing).catch((error) => console.warn("[DocumentListPage] Draft autosave failed:", error));
+      }, 750);
       return () => clearTimeout(timer);
     }
-  }, [open, editing, kind]);
+  }, [open, editing, kind, activeCompany?.id, activeFinancialYear?.id, user?.uid, savingDoc]);
 
-  // Canonical Realtime Firebase listener for company documents (PRD § 41, 42, 45)
-  useEffect(() => {
-    if (!activeCompany?.id || !firebaseDb) return;
-    const collectionName = kind === "invoice" ? "invoices" : kind === "quotation" ? "quotations" : "purchases";
-    const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
-    const collectionRef = ref(firebaseDb, `companyData/${activeCompany.id}/${collectionName}`);
-    const unsub = onValue(collectionRef, async (snap) => {
-      try {
-        if (!snap.exists() || !snap.val()) {
-          const localRows = await (table as any).toArray();
-          if (localRows.length > 0) {
-            await (table as any).bulkDelete(localRows.map((r: any) => r.id).filter(Boolean));
-          }
-          return;
-        }
-        const val = snap.val();
-        const records = Object.values(val) as any[];
-        const cloudIds = new Set(records.map((r: any) => r.id));
-
-        const localRows = await (table as any).toArray();
-        const toDelete = localRows.filter((r: any) => r.id && !cloudIds.has(r.id)).map((r: any) => r.id);
-        if (toDelete.length > 0) {
-          await (table as any).bulkDelete(toDelete);
-        }
-        if (records.length > 0) {
-          await (table as any).bulkPut(records);
-        }
-      } catch (err) {
-        console.warn(`[DocumentListPage] Realtime sync warning for ${collectionName}:`, err);
-      }
-    });
-    return () => unsub();
-  }, [activeCompany?.id, kind]);
+  draftFlushRef.current = () => {
+    if (open && editing) void persistWorkingDraft(editing).catch((error) => console.warn("[DocumentListPage] Final draft flush failed:", error));
+  };
+  useEffect(() => () => draftFlushRef.current?.(), []);
 
   // Auto-update Intra/Inter state when party or place of supply changes
   function onPartySelect(selectedPartyId: string) {
@@ -613,6 +627,10 @@ export function DocumentListPage<T extends AnyDoc>({
 
     if (kind === "invoice") {
       const inv = patched as Invoice;
+      const resolvedFinancialYearId = inv.financialYearId || activeFinancialYear?.id;
+      if (activeCompany?.id && !resolvedFinancialYearId) throw new Error("Current financial year is still initializing. Please retry in a moment.");
+      inv.financialYearId = resolvedFinancialYearId;
+      inv.sourceType = inv.sourceQuotationId || inv.convertedFromQuotationId ? "QUOTATION" : (inv.sourceType || "DIRECT");
       const cust = party as Customer | undefined;
 
       // Freeze presentation-critical master snapshots (PRD §§ 7-9, 28)
@@ -627,8 +645,16 @@ export function DocumentListPage<T extends AnyDoc>({
                      (bankAccounts || []).find(b => b.isDefault) ||
                      (bankAccounts || [])[0];
         if (bank) {
-          inv.bankDetailsSnapshot = bank;
-          inv.bankSnapshot = bank;
+          const resolvedBank = {
+            ...bank,
+            accountHolderName: bank.accountHolderName || bank.accountName || (activeCompany as any)?.accountHolderName || (activeCompany as any)?.bankAccountHolderName,
+            accountName: bank.accountName || bank.accountHolderName || (activeCompany as any)?.accountHolderName || (activeCompany as any)?.bankAccountHolderName,
+            accountNo: bank.accountNo || (bank as any).bankAccountNo || (bank as any).accountNumber || (activeCompany as any)?.bankAccountNo || (activeCompany as any)?.bankAccount || "—",
+            bankName: bank.bankName || activeCompany?.bankName || "—",
+            ifsc: bank.ifsc || (bank as any).bankIfsc || activeCompany?.bankIfsc || "—",
+          };
+          inv.bankDetailsSnapshot = resolvedBank;
+          inv.bankSnapshot = resolvedBank;
         }
       }
       if (inv.includeTerms !== false && !inv.termsSnapshot && inv.structuredTerms?.length) {
@@ -755,7 +781,7 @@ export function DocumentListPage<T extends AnyDoc>({
 
       let authoritativeInvoice: Invoice = inv;
 
-      if (activeCompany?.id && activeFinancialYear?.id && user) {
+      if (activeCompany?.id && resolvedFinancialYearId && user) {
         const custLedger = await ensureCustomerLedger({
           companyId: activeCompany.id,
           customer: party as Customer,
@@ -765,7 +791,7 @@ export function DocumentListPage<T extends AnyDoc>({
         if (prev && prev.postingStatus === "posted") {
           const res = await amendPostedInvoiceTransaction({
             companyId: activeCompany.id,
-            financialYearId: activeFinancialYear.id,
+            financialYearId: resolvedFinancialYearId,
             originalInvoice: prev,
             correctedInvoice: inv,
             company: activeCompany,
@@ -784,7 +810,7 @@ export function DocumentListPage<T extends AnyDoc>({
         } else {
           const res = await postInvoiceTransaction({
             companyId: activeCompany.id,
-            financialYearId: activeFinancialYear.id,
+            financialYearId: resolvedFinancialYearId,
             invoice: inv,
             company: activeCompany,
             customerLedgerId: custLedger,
@@ -805,6 +831,17 @@ export function DocumentListPage<T extends AnyDoc>({
       await db().invoices.put(authoritativeInvoice);
       setOptimisticOverrides(prevMap => new Map(prevMap).set(authoritativeInvoice.id, authoritativeInvoice as unknown as T));
 
+      const sourceQuotationId = authoritativeInvoice.sourceQuotationId || authoritativeInvoice.convertedFromQuotationId;
+      if (sourceQuotationId) {
+        const sourceQuotation = quotations.find((quote) => quote.id === sourceQuotationId);
+        if (activeCompany?.id && firebaseDb) {
+          await update(ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${sourceQuotationId}`), {
+            status: "converted", convertedInvoiceId: authoritativeInvoice.id, updatedAt: Date.now(),
+          });
+        }
+        if (sourceQuotation) await db().quotations.put({ ...sourceQuotation, status: "converted", convertedInvoiceId: authoritativeInvoice.id });
+      }
+
       if (activeCompany?.id) {
         reconcileDocumentPostSuccess({
           entityType: "invoice",
@@ -817,6 +854,9 @@ export function DocumentListPage<T extends AnyDoc>({
       setPostingPhase("posted");
     } else if (kind === "purchase") {
       const pu = patched as Purchase;
+      const resolvedFinancialYearId = pu.financialYearId || activeFinancialYear?.id;
+      if (activeCompany?.id && !resolvedFinancialYearId) throw new Error("Current financial year is still initializing. Please retry in a moment.");
+      pu.financialYearId = resolvedFinancialYearId;
       const suppInv = pu.supplierInvoiceNumber?.trim();
       const policy = (activeCompany as any)?.supplierInvoiceNumberPolicy;
       if (policy === "REQUIRED" && !suppInv) {
@@ -862,7 +902,7 @@ export function DocumentListPage<T extends AnyDoc>({
 
       let authoritativePurchase: Purchase = pu;
 
-      if (activeCompany?.id && activeFinancialYear?.id && user) {
+      if (activeCompany?.id && resolvedFinancialYearId && user) {
         const suppLedger = await ensureSupplierLedger({
           companyId: activeCompany.id,
           supplier: party as Supplier,
@@ -871,7 +911,7 @@ export function DocumentListPage<T extends AnyDoc>({
 
         const res = await postPurchaseTransaction({
           companyId: activeCompany.id,
-          financialYearId: activeFinancialYear.id,
+          financialYearId: resolvedFinancialYearId,
           purchase: pu,
           company: activeCompany,
           supplierLedgerId: suppLedger,
@@ -916,7 +956,7 @@ export function DocumentListPage<T extends AnyDoc>({
       if (activeCompany?.id) {
         await authoritativeSaveEntity({
           companyId: activeCompany.id,
-          financialYearId: activeFinancialYear?.id,
+          financialYearId: (toSave as any).financialYearId || activeFinancialYear?.id,
           kind: "quotation",
           entity: toSave,
           uid: user?.uid,
@@ -967,7 +1007,7 @@ export function DocumentListPage<T extends AnyDoc>({
         await (kind === "invoice" ? db().invoices : db().purchases).put(optimisticVoided as any);
       }
 
-      toast.success(`${kind === "invoice" ? "Invoice" : "Purchase"} voided and removed from active records`);
+      toast.success(`${kind === "invoice" ? "Invoice" : "Purchase"} deleted from active records`);
     } catch (err: any) {
       // Rollback optimistic override on failure
       setOptimisticOverrides(prevMap => {
@@ -977,6 +1017,7 @@ export function DocumentListPage<T extends AnyDoc>({
       });
       console.error(`[cancelPostedDoc] Failed to void ${kind}:`, err);
       toast.error(err?.message || `Failed to void ${kind}. Record restored.`);
+      throw err;
     }
   }
 
@@ -1010,6 +1051,7 @@ export function DocumentListPage<T extends AnyDoc>({
       });
       console.error(`[removeDraftDoc] Failed to delete ${kind}:`, err);
       toast.error(err?.message || `Failed to delete ${kind}. Record restored.`);
+      throw err;
     }
   }
 
@@ -1095,6 +1137,9 @@ export function DocumentListPage<T extends AnyDoc>({
       includeBankDetails: quote.includeBankDetails !== false,
       gstCalculationMode: quote.gstCalculationMode || "item_wise",
       overallGstRate: quote.overallGstRate,
+      sourceType: "QUOTATION",
+      sourceQuotationId: quote.id,
+      sourceQuotationNumber: quote.number,
       convertedFromQuotationId: quote.id,
     } as T);
     toast.success(`Loaded items from quotation ${quote.number}`);
@@ -1135,7 +1180,7 @@ export function DocumentListPage<T extends AnyDoc>({
       };
 
       if (activeCompany?.id && activeFinancialYear?.id && user) {
-        await postReceiptTransaction({
+        const result = await postReceiptTransaction({
           companyId: activeCompany.id,
           financialYearId: activeFinancialYear.id,
           receipt: receiptRecord,
@@ -1144,18 +1189,10 @@ export function DocumentListPage<T extends AnyDoc>({
           idToken,
           uid: user.uid,
         });
+        if (!result.success) throw new Error(result.error || "Receipt posting failed");
+      } else {
+        throw new Error("An active company and financial year are required to post a receipt");
       }
-
-      // Update invoice balance
-      const newPaid = (selectedInvoiceForReceipt.amountPaid || 0) + receiptAmount;
-      const newBalance = Math.max(0, selectedInvoiceForReceipt.grandTotal - newPaid);
-      const updatedInv = {
-        ...selectedInvoiceForReceipt,
-        amountPaid: newPaid,
-        balance: newBalance,
-        status: newBalance <= 0.01 ? "paid" as const : "partial" as const,
-      };
-      await db().invoices.put(updatedInv);
 
       toast.success(`Receipt ${number} posted against Invoice ${selectedInvoiceForReceipt.number}`);
       setOpenReceiptModal(false);
@@ -1259,7 +1296,20 @@ export function DocumentListPage<T extends AnyDoc>({
                       const invBalance = (r as unknown as Invoice).balance ?? 0;
                       return (
                         <TableRow key={r.id}>
-                          <TableCell className="font-mono font-medium">{r.number}</TableCell>
+                          <TableCell className="font-mono font-medium">
+                            <div>{r.number}</div>
+                            {kind === "invoice" && (
+                              (r as unknown as Invoice).sourceType === "QUOTATION" || (r as unknown as Invoice).convertedFromQuotationId
+                                ? <button type="button" className="mt-1 rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-blue-700 hover:underline" onClick={() => {
+                                  const sourceId = (r as unknown as Invoice).sourceQuotationId || (r as unknown as Invoice).convertedFromQuotationId;
+                                  if (sourceId && typeof window !== "undefined") window.location.assign(`/quotations?id=${encodeURIComponent(sourceId)}`);
+                                  }}>From {(r as unknown as Invoice).sourceQuotationNumber || "Quotation"}</button>
+                                : <span className="mt-1 inline-block rounded bg-slate-500/10 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-slate-600">Direct Invoice</span>
+                            )}
+                            {kind === "quotation" && (r as unknown as Quotation).convertedInvoiceId && (
+                              <span className="mt-1 inline-block rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-emerald-700">Invoice Created</span>
+                            )}
+                          </TableCell>
                           {kind === "purchase" && (
                             <TableCell className="font-mono font-semibold text-primary">
                               {(r as Purchase).supplierInvoiceNumber || "—"}
@@ -2007,6 +2057,11 @@ export function DocumentListPage<T extends AnyDoc>({
           )}
           <DialogFooter className="shrink-0 gap-2 border-t bg-background px-3 py-3 sm:px-6">
             <Button variant="ghost" onClick={() => setOpen(false)} disabled={savingDoc} className="w-full sm:w-auto">Cancel</Button>
+            {kind === "invoice" && editing && (
+              <Button type="button" variant="outline" onClick={() => setPreview(editing)} disabled={savingDoc} className="w-full sm:w-auto gap-1.5">
+                <FileText className="h-4 w-4" /> Invoice Preview
+              </Button>
+            )}
             <Button onClick={save} disabled={savingDoc} className="w-full sm:w-auto gap-1.5">
               {savingDoc ? (
                 <>
@@ -2048,7 +2103,10 @@ export function DocumentListPage<T extends AnyDoc>({
                 >
                   <Download className="h-4 w-4" /> Download / Print Copies
                 </Button>
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => printElement("print-doc")}>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => {
+                  const frame = document.getElementById("canonical-pdf-preview") as HTMLIFrameElement | null;
+                  frame?.contentWindow?.print();
+                }}>
                   <Printer className="h-4 w-4" /> Print
                 </Button>
                 <Button
@@ -2066,15 +2124,8 @@ export function DocumentListPage<T extends AnyDoc>({
               </div>
             </DialogTitle>
           </DialogHeader>
-          {preview && (company || activeCompany) && (
-            <div className="flex-1 overflow-auto scrollbar-hidden bg-muted/40 p-4 rounded-xl">
-              <DocumentPrint
-                company={((preview as any).companySnapshot || activeCompany || company) as any}
-                kind={kind as DocumentKind}
-                doc={preview as unknown as Invoice}
-                party={partyById((preview as any).customerId ?? (preview as Purchase).supplierId)}
-              />
-            </div>
+          {preview && previewPdfUrl && (
+            <iframe id="canonical-pdf-preview" title={`${preview.number} PDF preview`} src={previewPdfUrl} className="min-h-[70vh] w-full flex-1 rounded-xl border bg-muted/40" />
           )}
         </DialogContent>
       </Dialog>
@@ -2375,16 +2426,19 @@ export function DocumentListPage<T extends AnyDoc>({
             : `This draft document has not been posted to accounting ledgers and will be permanently removed.`
         }
         destructive={true}
+        isBusy={isDeletingDoc}
         confirmText={deleteTargetDoc?.isPosted ? `Delete ${kind === "invoice" ? "Invoice" : "Purchase"}` : "Delete Draft"}
-        busyText={deleteTargetDoc?.isPosted ? "Voiding…" : "Deleting…"}
+        busyText="Deleting…"
         onConfirm={async () => {
           if (!deleteTargetDoc) return;
-          if (deleteTargetDoc.isPosted) {
-            await cancelPostedDoc(deleteTargetDoc.doc);
-          } else {
-            await removeDraftDoc(deleteTargetDoc.doc);
+          setIsDeletingDoc(true);
+          try {
+            if (deleteTargetDoc.isPosted) await cancelPostedDoc(deleteTargetDoc.doc);
+            else await removeDraftDoc(deleteTargetDoc.doc);
+            setDeleteTargetDoc(null);
+          } finally {
+            setIsDeletingDoc(false);
           }
-          setDeleteTargetDoc(null);
         }}
       />
     </>

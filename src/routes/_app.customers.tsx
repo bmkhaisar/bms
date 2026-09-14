@@ -19,8 +19,8 @@ import { toast } from "sonner";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database";
-import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
+import { ref, set, remove as rtdbRemove } from "firebase/database";
+import { cacheEntity, removeCachedEntity } from "@/modules/sync/dexieCache";
 import { createCustomerWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 import { CustomerInsightDrawer } from "@/components/app/CustomerInsightDrawer";
 import { performOptimisticMutation } from "@/lib/mutationPipeline";
@@ -55,8 +55,7 @@ function CustomersPage() {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Customer>(() => db().customers.orderBy("name").toArray());
-  const [cloudRows, setCloudRows] = useState<Customer[]>([]);
-  const [cloudLoaded, setCloudLoaded] = useState(false);
+  const [, setCloudRows] = useState<Customer[]>([]);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "ALL" | "INACTIVE">("ACTIVE");
   const [open, setOpen] = useState(false);
@@ -70,81 +69,8 @@ function CustomersPage() {
     usage: HistoricalUsageResult;
   } | null>(null);
 
-  // 1. Initial cached retrieval + Realtime Firebase synchronization
-  useEffect(() => {
-    if (!activeCompany?.id || !user?.uid) return;
-
-    let active = true;
-
-    // Load from Dexie cache immediately for fast startup (zero-flash)
-    getCachedEntities<Customer>({
-      uid: user.uid,
-      companyId: activeCompany.id,
-      entityType: "customer",
-    }).then((cached) => {
-      if (active && cached.length > 0) {
-        setCloudRows(cached);
-      }
-    });
-
-    if (!firebaseDb) return;
-
-    const customersRef = ref(firebaseDb, `companyData/${activeCompany.id}/customers`);
-    const onData = (snap: any) => {
-      if (!active) return;
-      if (snap.exists()) {
-        const val = snap.val();
-        const list: Customer[] = Object.values(val);
-        setCloudRows(list);
-        setCloudLoaded(true);
-
-        // Deletion reconciliation: purge local rows no longer present in Firebase cloud
-        const cloudIds = new Set(list.map((c) => c.id));
-        db().customers.toArray().then((localRows) => {
-          const toDelete = localRows.filter((r) => !cloudIds.has(r.id)).map((r) => r.id);
-          if (toDelete.length > 0) {
-            db().customers.bulkDelete(toDelete);
-            db().parties.bulkDelete(toDelete);
-          }
-        });
-
-        // Update Dexie cache in background
-        cacheEntitiesBulk(
-          list.map((c) => ({
-            uid: user.uid,
-            companyId: activeCompany.id,
-            entityType: "customer",
-            entityId: c.id,
-            data: c,
-          }))
-        );
-
-        // Sync into local legacy Dexie store
-        db().customers.bulkPut(list);
-      } else {
-        setCloudRows([]);
-        setCloudLoaded(true);
-        db().customers.clear();
-        db().parties.clear();
-      }
-    };
-
-    onValue(customersRef, onData);
-
-    return () => {
-      active = false;
-      off(customersRef, "value", onData);
-    };
-  }, [activeCompany?.id, user?.uid]);
-
-  // Synchronize local dexieRows into cloudRows on mount before cloud loads
-  useEffect(() => {
-    if (!cloudLoaded && cloudRows.length === 0 && dexieRows.length > 0) {
-      setCloudRows(dexieRows);
-    }
-  }, [cloudLoaded, dexieRows]);
-
-  const rows = activeCompany?.id && cloudLoaded ? cloudRows : (cloudRows.length > 0 ? cloudRows : dexieRows);
+  // The company-level ordered realtime synchronizer is the single read owner.
+  const rows = dexieRows;
 
   // Deep-link support
   useEffect(() => {
@@ -321,7 +247,7 @@ function CustomersPage() {
       };
 
       const isNew =
-        !cloudRows.some((c) => c.id === customerToSave.id) &&
+        !rows.some((c) => c.id === customerToSave.id) &&
         !dexieRows.some((c) => c.id === customerToSave.id);
 
       await performOptimisticMutation<Customer>({

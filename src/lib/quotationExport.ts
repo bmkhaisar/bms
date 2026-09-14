@@ -657,7 +657,7 @@ async function drawTermsPage(ctx: PdfContext) {
           } : null
         ));
 
-    if (rawBank && (rawBank.bankName || rawBank.accountNo)) {
+    if (rawBank && (rawBank.bankName || rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || rawBank.bankAccount || rawBank.bankAccountNumber)) {
       if (y > pageH - 45) {
         doc.addPage();
         y = (await pdfHeader(ctx, false)) + 6;
@@ -671,7 +671,7 @@ async function drawTermsPage(ctx: PdfContext) {
 
       const bankRows: [string, string][] = [
         ["Account Holder Name", rawBank.accountHolderName || rawBank.accountName || (company as any).accountHolderName || (company as any).bankAccountHolderName || (company as any).legalName || company.name || "Business Entity"],
-        ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || "—"],
+        ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || rawBank.bankAccount || rawBank.bankAccountNumber || (company as any).bankAccountNo || (company as any).bankAccount || "—"],
         ["Bank Name", rawBank.bankName || "—"],
         ["IFSC Code", rawBank.ifsc || rawBank.bankIfsc || "—"],
       ];
@@ -1324,7 +1324,7 @@ export async function exportQuotationDOCX(
     extras.push(kvTable([
       ["Bank", b.bankName || "—"],
       ["Account Holder Name", b.accountHolderName || b.accountName || "—"],
-      ["Account No.", b.accountNo || b.accountNumber || "—"],
+      ["Account No.", b.accountNo || b.bankAccountNo || b.accountNumber || b.bankAccount || b.bankAccountNumber || (company as any).bankAccountNo || (company as any).bankAccount || "—"],
       ["IFSC", b.ifsc || "—"],
       ...(b.branch ? [["Branch", b.branch] as [string, string]] : []),
       ...(b.upi ? [["UPI", b.upi] as [string, string]] : []),

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -60,10 +60,11 @@ import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot"
 interface Props {
   initial: Quotation;
   onSave: (q: Quotation) => Promise<void> | void;
+  onDraftSave?: (q: Quotation) => Promise<void> | void;
   onCancel: () => void;
 }
 
-export function QuotationForm({ initial, onSave, onCancel }: Props) {
+export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props) {
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const products = useLive<Product>(() => db().products.orderBy("name").toArray());
   const sizes = useLive<SizePreset>(() => db().sizes.orderBy("label").toArray());
@@ -81,6 +82,7 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
   const [quickProductOpen, setQuickProductOpen] = useState(false);
   const [insightCustomerId, setInsightCustomerId] = useState<string | null>(null);
   const [pendingGstMode, setPendingGstMode] = useState<"item_wise" | "overall" | null>(null);
+  const draftFlushRef = useRef<Quotation | null>(null);
 
   useEffect(() => {
     setQ(initial);
@@ -105,6 +107,39 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
   const beforeRound = totals.subtotal - totals.discountTotal + totals.gstTotal + extrasTotal;
   const grand = Math.round(beforeRound);
   const roundOff = round2(grand - beforeRound);
+  const workingDraft = useMemo<Quotation>(() => ({
+    ...q,
+    subtotal: totals.subtotal,
+    discountTotal: totals.discountTotal,
+    gstTotal: totals.gstTotal,
+    cgstTotal: totals.cgstTotal,
+    sgstTotal: totals.sgstTotal,
+    igstTotal: totals.igstTotal,
+    extraChargesTotal: round2(extrasTotal),
+    roundOff,
+    grandTotal: grand,
+    status: "draft",
+    updatedAt: Date.now(),
+  } as Quotation), [q, totals.subtotal, totals.discountTotal, totals.gstTotal, totals.cgstTotal, totals.sgstTotal, totals.igstTotal, extrasTotal, roundOff, grand]);
+
+  const draftSaveCallbackRef = useRef(onDraftSave);
+  draftSaveCallbackRef.current = onDraftSave;
+  draftFlushRef.current = workingDraft;
+  useEffect(() => {
+    if (!draftSaveCallbackRef.current || q.status !== "draft" || (!q.customerId && q.items.length === 0)) return;
+    const timer = setTimeout(() => {
+      const saveDraft = draftSaveCallbackRef.current;
+      if (saveDraft) void Promise.resolve(saveDraft(workingDraft)).catch((error) => console.warn("[QuotationForm] Draft autosave failed:", error));
+    }, 750);
+    return () => clearTimeout(timer);
+  }, [workingDraft, q.status, q.customerId, q.items.length]);
+
+  useEffect(() => () => {
+    const pending = draftFlushRef.current;
+    if (pending && draftSaveCallbackRef.current && pending.status === "draft" && (pending.customerId || pending.items.length > 0)) {
+      void Promise.resolve(draftSaveCallbackRef.current(pending)).catch((error) => console.warn("[QuotationForm] Final draft flush failed:", error));
+    }
+  }, []);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 

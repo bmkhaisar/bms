@@ -13,13 +13,13 @@ export const Route = createFileRoute("/no-company-access")({
 });
 
 export function NoCompanyAccessPage() {
-  const { user, isPlatformAdmin, signOutAndSwitchAccount, initializing, authInitializing, claimsLoading } = useAuth();
+  const { user, isPlatformAdmin, signOutAndSwitchAccount, initializing, authInitializing, claimsLoading, resolutionState } = useAuth();
   const { companies, loading: companiesLoading } = useActiveCompany();
   const nav = useNavigate();
   const [checkingPrivileges, setCheckingPrivileges] = useState(true);
 
   useEffect(() => {
-    if (authInitializing || claimsLoading) return;
+    if (authInitializing || claimsLoading || resolutionState !== "ready") return;
 
     if (!user) {
       nav({ to: "/login", replace: true });
@@ -70,9 +70,9 @@ export function NoCompanyAccessPage() {
     return () => {
       active = false;
     };
-  }, [user, isPlatformAdmin, authInitializing, claimsLoading, companiesLoading, companies.length, nav]);
+  }, [user, isPlatformAdmin, authInitializing, claimsLoading, resolutionState, companiesLoading, companies.length, nav]);
 
-  if (initializing || companiesLoading || checkingPrivileges) {
+  if (initializing || resolutionState !== "ready" || companiesLoading || checkingPrivileges) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-sky-50/40 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4">
         <div className="flex flex-col items-center gap-3">
