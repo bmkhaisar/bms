@@ -135,6 +135,7 @@ export async function postInvoiceTransaction(params: {
         ledgerId: customerLedgerId,
         debit: totalPaise,
         credit: 0,
+        partyId: invoice.customerId,
       },
       {
         ledgerId: salesLedgerId,
@@ -408,6 +409,7 @@ export async function postPurchaseTransaction(params: {
         ledgerId: supplierLedgerId,
         debit: 0,
         credit: totalPaise,
+        partyId: purchase.supplierId,
       },
     ];
 
@@ -635,6 +637,7 @@ export async function postReceiptTransaction(params: {
               ledgerId: customerLedgerId,
               debit: 0,
               credit: advanceTaxRes.taxableAmountPaise,
+              partyId: receipt.partyId || receipt.customerId,
             },
             {
               ledgerId: gstLedgerId,
@@ -647,6 +650,7 @@ export async function postReceiptTransaction(params: {
               ledgerId: customerLedgerId,
               debit: 0,
               credit: amountPaise,
+              partyId: receipt.partyId || receipt.customerId,
             },
           ]),
     ];
@@ -789,6 +793,7 @@ export async function postPaymentTransaction(params: {
         ledgerId: supplierLedgerId,
         debit: amountPaise,
         credit: 0,
+        partyId: payment.supplierId,
       },
       {
         ledgerId: liquidityLedgerId,

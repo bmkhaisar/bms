@@ -51,6 +51,36 @@ No existing ledger or balance was overwritten.
 - Backend foundation regressions: 4 passed, 0 failed
 - Full application suite: 364 passed; one untouched Archify validator failed on Windows `EPERM`
 - Production Vercel/Nitro build: PASS
+
+## Voucher Party Master and Firebase payload invariant follow-up
+
+Invoice posting subsequently exposed an unsafe optional-field construction in the
+server posting engine: every processed voucher line included `partyType` and
+`partyId` keys even when their values were `undefined`. Document posting also
+provided a party subledger ID without consistently providing the canonical Party
+Master ID, so the server could neither derive nor validate the required party role.
+
+The server posting boundary now resolves every AR/AP subledger through
+`companyData/<company>/parties/<partyId>` before voucher-number allocation. AR
+lines store `SUNDRY_DEBTOR`; AP lines store `SUNDRY_CREDITOR`; `BOTH` is resolved
+according to the ledger role. Missing, nonexistent, or incompatible party data is
+rejected as a domain error before mutation. Invoice, purchase, receipt, payment,
+and advance-refund builders now pass their canonical `partyId`. Journal/contra and
+other genuine non-party lines omit both optional fields.
+
+Posting and reversal multi-path payloads are recursively audited for JavaScript
+`undefined` immediately before the atomic Admin RTDB `update()`. This is an
+assertion, not a sanitizer: invalid required data is never silently removed.
+Optional voucher header/line fields are constructed conditionally. Party identity
+is also included in the idempotency hash.
+
+Verification:
+
+- New voucher-party/payload regressions: 6 passed, 0 failed
+- Targeted accounting/foundation/voucher suite: 41 passed, 0 failed
+- Full suite: 373 passed; one untouched Archify Windows `EPERM` validation failure
+- TypeScript (`tsc --noEmit`): PASS
+- Production Vercel/Nitro build: PASS
 - Local runtime: HTTP 200 at `http://127.0.0.1:8080/`
 
 No credentials, tokens, account values, or private keys were printed.

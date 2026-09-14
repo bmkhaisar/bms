@@ -461,6 +461,7 @@ export async function processAdvanceRefund(params: {
         ledgerId: customerLedgerId,
         debit: taxableReversedPaise,
         credit: 0,
+        partyId: receipt.partyId || receipt.customerId,
       },
       ...(taxReversedPaise > 0
         ? [
@@ -538,4 +539,3 @@ export async function processAdvanceRefund(params: {
     return { success: false, refundAmountRupees: 0, refundTaxReversedRupees: 0, error: msg };
   }
 }
-

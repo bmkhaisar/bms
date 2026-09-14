@@ -9,6 +9,7 @@ export const voucherTypeSchema = z.enum(["journal", "payment", "receipt", "contr
 export const voucherStatusSchema = z.enum(["draft", "posted", "reversed", "cancelled"]);
 
 export const partyTypeSchema = z.enum(["customer", "supplier", "bank", "cash", "general"]);
+export const voucherPartyTypeSchema = z.enum(["SUNDRY_DEBTOR", "SUNDRY_CREDITOR"]);
 
 export const postVoucherLineSchema = z.object({
   ledgerId: z.string().min(1, "Ledger ID is required"),
@@ -16,7 +17,7 @@ export const postVoucherLineSchema = z.object({
   credit: z.number().min(0, "Credit cannot be negative"),
   description: z.string().optional(),
   costCentreId: z.string().optional(),
-  partyType: partyTypeSchema.optional(),
+  partyType: z.union([voucherPartyTypeSchema, partyTypeSchema]).optional(),
   partyId: z.string().optional(),
   relatedEntityType: z.string().optional(),
   relatedEntityId: z.string().optional(),

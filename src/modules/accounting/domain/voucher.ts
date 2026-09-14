@@ -1,5 +1,6 @@
 import type { MoneyPaise } from "./money";
-import type { PartyType } from "./ledger";
+
+export type VoucherPartyType = "SUNDRY_DEBTOR" | "SUNDRY_CREDITOR";
 
 export type VoucherType = "journal" | "payment" | "receipt" | "contra";
 
@@ -17,7 +18,7 @@ export interface VoucherLine {
   credit: MoneyPaise;           // In integer paise (0 if debit)
   description?: string;
   costCentreId?: string;        // Future cost-centre tracking
-  partyType?: PartyType;
+  partyType?: VoucherPartyType;
   partyId?: string;             // Customer or supplier ID
   relatedEntityType?: string;   // For invoice/bill/asset linkages
   relatedEntityId?: string;

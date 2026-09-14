@@ -8,6 +8,7 @@ import type {
   Ledger,
 } from "@/modules/accounting/types";
 import { allocateVoucherNumber } from "./numberingEngine";
+import { assertNoUndefinedValues } from "../firebasePayloadInvariant";
 
 /**
  * Server-Side Voucher Reversal Engine.
@@ -174,12 +175,12 @@ export async function executeReverseVoucher(
   const reversalLines: VoucherLine[] = origVoucher.lines.map((origLine, idx) => ({
     id: `rev_line_${idx + 1}_${Math.random().toString(36).substring(2, 6)}`,
     ledgerId: origLine.ledgerId,
-    ledgerName: origLine.ledgerName,
+    ...(origLine.ledgerName ? { ledgerName: origLine.ledgerName } : {}),
     debit: origLine.credit,    // Swap: Original credit becomes debit
     credit: origLine.debit,    // Swap: Original debit becomes credit
     description: `Reversal of [${origVoucher.voucherNumber}] ${origLine.description || ""}`.trim(),
-    partyType: origLine.partyType,
-    partyId: origLine.partyId,
+    ...(origLine.partyType ? { partyType: origLine.partyType } : {}),
+    ...(origLine.partyId ? { partyId: origLine.partyId } : {}),
   }));
 
   // 5. Allocate Sequence Number for Reversal Voucher
@@ -324,6 +325,7 @@ export async function executeReverseVoucher(
   };
 
   try {
+    assertNoUndefinedValues(updates);
     await db.ref().update(updates);
     return {
       success: true,

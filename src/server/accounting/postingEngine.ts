@@ -11,6 +11,8 @@ import type {
 import { rupeesToPaise } from "@/modules/accounting/constants";
 import { allocateVoucherNumber } from "./numberingEngine";
 import { ensureCompanyChartOfAccounts } from "./initChartOfAccounts";
+import { resolveVoucherPartyMetadata, VoucherPartyValidationError } from "./voucherPartyResolution";
+import { assertNoUndefinedValues } from "../firebasePayloadInvariant";
 
 /**
  * Server-Side Double-Entry Posting Engine.
@@ -133,7 +135,7 @@ export async function executePostVoucher(
     companyId: input.companyId,
     financialYearId: input.financialYearId,
     voucherType: input.voucherType,
-    lines: (input.lines || []).map((l) => ({ l: l.ledgerId, d: l.debit, c: l.credit })),
+    lines: (input.lines || []).map((l) => ({ l: l.ledgerId, d: l.debit, c: l.credit, p: l.partyId || "" })),
   });
 
   // 2. Idempotency Check: Verify if this clientMutationId was already posted
@@ -360,8 +362,6 @@ export async function executePostVoucher(
       debit: debitPaise,
       credit: creditPaise,
       description: rawLine.description?.trim() || "",
-      partyType: rawLine.partyType,
-      partyId: rawLine.partyId,
     });
   }
 
@@ -428,6 +428,40 @@ export async function executePostVoucher(
     if (loadedLedgers[line.ledgerId]) {
       line.ledgerName = loadedLedgers[line.ledgerId].name;
     }
+  }
+
+  // Resolve all party subledger metadata from canonical Party Master before
+  // allocating a voucher number or performing any financial mutation.
+  const partyIds = new Set<string>();
+  for (let index = 0; index < processedLines.length; index++) {
+    const line = processedLines[index];
+    const requestedPartyId = input.lines[index]?.partyId?.trim() || loadedLedgers[line.ledgerId]?.partyId?.trim();
+    if (requestedPartyId) partyIds.add(requestedPartyId);
+  }
+  const partyEntries = await Promise.all(Array.from(partyIds).map(async (partyId) => {
+    const snapshot = await db.ref(`companyData/${input.companyId}/parties/${partyId}`).once("value");
+    return [partyId, snapshot.exists() ? { ...snapshot.val(), id: snapshot.val()?.id || partyId } : null] as const;
+  }));
+  const canonicalParties = new Map(partyEntries);
+
+  try {
+    for (let index = 0; index < processedLines.length; index++) {
+      const line = processedLines[index];
+      const ledger = loadedLedgers[line.ledgerId];
+      const requestedPartyId = input.lines[index]?.partyId?.trim() || ledger.partyId?.trim();
+      const partyMetadata = resolveVoucherPartyMetadata({
+        lineNumber: index + 1,
+        requestedPartyId,
+        ledger,
+        party: requestedPartyId ? canonicalParties.get(requestedPartyId) : undefined,
+      });
+      Object.assign(line, partyMetadata);
+    }
+  } catch (error) {
+    if (error instanceof VoucherPartyValidationError) {
+      return { success: false, error: error.message, code: "INVALID_INPUT" };
+    }
+    throw error;
   }
 
   // Contra constraint: Both sides must be Cash or Bank liquidity ledgers
@@ -536,9 +570,9 @@ export async function executePostVoucher(
     lines: processedLines,
     totalDebit: totalDebitPaise,
     totalCredit: totalCreditPaise,
-    sourceType: input.sourceType,
-    sourceId: input.sourceId,
-    sourceNumber: input.sourceNumber,
+    ...(input.sourceType ? { sourceType: input.sourceType } : {}),
+    ...(input.sourceId ? { sourceId: input.sourceId } : {}),
+    ...(input.sourceNumber ? { sourceNumber: input.sourceNumber } : {}),
     clientMutationId: input.clientMutationId.trim(),
     createdBy: callerUid,
     createdAt: now,
@@ -604,6 +638,7 @@ export async function executePostVoucher(
   };
 
   try {
+    assertNoUndefinedValues(updates);
     await db.ref().update(updates);
     return {
       success: true,

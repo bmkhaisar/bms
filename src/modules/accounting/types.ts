@@ -29,6 +29,7 @@ export interface AccountGroup {
 }
 
 export type PartyType = "customer" | "supplier" | "bank" | "cash" | "general";
+export type VoucherPartyType = "SUNDRY_DEBTOR" | "SUNDRY_CREDITOR";
 
 export interface BankMetadata {
   accountNumber?: string;
@@ -85,7 +86,7 @@ export interface VoucherLine {
   debit: number;                // In integer paise (0 if credit)
   credit: number;               // In integer paise (0 if debit)
   description?: string;
-  partyType?: PartyType;
+  partyType?: VoucherPartyType;
   partyId?: string;
   costCentreId?: string;
 }
@@ -140,7 +141,7 @@ export interface PostVoucherInput {
     debit: number;              // In integer paise or rupees (server validates)
     credit: number;             // In integer paise or rupees
     description?: string;
-    partyType?: PartyType;
+    partyType?: VoucherPartyType | PartyType;
     partyId?: string;
   }[];
   clientMutationId: string;
