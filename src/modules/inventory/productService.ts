@@ -126,7 +126,9 @@ export async function createProductWithUniqueness(
         };
       }
 
-      await update(ref(firebaseDb), updates);
+      // Sanitize the complete atomic payload, including audit metadata. Optional
+      // product fields such as SKU must never leak `undefined` into RTDB.
+      await update(ref(firebaseDb), sanitizeForFirebase(updates));
     }
 
     // 4. Save to Dexie cache & local store

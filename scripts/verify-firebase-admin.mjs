@@ -120,6 +120,8 @@ pad("Service Account Project", emailProjectMatches ? "PASS" : "MISMATCH");
 
 let adminSdkInitStatus = "SKIPPED";
 let authAccessStatus = "SKIPPED";
+let idTokenVerificationStatus = "SKIPPED";
+let platformAdminClaimStatus = "SKIPPED";
 let rtdbAccessStatus = "SKIPPED";
 let overallStatus = "BLOCKED_BY_CREDENTIALS";
 
@@ -150,8 +152,34 @@ if (projectId && clientEmail && emailProjectMatches && keyValid && normalizedKey
         throw err;
       });
       authAccessStatus = "PASS";
+
+      // Exercise the same ID-token verification path used by trusted server
+      // functions, not only service-account user lookup.
+      const apiKey = normalizeScalar(process.env.VITE_FIREBASE_API_KEY);
+      if (apiKey) {
+        const customToken = await auth.createCustomToken(targetAdminUid);
+        const exchange = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${encodeURIComponent(apiKey)}`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+          }
+        );
+        if (!exchange.ok) throw new Error(`ID token exchange failed (${exchange.status})`);
+        const exchangeResult = await exchange.json();
+        if (!exchangeResult.idToken) throw new Error("ID token exchange returned no token");
+        // `true` matches Platform Admin authorization and also checks revocation.
+        const verifiedToken = await auth.verifyIdToken(exchangeResult.idToken, true);
+        idTokenVerificationStatus = "PASS";
+        platformAdminClaimStatus = verifiedToken.platformAdmin === true ? "PASS" : "MISSING";
+      } else {
+        idTokenVerificationStatus = "SKIPPED (client API key unavailable)";
+      }
     } catch (authErr) {
       authAccessStatus = `FAIL (${authErr.code || authErr.message})`;
+      idTokenVerificationStatus = `FAIL (${authErr.code || authErr.message})`;
+      platformAdminClaimStatus = `FAIL (${authErr.code || authErr.message})`;
     }
 
     // Verify RTDB access
@@ -163,7 +191,7 @@ if (projectId && clientEmail && emailProjectMatches && keyValid && normalizedKey
       rtdbAccessStatus = `FAIL (${dbErr.message})`;
     }
 
-    if (adminSdkInitStatus === "PASS" && authAccessStatus === "PASS" && rtdbAccessStatus === "PASS") {
+    if (adminSdkInitStatus === "PASS" && authAccessStatus === "PASS" && idTokenVerificationStatus === "PASS" && platformAdminClaimStatus === "PASS" && rtdbAccessStatus === "PASS") {
       overallStatus = "READY";
     } else {
       overallStatus = "INITIALIZATION_FAILED";
@@ -184,6 +212,8 @@ if (projectId && clientEmail && emailProjectMatches && keyValid && normalizedKey
 
 pad("Admin SDK Init", adminSdkInitStatus);
 pad("Auth Access", authAccessStatus);
+pad("ID Token Verification", idTokenVerificationStatus);
+pad("Platform Admin Claim", platformAdminClaimStatus);
 pad("RTDB Access", rtdbAccessStatus);
 
 console.log("-------------------------------------------------");

@@ -10,6 +10,7 @@ import type {
 } from "@/modules/accounting/types";
 import { rupeesToPaise } from "@/modules/accounting/constants";
 import { allocateVoucherNumber } from "./numberingEngine";
+import { ensureCompanyChartOfAccounts } from "./initChartOfAccounts";
 
 /**
  * Server-Side Double-Entry Posting Engine.
@@ -116,6 +117,18 @@ export async function executePostVoucher(
     };
   }
 
+  // Legacy-company compatibility: foundational system groups/ledgers may be
+  // absent even though the tenant and membership are valid. This helper is
+  // additive and reads existing records first, so balances are never reset.
+  const chartResult = await ensureCompanyChartOfAccounts(db, input.companyId, callerUid);
+  if (!chartResult.success) {
+    return {
+      success: false,
+      error: chartResult.error || "Could not initialize the company chart of accounts.",
+      code: "INTERNAL_ERROR",
+    };
+  }
+
   const payloadHash = JSON.stringify({
     companyId: input.companyId,
     financialYearId: input.financialYearId,
@@ -160,16 +173,65 @@ export async function executePostVoucher(
 
   // 3. Verify Branch Exists and is Active
   const branchId = input.branchId || "br_main";
-  const branchSnap = await db
+  let branchSnap = await db
     .ref(`companyData/${input.companyId}/branches/${branchId}`)
     .once("value");
 
   if (!branchSnap.exists()) {
-    return {
-      success: false,
-      error: `Branch '${branchId}' does not exist in this company.`,
-      code: "INVALID_INPUT",
+    if (branchId !== "br_main") {
+      return {
+        success: false,
+        error: `Branch '${branchId}' does not exist in this company.`,
+        code: "INVALID_INPUT",
+      };
+    }
+
+    const companySnap = await db.ref(`companies/${input.companyId}`).once("value");
+    if (!companySnap.exists()) {
+      return {
+        success: false,
+        error: "Company does not exist.",
+        code: "INVALID_INPUT",
+      };
+    }
+
+    const repairTime = Date.now();
+    const defaultBranch = {
+      id: "br_main",
+      companyId: input.companyId,
+      name: "Main Branch",
+      code: "MAIN",
+      isHeadOffice: true,
+      active: true,
+      createdAt: repairTime,
+      createdBy: callerUid,
     };
+    const branchRef = db.ref(`companyData/${input.companyId}/branches/br_main`);
+    const repairTransaction = await branchRef.transaction((current) => current || defaultBranch);
+    branchSnap = repairTransaction.snapshot;
+    if (!branchSnap.exists()) {
+      return {
+        success: false,
+        error: "Could not initialize the company's main branch.",
+        code: "INTERNAL_ERROR",
+      };
+    }
+
+    if (repairTransaction.committed) {
+      const repairAuditId = `audit_${repairTime}_main_branch_repair`;
+      await db.ref().update({
+        [`memberships/${input.companyId}/${callerUid}/branchIds/br_main`]: true,
+        [`companyData/${input.companyId}/auditLogs/${repairAuditId}`]: {
+          id: repairAuditId,
+          entityType: "branch",
+          entityId: "br_main",
+          action: "ensure_main_branch",
+          performedBy: callerUid,
+          timestamp: repairTime,
+          details: { created: true, reason: "legacy_company_repair" },
+        },
+      });
+    }
   }
   const branchData = branchSnap.val();
   if (branchData.active === false) {

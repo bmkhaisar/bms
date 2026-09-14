@@ -13,6 +13,8 @@
     "bootstrap:admin": "node scripts/bootstrap-platform-admin.mjs",
     "verify:firebase-admin": "node scripts/verify-firebase-admin.mjs",
     "verify:r2": "node scripts/verify-r2.mjs",
+    "audit:company-foundation": "node scripts/audit-company-foundation.mjs",
+    "repair:company-foundation": "node scripts/repair-company-foundation.mjs",
     "reset:company-data": "node scripts/reset-company-data.mjs",
     "test": "node --test test/*.test.mjs",
     "arch:doctor": "node scripts/architecture.mjs doctor",
