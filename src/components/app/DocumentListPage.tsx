@@ -1411,7 +1411,7 @@ export function DocumentListPage<T extends AnyDoc>({
                     <Card className="p-3.5 space-y-2.5 border-border/70 shadow-xs">
                       <div className="flex items-center justify-between border-b pb-1.5">
                         <div className="text-xs font-bold uppercase tracking-wider text-primary">
-                          BILL TO (Customer / Sundry Debtor)
+                          BILL TO (Customer)
                         </div>
                         {(editing as any).customerId && (
                           <button
@@ -1713,7 +1713,7 @@ export function DocumentListPage<T extends AnyDoc>({
                     <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
                       <div className="space-y-1">
                         <div className="flex items-center justify-between">
-                          <Label className="text-xs font-medium">Supplier (Sundry Creditor) *</Label>
+                          <Label className="text-xs font-medium">Supplier *</Label>
                           {(editing as Purchase).supplierId && (
                             <button
                               type="button"

@@ -91,18 +91,18 @@ export function isSundryCreditor(partyType?: PartyType | string): boolean {
 
 export function normalizePartyType(
   partyType?: PartyType | string
-): "SUNDRY_DEBTORS" | "SUNDRY_CREDITORS" | "BOTH" {
+): "SUNDRY_DEBTOR" | "SUNDRY_CREDITOR" | "BOTH" {
   if (
     partyType === "SUNDRY_CREDITORS" ||
     partyType === "SUNDRY_CREDITOR" ||
     partyType === "SUPPLIER"
   ) {
-    return "SUNDRY_CREDITORS";
+    return "SUNDRY_CREDITOR";
   }
   if (partyType === "BOTH") {
     return "BOTH";
   }
-  return "SUNDRY_DEBTORS";
+  return "SUNDRY_DEBTOR";
 }
 
 export function getPartyTypeLabel(partyType?: PartyType | string): string {
@@ -111,12 +111,12 @@ export function getPartyTypeLabel(partyType?: PartyType | string): string {
     partyType === "SUNDRY_CREDITOR" ||
     partyType === "SUPPLIER"
   ) {
-    return "Sundry Creditors";
+    return "Supplier";
   }
   if (partyType === "BOTH") {
-    return "Sundry Debtors & Creditors";
+    return "Customer & Supplier";
   }
-  return "Sundry Debtors";
+  return "Customer";
 }
 
 export interface PartyAddress {
@@ -156,6 +156,8 @@ export interface AddressSnapshot {
 
 export interface Party {
   id: ID;
+  /** Human-readable, immutable company-scoped reference (CUS-000001 / SUP-000001). */
+  partyCode?: string;
   name: string;
   tradingName?: string;
   partyType?: PartyType;
@@ -246,6 +248,8 @@ export interface LineItem {
   taxable: number; gstAmount: number; total: number; lineAmount?: number;
   isTaxInclusive?: boolean;
   size?: string;
+  /** Frozen structured dimensions used to produce `size`; historical documents never re-read product preferences. */
+  sizeSnapshot?: SizeSnapshot;
   pricingBasis?: PricingBasis;
   measurements?: MeasurementEntry[];
   measurementSummary?: string;
@@ -501,7 +505,27 @@ export interface Purchase {
 }
 
 // --- New masters & Structured Presentation Models (PRD §§ 4, 11, 20, 25, 31) ---
+export interface SizeSnapshot {
+  label: string;
+  length?: number;
+  width?: number;
+  height?: number;
+  unit?: string;
+}
+
 export interface SizePreset { id: ID; label: string; createdAt: number; }
+
+/** Company-scoped product size memory. It is a preference only; documents freeze a LineItem snapshot. */
+export interface ProductSizePreference extends SizeSnapshot {
+  id: ID;
+  productId: ID;
+  usageCount: number;
+  lastUsedAt: number;
+  isFavorite?: boolean;
+  isDefault?: boolean;
+  createdAt: number;
+  updatedAt?: number;
+}
 
 export type ValueType = "TEXT" | "MULTILINE" | "BULLET_LIST";
 
@@ -594,6 +618,7 @@ class BizDB extends Dexie {
   purchases!: Table<Purchase, ID>;
   payments!: Table<Payment, ID>;
   sizes!: Table<SizePreset, ID>;
+  productSizes!: Table<ProductSizePreference, ID>;
   termsTemplates!: Table<TermsTemplate, ID>;
   generalInfoTemplates!: Table<GeneralInfoTemplate, ID>;
   techSpecTemplates!: Table<TechSpecTemplate, ID>;
@@ -631,6 +656,9 @@ class BizDB extends Dexie {
     this.version(5).stores({
       purchases: "id, number, date, supplierId, supplierInvoiceNumber, createdAt",
       parties: "id, name, partyType, paymentPolicy, createdAt",
+    });
+    this.version(6).stores({
+      productSizes: "id, productId, [productId+label], lastUsedAt, usageCount, createdAt",
     });
   }
 }

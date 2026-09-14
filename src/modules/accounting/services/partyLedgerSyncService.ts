@@ -1,10 +1,13 @@
 import { ref, get, set, update } from "firebase/database";
-import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
+import { firebaseAuth, firebaseDb, sanitizeForFirebase } from "@/config/firebase";
+import { allocatePartyCodeServerFn } from "@/functions/allocatePartyCodeFn";
+import { savePartyWithLedgerServerFn } from "@/functions/savePartyWithLedgerFn";
 import type { Ledger } from "../types";
 import { cacheEntity, getCachedEntities } from "@/modules/sync/dexieCache";
 
 export interface CustomerParty {
   id: string;
+  partyCode?: string;
   name: string;
   company?: string;
   mobile?: string;
@@ -22,6 +25,7 @@ export interface CustomerParty {
 
 export interface SupplierParty {
   id: string;
+  partyCode?: string;
   name: string;
   company?: string;
   mobile?: string;
@@ -213,6 +217,27 @@ export function normalizePartyGstin(gstin?: string): string {
 const MEMORY_COMPANY_CUSTOMERS: Record<string, Array<{ customer: CustomerParty; ledger: Ledger }>> = {};
 const MEMORY_COMPANY_SUPPLIERS: Record<string, Array<{ supplier: SupplierParty; ledger: Ledger }>> = {};
 
+export type PartyCodeKind = "customer" | "supplier";
+
+/**
+ * Allocates one immutable, company-scoped business reference. Assignments and counters
+ * share a single RTDB transaction, so retries for the same partyId return the same code.
+ */
+export async function allocatePartyCode(params: {
+  companyId: string;
+  partyId: string;
+  kind: PartyCodeKind;
+}): Promise<string> {
+  const { companyId, partyId, kind } = params;
+  const currentUser = firebaseAuth?.currentUser;
+  if (!currentUser) throw new Error("Sign in is required to allocate a party ID");
+  const result = await allocatePartyCodeServerFn({
+    data: { idToken: await currentUser.getIdToken(), companyId, partyId, kind },
+  });
+  if (!result.success || !result.partyCode) throw new Error(result.error || "Party ID allocation failed");
+  return result.partyCode;
+}
+
 export interface PartyWithLedgerResult<P> {
   success: boolean;
   party: P;
@@ -233,10 +258,27 @@ export async function createCustomerWithLedger(
   params: CreateCustomerWithLedgerParams
 ): Promise<PartyWithLedgerResult<CustomerParty>> {
   const { companyId, customer, uid, idempotencyKey } = params;
+  if (!customer.partyCode && firebaseDb) {
+    customer.partyCode = await allocatePartyCode({ companyId, partyId: customer.id, kind: "customer" });
+  }
+  if (firebaseDb && firebaseAuth?.currentUser) {
+    const saved = await savePartyWithLedgerServerFn({
+      data: {
+        idToken: await firebaseAuth.currentUser.getIdToken(),
+        companyId,
+        party: { ...customer, partyType: "SUNDRY_DEBTOR", paymentPolicy: (customer as any).paymentPolicy || "CREDIT" },
+        idempotencyKey,
+      },
+    });
+    if (!saved.success || !saved.party || !saved.ledgerId) {
+      return { success: false, party: customer, ledgerId: "", ledger: {} as Ledger, error: saved.error || "Customer save failed" };
+    }
+    Object.assign(customer, saved.party);
+    return { success: true, party: saved.party, ledgerId: saved.ledgerId, ledger: {} as Ledger, isExisting: saved.isExisting };
+  }
   const canonicalLedgerId = customer.ledgerId || `led_${companyId}_cust_${customer.id}`;
   const now = Date.now();
 
-    const normName = normalizePartyName(customer.name);
     const normGstin = normalizePartyGstin(customer.gstin);
 
     if (!MEMORY_COMPANY_CUSTOMERS[companyId]) {
@@ -252,9 +294,7 @@ export async function createCustomerWithLedger(
       if (normGstin && normalizePartyGstin(item.customer.gstin) === normGstin) {
         return { success: true, party: item.customer, ledgerId: item.customer.ledgerId || canonicalLedgerId, ledger: item.ledger, isExisting: true, conflictType: "gstin" };
       }
-      if (normName && normalizePartyName(item.customer.name) === normName) {
-        return { success: true, party: item.customer, ledgerId: item.customer.ledgerId || canonicalLedgerId, ledger: item.ledger, isExisting: true, conflictType: "name" };
-      }
+      // Same-name parties are valid; GSTIN and immutable IDs are the collision keys.
     }
 
     try {
@@ -286,8 +326,7 @@ export async function createCustomerWithLedger(
           for (const ext of Object.values(custMap) as CustomerParty[]) {
             const isIdMatch = ext.id === customer.id;
             const isGstinMatch = Boolean(normGstin && normalizePartyGstin(ext.gstin) === normGstin);
-            const isNameMatch = Boolean(normName && normalizePartyName(ext.name) === normName);
-            if (isIdMatch || isGstinMatch || isNameMatch) {
+            if (isIdMatch || isGstinMatch) {
               const lId = ext.ledgerId || `led_${companyId}_cust_${ext.id}`;
               const ledSnap = await get(ref(firebaseDb, `companyData/${companyId}/ledgers/${lId}`));
               const foundLedger = ledSnap.exists() ? ledSnap.val() : ({} as Ledger);
@@ -297,7 +336,7 @@ export async function createCustomerWithLedger(
                 ledgerId: lId,
                 ledger: foundLedger,
                 isExisting: true,
-                conflictType: isGstinMatch ? "gstin" : isNameMatch ? "name" : "id",
+                conflictType: isGstinMatch ? "gstin" : "id",
               };
             }
           }
@@ -412,10 +451,27 @@ export async function createSupplierWithLedger(
   params: CreateSupplierWithLedgerParams
 ): Promise<PartyWithLedgerResult<SupplierParty>> {
   const { companyId, supplier, uid, idempotencyKey } = params;
+  if (!supplier.partyCode && firebaseDb) {
+    supplier.partyCode = await allocatePartyCode({ companyId, partyId: supplier.id, kind: "supplier" });
+  }
+  if (firebaseDb && firebaseAuth?.currentUser) {
+    const saved = await savePartyWithLedgerServerFn({
+      data: {
+        idToken: await firebaseAuth.currentUser.getIdToken(),
+        companyId,
+        party: { ...supplier, partyType: "SUNDRY_CREDITOR", paymentPolicy: (supplier as any).paymentPolicy || "CREDIT" },
+        idempotencyKey,
+      },
+    });
+    if (!saved.success || !saved.party || !saved.apLedgerId) {
+      return { success: false, party: supplier, ledgerId: "", ledger: {} as Ledger, error: saved.error || "Supplier save failed" };
+    }
+    Object.assign(supplier, saved.party);
+    return { success: true, party: saved.party, ledgerId: saved.apLedgerId, ledger: {} as Ledger, isExisting: saved.isExisting };
+  }
   const canonicalLedgerId = supplier.ledgerId || `led_${companyId}_supp_${supplier.id}`;
   const now = Date.now();
 
-  const normName = normalizePartyName(supplier.name);
   const normGstin = normalizePartyGstin(supplier.gstin);
 
   if (!MEMORY_COMPANY_SUPPLIERS[companyId]) {
@@ -431,9 +487,7 @@ export async function createSupplierWithLedger(
     if (normGstin && normalizePartyGstin(item.supplier.gstin) === normGstin) {
       return { success: true, party: item.supplier, ledgerId: item.supplier.ledgerId || canonicalLedgerId, ledger: item.ledger, isExisting: true, conflictType: "gstin" };
     }
-    if (normName && normalizePartyName(item.supplier.name) === normName) {
-      return { success: true, party: item.supplier, ledgerId: item.supplier.ledgerId || canonicalLedgerId, ledger: item.ledger, isExisting: true, conflictType: "name" };
-    }
+    // Same-name suppliers are valid; GSTIN and immutable IDs are the collision keys.
   }
 
   try {
@@ -464,8 +518,7 @@ export async function createSupplierWithLedger(
         for (const ext of Object.values(suppMap) as SupplierParty[]) {
           const isIdMatch = ext.id === supplier.id;
           const isGstinMatch = Boolean(normGstin && normalizePartyGstin(ext.gstin) === normGstin);
-          const isNameMatch = Boolean(normName && normalizePartyName(ext.name) === normName);
-          if (isIdMatch || isGstinMatch || isNameMatch) {
+          if (isIdMatch || isGstinMatch) {
             const lId = ext.ledgerId || `led_${companyId}_supp_${ext.id}`;
             const ledSnap = await get(ref(firebaseDb, `companyData/${companyId}/ledgers/${lId}`));
             const foundLedger = ledSnap.exists() ? ledSnap.val() : ({} as Ledger);
@@ -475,7 +528,7 @@ export async function createSupplierWithLedger(
               ledgerId: lId,
               ledger: foundLedger,
               isExisting: true,
-              conflictType: isGstinMatch ? "gstin" : isNameMatch ? "name" : "id",
+              conflictType: isGstinMatch ? "gstin" : "id",
             };
           }
         }
@@ -600,6 +653,37 @@ export async function createPartyWithLedger(
   const { companyId, party, uid, idempotencyKey } = params;
   const partyType = party.partyType || "CUSTOMER";
   const now = Date.now();
+  const isCustomer = ["CUSTOMER", "SUNDRY_DEBTOR", "SUNDRY_DEBTORS", "BOTH"].includes(partyType);
+  const isSupplier = ["SUPPLIER", "SUNDRY_CREDITOR", "SUNDRY_CREDITORS", "BOTH"].includes(partyType);
+
+  if (!party.partyCode && firebaseDb) {
+    party.partyCode = await allocatePartyCode({
+      companyId,
+      partyId: party.id,
+      kind: isSupplier && !isCustomer ? "supplier" : "customer",
+    });
+  }
+
+  if (firebaseDb && firebaseAuth?.currentUser) {
+    const result = await savePartyWithLedgerServerFn({
+      data: {
+        idToken: await firebaseAuth.currentUser.getIdToken(),
+        companyId,
+        party,
+        idempotencyKey,
+      },
+    });
+    if (!result.success || !result.party) return { success: false, party, error: result.error || "Party save failed" };
+    Object.assign(party, result.party);
+    await cacheEntity({ uid, companyId, entityType: "party", entityId: party.id, data: result.party });
+    return {
+      success: true,
+      party: result.party,
+      ledgerId: result.ledgerId,
+      apLedgerId: result.apLedgerId,
+      isExisting: result.isExisting,
+    };
+  }
 
   const canonicalArLedgerId = party.ledgerId || `led_${companyId}_ar_${party.id}`;
   const canonicalApLedgerId = party.apLedgerId || `led_${companyId}_ap_${party.id}`;
@@ -611,7 +695,7 @@ export async function createPartyWithLedger(
     let arLedger: Ledger | undefined;
     let apLedger: Ledger | undefined;
 
-    if (partyType === "CUSTOMER" || partyType === "BOTH") {
+    if (isCustomer) {
       arLedger = {
         id: canonicalArLedgerId,
         companyId,
@@ -632,7 +716,7 @@ export async function createPartyWithLedger(
       updates[`companyData/${companyId}/ledgers/${canonicalArLedgerId}`] = sanitizeForFirebase(arLedger);
     }
 
-    if (partyType === "SUPPLIER" || partyType === "BOTH") {
+    if (isSupplier) {
       apLedger = {
         id: canonicalApLedgerId,
         companyId,
@@ -666,10 +750,10 @@ export async function createPartyWithLedger(
     updates[`companyData/${companyId}/parties/${party.id}`] = sanitizeForFirebase(partyToSave);
 
     // Mirror to legacy collections for seamless backward compatibility
-    if (partyType === "CUSTOMER" || partyType === "BOTH") {
+    if (isCustomer) {
       updates[`companyData/${companyId}/customers/${party.id}`] = sanitizeForFirebase(partyToSave);
     }
-    if (partyType === "SUPPLIER" || partyType === "BOTH") {
+    if (isSupplier) {
       updates[`companyData/${companyId}/suppliers/${party.id}`] = sanitizeForFirebase(partyToSave);
     }
 
@@ -709,7 +793,7 @@ export async function createPartyWithLedger(
       entityId: party.id,
       data: partyToSave,
     });
-    if (partyType === "CUSTOMER" || partyType === "BOTH") {
+    if (isCustomer) {
       await cacheEntity({
         uid,
         companyId,
@@ -718,7 +802,7 @@ export async function createPartyWithLedger(
         data: partyToSave,
       });
     }
-    if (partyType === "SUPPLIER" || partyType === "BOTH") {
+    if (isSupplier) {
       await cacheEntity({
         uid,
         companyId,
@@ -745,4 +829,3 @@ export async function createPartyWithLedger(
     };
   }
 }
-

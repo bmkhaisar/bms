@@ -71,6 +71,34 @@ export interface AllocateLegalDocNumberInput {
   customPrefix?: string;
 }
 
+export async function allocatePartyBusinessCode(
+  db: Database,
+  params: { companyId: string; partyId: string; kind: "customer" | "supplier" }
+): Promise<string> {
+  const { companyId, partyId, kind } = params;
+  const numberingRef = db.ref(`companyData/${companyId}/partyNumbering`);
+  const txResult = await numberingRef.transaction((current: any) => {
+    const state = current || {};
+    if (state.assignments?.[partyId]) return state;
+    const counterKey = kind === "customer" ? "customerCounter" : "supplierCounter";
+    const prefix = kind === "customer" ? "CUS" : "SUP";
+    const next = Number(state[counterKey] || 0) + 1;
+    return {
+      ...state,
+      [counterKey]: next,
+      assignments: {
+        ...(state.assignments || {}),
+        [partyId]: `${prefix}-${String(next).padStart(6, "0")}`,
+      },
+      updatedAt: Date.now(),
+    };
+  });
+  if (!txResult.committed) throw new Error("Failed to allocate party business ID");
+  const code = txResult.snapshot.val()?.assignments?.[partyId];
+  if (!code) throw new Error("Party business ID allocation returned no code");
+  return code;
+}
+
 export interface AllocateLegalDocNumberResult {
   documentNumber: string;
   sequenceNumber: number;

@@ -109,7 +109,7 @@ export function QuickCreateCustomerDrawer({
           form.creditDays !== undefined && form.creditDays !== null && !isNaN(Number(form.creditDays))
             ? Math.max(0, Math.floor(Number(form.creditDays)))
             : 0,
-        partyType: "SUNDRY_DEBTORS",
+        partyType: "SUNDRY_DEBTOR",
         taxRegistrationType: form.taxRegistrationType,
         createdAt: Date.now(),
       };
@@ -165,7 +165,7 @@ export function QuickCreateCustomerDrawer({
       <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base font-bold">
-            <Users className="h-4 w-4 text-primary" /> New Sundry Debtor (Customer)
+            <Users className="h-4 w-4 text-primary" /> New Customer
           </DialogTitle>
         </DialogHeader>
 

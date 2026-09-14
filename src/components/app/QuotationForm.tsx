@@ -337,7 +337,7 @@ export function QuotationForm({ initial, onSave, onCancel }: Props) {
               <Card className="p-4 space-y-3 border-border/70 shadow-xs">
                 <div className="flex items-center justify-between border-b pb-2">
                   <div className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                    BILL TO (Customer / Sundry Debtor)
+                    BILL TO (Customer)
                   </div>
                   {q.customerId && (
                     <button

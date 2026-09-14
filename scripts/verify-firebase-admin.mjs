@@ -12,6 +12,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createPrivateKey } from "node:crypto";
 
 // 1. Read .env file from project root
 const envPath = resolve(process.cwd(), ".env");
@@ -37,11 +38,19 @@ if (existsSync(envPath)) {
   }
 }
 
-const projectId = (process.env.FIREBASE_ADMIN_PROJECT_ID || "").trim();
-const clientProjectId = (process.env.VITE_FIREBASE_PROJECT_ID || "").trim();
-const clientEmail = (process.env.FIREBASE_ADMIN_CLIENT_EMAIL || "").trim();
+function normalizeScalar(raw) {
+  let value = String(raw || "").trim();
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.substring(1, value.length - 1).trim();
+  }
+  return value;
+}
+
+const projectId = normalizeScalar(process.env.FIREBASE_ADMIN_PROJECT_ID);
+const clientProjectId = normalizeScalar(process.env.VITE_FIREBASE_PROJECT_ID);
+const clientEmail = normalizeScalar(process.env.FIREBASE_ADMIN_CLIENT_EMAIL);
 const rawPrivateKey = (process.env.FIREBASE_ADMIN_PRIVATE_KEY || "").trim();
-const databaseURL = (process.env.FIREBASE_DATABASE_URL || process.env.VITE_FIREBASE_DATABASE_URL || "").trim();
+const databaseURL = normalizeScalar(process.env.FIREBASE_DATABASE_URL || process.env.VITE_FIREBASE_DATABASE_URL);
 
 const targetAdminUid = process.env.INITIAL_PLATFORM_ADMIN_UID || "BOkCLXp08tVmRHICTArgpReVh5Y2";
 const targetAdminEmail = process.env.INITIAL_PLATFORM_ADMIN_EMAIL || "maaz@admin.com";
@@ -81,9 +90,14 @@ if (rawPrivateKey) {
   const hasEnd = key.includes("-----END PRIVATE KEY-----");
 
   if (hasBegin && hasEnd) {
-    keyValid = true;
-    normalizedKey = key;
-    credParseStatus = "PASS";
+    try {
+      createPrivateKey(key);
+      keyValid = true;
+      normalizedKey = key;
+      credParseStatus = "PASS";
+    } catch {
+      credParseStatus = "FAIL (PEM key cannot be parsed)";
+    }
   } else {
     credParseStatus = "FAIL (Missing PEM BEGIN/END markers)";
   }
@@ -94,17 +108,22 @@ if (rawPrivateKey) {
 pad("Credential Parse", credParseStatus);
 
 if (clientProjectId && projectId && projectId !== clientProjectId) {
-  pad("Project Match", `MISMATCH (Admin: ${projectId} vs Client: ${clientProjectId})`);
+  pad("Project Match", "MISMATCH");
 } else if (projectId && clientProjectId) {
   pad("Project Match", "PASS");
 }
+
+const emailProjectMatches = Boolean(
+  projectId && clientEmail.toLowerCase().endsWith(`@${projectId.toLowerCase()}.iam.gserviceaccount.com`)
+);
+pad("Service Account Project", emailProjectMatches ? "PASS" : "MISMATCH");
 
 let adminSdkInitStatus = "SKIPPED";
 let authAccessStatus = "SKIPPED";
 let rtdbAccessStatus = "SKIPPED";
 let overallStatus = "BLOCKED_BY_CREDENTIALS";
 
-if (projectId && clientEmail && keyValid && normalizedKey && databaseURL) {
+if (projectId && clientEmail && emailProjectMatches && keyValid && normalizedKey && databaseURL) {
   try {
     const admin = await import("firebase-admin");
     const app = admin.default.apps.length
@@ -138,10 +157,8 @@ if (projectId && clientEmail && keyValid && normalizedKey && databaseURL) {
     // Verify RTDB access
     try {
       const db = app.database();
-      const ref = db.ref(".info/connected");
-      if (ref) {
-        rtdbAccessStatus = "PASS";
-      }
+      await db.ref(".info/serverTimeOffset").once("value");
+      rtdbAccessStatus = "PASS";
     } catch (dbErr) {
       rtdbAccessStatus = `FAIL (${dbErr.message})`;
     }
@@ -170,8 +187,7 @@ pad("Auth Access", authAccessStatus);
 pad("RTDB Access", rtdbAccessStatus);
 
 console.log("-------------------------------------------------");
-console.log(`Configured Platform Admin UID:    ${targetAdminUid}`);
-console.log(`Configured Platform Admin Email:  ${targetAdminEmail}`);
+pad("Admin Test Identity", targetAdminUid && targetAdminEmail ? "CONFIGURED" : "MISSING");
 console.log("=================================================");
 console.log(`FIREBASE_ADMIN_STATUS = ${overallStatus}`);
 console.log("=================================================");

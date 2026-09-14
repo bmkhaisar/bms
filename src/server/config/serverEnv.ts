@@ -107,6 +107,19 @@ export interface NormalizedFirebaseAdminConfig {
   databaseURL: string;
 }
 
+/** Remove whitespace and one accidental matching pair of outer quotes from scalar env values. */
+export function normalizeEnvScalar(rawValue: string | undefined): string {
+  if (!rawValue || typeof rawValue !== "string") return "";
+  let value = rawValue.trim();
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.substring(1, value.length - 1).trim();
+  }
+  return value;
+}
+
 // 4. Private Key Normalization & Validation Helper
 export function normalizePrivateKey(rawKey: string | undefined): {
   normalized: string | null;
@@ -116,15 +129,7 @@ export function normalizePrivateKey(rawKey: string | undefined): {
     return { normalized: null, isValid: false };
   }
 
-  let key = rawKey.trim();
-
-  // Strip wrapping quotes
-  if (
-    (key.startsWith('"') && key.endsWith('"')) ||
-    (key.startsWith("'") && key.endsWith("'"))
-  ) {
-    key = key.substring(1, key.length - 1).trim();
-  }
+  let key = normalizeEnvScalar(rawKey);
 
   // Replace escaped \n line breaks with real newlines
   if (key.includes("\\n")) {
@@ -144,11 +149,11 @@ export function normalizePrivateKey(rawKey: string | undefined): {
 
 // 5. Authoritative Diagnostic Evaluator
 export function evaluateServerEnv(envSource: Record<string, string | undefined> = process.env): ServerEnvDiagnostic {
-  const projectId = (envSource.FIREBASE_ADMIN_PROJECT_ID || "").trim();
-  const clientProjectId = (envSource.VITE_FIREBASE_PROJECT_ID || "").trim();
-  const clientEmail = (envSource.FIREBASE_ADMIN_CLIENT_EMAIL || "").trim();
+  const projectId = normalizeEnvScalar(envSource.FIREBASE_ADMIN_PROJECT_ID);
+  const clientProjectId = normalizeEnvScalar(envSource.VITE_FIREBASE_PROJECT_ID);
+  const clientEmail = normalizeEnvScalar(envSource.FIREBASE_ADMIN_CLIENT_EMAIL);
   const rawPrivateKey = (envSource.FIREBASE_ADMIN_PRIVATE_KEY || "").trim();
-  const databaseURL = (envSource.FIREBASE_DATABASE_URL || envSource.VITE_FIREBASE_DATABASE_URL || "").trim();
+  const databaseURL = normalizeEnvScalar(envSource.FIREBASE_DATABASE_URL || envSource.VITE_FIREBASE_DATABASE_URL);
 
   const missingVariables: string[] = [];
   if (!projectId) missingVariables.push("FIREBASE_ADMIN_PROJECT_ID");
@@ -182,6 +187,9 @@ export function evaluateServerEnv(envSource: Record<string, string | undefined> 
     if (!isValid) {
       status = "FIREBASE_ADMIN_INVALID_PRIVATE_KEY";
       statusMessage = "Firebase Admin private-key format is invalid. Ensure BEGIN and END PRIVATE KEY markers are intact.";
+    } else if (!clientEmail.toLowerCase().endsWith(`@${projectId.toLowerCase()}.iam.gserviceaccount.com`)) {
+      status = "FIREBASE_ADMIN_PROJECT_MISMATCH";
+      statusMessage = "Firebase Admin client email does not belong to the configured Admin project.";
     } else {
       validShape = true;
       status = "FIREBASE_ADMIN_READY";
@@ -240,9 +248,9 @@ export function getValidatedFirebaseAdminConfig(
   const { normalized } = normalizePrivateKey(rawKey);
   if (!normalized) return null;
 
-  const projectId = (envSource.FIREBASE_ADMIN_PROJECT_ID || "").trim();
-  const clientEmail = (envSource.FIREBASE_ADMIN_CLIENT_EMAIL || "").trim();
-  const databaseURL = (envSource.FIREBASE_DATABASE_URL || envSource.VITE_FIREBASE_DATABASE_URL || "").trim();
+  const projectId = normalizeEnvScalar(envSource.FIREBASE_ADMIN_PROJECT_ID);
+  const clientEmail = normalizeEnvScalar(envSource.FIREBASE_ADMIN_CLIENT_EMAIL);
+  const databaseURL = normalizeEnvScalar(envSource.FIREBASE_DATABASE_URL || envSource.VITE_FIREBASE_DATABASE_URL);
 
   return {
     projectId,

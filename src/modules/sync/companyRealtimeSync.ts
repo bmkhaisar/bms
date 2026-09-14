@@ -35,6 +35,7 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     { name: "payments", table: db().payments, entityType: "payment" },
     { name: "quotations", table: db().quotations, entityType: "quotation" },
     { name: "products", table: db().products, entityType: "product" },
+    { name: "productSizes", table: db().productSizes, entityType: "productSize" },
   ];
 
   for (const col of collections) {

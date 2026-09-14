@@ -6,17 +6,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { db, type LineItem, type Product, type PricingBasis, type MeasurementEntry } from "@/lib/db";
+import { db, type LineItem, type Product, type PricingBasis, type MeasurementEntry, type ProductSizePreference, type SizeSnapshot } from "@/lib/db";
 import { useLive } from "@/lib/useLive";
 import { computeLine, computeTotals } from "@/lib/calc";
 import { formatMoney } from "@/lib/format";
-import { Plus, Trash2, Calculator, Info, Search, PackagePlus, ArrowRight, Check } from "lucide-react";
+import { Plus, Trash2, Calculator, Info, Search, PackagePlus, ArrowRight, Check, Ruler, ChevronDown } from "lucide-react";
 import { QuickCreateProductModal } from "./QuickCreateProductModal";
 import { MeasurementDialog } from "./MeasurementDialog";
 import { ProductInsightDrawer } from "./ProductInsightDrawer";
 import { getPricingIntelligence, type PricingIntelligence } from "@/modules/pricing/priceHistoryService";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { normalizeName, normalizeSearchToken } from "@/modules/sync/searchNormalization";
+import { rememberProductSize } from "@/modules/inventory/productSizeService";
 
 export function LineItemsEditor({
   items,
@@ -37,6 +38,7 @@ export function LineItemsEditor({
 }) {
   const { activeCompany } = useActiveCompany();
   const products = useLive<Product>(() => db().products.orderBy("name").toArray());
+  const productSizes = useLive<ProductSizePreference>(() => db().productSizes.orderBy("lastUsedAt").reverse().toArray());
 
   const [activeSearchIndex, setActiveSearchIndex] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -93,6 +95,30 @@ export function LineItemsEditor({
     });
     setActiveSearchIndex(null);
     setSearchQuery("");
+  }
+
+  function sizeOptions(productId: string): SizeSnapshot[] {
+    if (!productId) return [];
+    const product = products.find((p) => p.id === productId);
+    const remembered = productSizes
+      .filter((s) => s.productId === productId)
+      .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || Number(b.isFavorite) - Number(a.isFavorite) || b.usageCount - a.usageCount || b.lastUsedAt - a.lastUsedAt);
+    const defaults = (product?.defaultSizes || []).map((label) => ({ label }));
+    const unique = new Map<string, SizeSnapshot>();
+    [...remembered, ...defaults].forEach((s) => unique.set(s.label.trim().toLowerCase(), s));
+    return Array.from(unique.values()).slice(0, 8);
+  }
+
+  async function applySize(i: number, size: SizeSnapshot) {
+    update(i, { size: size.label, sizeSnapshot: { ...size } });
+    const productId = items[i]?.productId;
+    if (activeCompany?.id && productId) {
+      try {
+        await rememberProductSize({ companyId: activeCompany.id, productId, size });
+      } catch (error) {
+        console.warn("Product size suggestion could not be saved:", error);
+      }
+    }
   }
 
   function addRow() {
@@ -190,6 +216,15 @@ export function LineItemsEditor({
                 onChange={(e) => update(i, { name: e.target.value })}
                 placeholder="Product description"
               />
+              <div>
+                <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Size</div>
+                <ProductSizeField
+                  value={it.size || it.measurementSummary || ""}
+                  options={sizeOptions(it.productId)}
+                  disabled={!it.productId}
+                  onApply={(size) => applySize(i, size)}
+                />
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="flex items-center gap-1">
                   <Input
@@ -245,10 +280,11 @@ export function LineItemsEditor({
 
       {/* Desktop Table View */}
       <div className="hidden max-w-full overflow-x-auto scrollbar-hidden rounded-xl border border-border/60 bg-card/85 backdrop-blur sm:block">
-        <Table className="min-w-[840px] text-xs">
+        <Table className="min-w-[1020px] text-xs">
           <TableHeader className="bg-muted/50">
             <TableRow>
-              <TableHead className="w-[32%]">Product / Description</TableHead>
+              <TableHead className="w-[27%]">Product / Description</TableHead>
+              <TableHead className="w-40">Size</TableHead>
               <TableHead className="w-20">Pricing Basis</TableHead>
               <TableHead className="w-20">HSN/SAC</TableHead>
               <TableHead className="w-24 text-right">Qty & Unit</TableHead>
@@ -263,7 +299,7 @@ export function LineItemsEditor({
             {items.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={enableGst && gstCalculationMode !== "overall" ? 9 : 8}
+                  colSpan={enableGst && gstCalculationMode !== "overall" ? 10 : 9}
                   className="py-8 text-center text-xs text-muted-foreground"
                 >
                   No items. Click "+ Add Line Item" or press <kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono">Alt+A</kbd> to begin.
@@ -444,6 +480,16 @@ export function LineItemsEditor({
                     )}
                   </TableCell>
 
+                  {/* First-class Size field with product-specific recent and saved suggestions */}
+                  <TableCell>
+                    <ProductSizeField
+                      value={it.size || it.measurementSummary || ""}
+                      options={sizeOptions(it.productId)}
+                      disabled={!it.productId}
+                      onApply={(size) => applySize(i, size)}
+                    />
+                  </TableCell>
+
                   {/* Pricing Basis */}
                   <TableCell>
                     <Select
@@ -618,5 +664,98 @@ export function LineItemsEditor({
         }}
       />
     </div>
+  );
+}
+
+function parseSizeSnapshot(label: string): SizeSnapshot {
+  const clean = label.trim().replace(/\s+/g, " ");
+  const matches = Array.from(clean.matchAll(/(\d+(?:\.\d+)?)/g)).map((m) => Number(m[1]));
+  const unitMatch = clean.match(/\b(ft|feet|foot|in|inch|inches|m|meter|metre|cm|mm)\b/i);
+  return {
+    label: clean,
+    length: matches[0],
+    width: matches[1],
+    height: matches[2],
+    unit: unitMatch?.[1]?.toUpperCase(),
+  };
+}
+
+function ProductSizeField({
+  value,
+  options,
+  disabled,
+  onApply,
+}: {
+  value: string;
+  options: SizeSnapshot[];
+  disabled?: boolean;
+  onApply: (size: SizeSnapshot) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState("");
+
+  function commitCustom() {
+    const next = custom.trim();
+    if (!next) return;
+    onApply(parseSizeSnapshot(next));
+    setCustom("");
+    setOpen(false);
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled}
+          className="h-8 w-full min-w-32 justify-between gap-1 px-2 text-left text-[11px] font-normal"
+          title={disabled ? "Select a Product to choose its saved sizes" : "Choose a recent size or enter a custom size"}
+        >
+          <span className={`truncate ${value ? "text-foreground" : "text-muted-foreground"}`}>
+            {value || (disabled ? "Select product first" : "Select Size")}
+          </span>
+          <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 p-2 text-xs">
+        <div className="mb-1.5 flex items-center gap-1.5 font-semibold text-foreground">
+          <Ruler className="h-3.5 w-3.5 text-primary" /> Product Sizes
+        </div>
+        {options.length > 0 ? (
+          <div className="mb-2 space-y-1">
+            <div className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Recent / Saved Sizes</div>
+            {options.map((size) => (
+              <button
+                type="button"
+                key={size.label.toLowerCase()}
+                onClick={() => { onApply(size); setOpen(false); }}
+                className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left hover:bg-accent"
+              >
+                <span>{size.label}</span>
+                {value.trim().toLowerCase() === size.label.trim().toLowerCase() && <Check className="h-3.5 w-3.5 text-primary" />}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="mb-2 rounded-md bg-muted/40 px-2 py-2 text-[11px] text-muted-foreground">No saved sizes for this Product yet.</div>
+        )}
+        <div className="border-t pt-2">
+          <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Custom Size</div>
+          <div className="flex gap-1.5">
+            <Input
+              value={custom}
+              onChange={(e) => setCustom(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitCustom(); } }}
+              placeholder="40 FT × 10 FT × 8.5 FT"
+              className="h-8 text-xs"
+              autoFocus={options.length === 0}
+            />
+            <Button type="button" size="sm" className="h-8 px-3" disabled={!custom.trim()} onClick={commitCustom}>Use</Button>
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">Saved as a recent suggestion for this Product.</p>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

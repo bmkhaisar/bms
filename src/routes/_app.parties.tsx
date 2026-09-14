@@ -34,7 +34,7 @@ import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, onValue, off, set, remove as rtdbRemove } from "firebase/database";
 import { cacheEntity, cacheEntitiesBulk, getCachedEntities, removeCachedEntity } from "@/modules/sync/dexieCache";
-import { createPartyWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
+import { allocatePartyCode, createPartyWithLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 import { CustomerInsightDrawer } from "@/components/app/CustomerInsightDrawer";
 import { AddressDrawer } from "@/components/app/AddressDrawer";
 import { isIndia, getPostalCodeLabel, getPostalCodePlaceholder, validatePostalCode } from "@/lib/countryValidation";
@@ -50,7 +50,7 @@ const emptyParty: Party = {
   id: "",
   name: "",
   tradingName: "",
-  partyType: "SUNDRY_DEBTORS",
+  partyType: "SUNDRY_DEBTOR",
   paymentPolicy: "CREDIT",
   mobile: "",
   phone: "",
@@ -208,6 +208,7 @@ export function PartiesPage() {
         (r.phone ?? "").includes(s) ||
         (r.email ?? "").toLowerCase().includes(s) ||
         (r.gstin ?? "").toLowerCase().includes(s) ||
+        (r.partyCode ?? "").toLowerCase().includes(s) ||
         (r.city ?? "").toLowerCase().includes(s) ||
         (r.state ?? "").toLowerCase().includes(s) ||
         (r.country ?? "").toLowerCase().includes(s) ||
@@ -219,7 +220,7 @@ export function PartiesPage() {
 
   const pager = usePagination(filtered, 12);
 
-  function openNew(defaultType: "SUNDRY_DEBTORS" | "SUNDRY_CREDITORS" = "SUNDRY_DEBTORS") {
+  function openNew(defaultType: "SUNDRY_DEBTOR" | "SUNDRY_CREDITOR" = "SUNDRY_DEBTOR") {
     setEditing({
       ...emptyParty,
       id: uid(),
@@ -283,8 +284,8 @@ export function PartiesPage() {
       rollbackDexie: async (prev) => {
         if (prev) {
           await db().parties.put(prev);
-          if (prev.partyType === "CUSTOMER" || prev.partyType === "BOTH") await db().customers.put(prev as any);
-          if (prev.partyType === "SUPPLIER" || prev.partyType === "BOTH") await db().suppliers.put(prev as any);
+          if (isSundryDebtor(prev.partyType)) await db().customers.put(prev as any);
+          if (isSundryCreditor(prev.partyType)) await db().suppliers.put(prev as any);
           if (activeCompany?.id && user?.uid) {
             await cacheEntity({ uid: user.uid, companyId: activeCompany.id, entityType: "party", entityId: id, data: prev });
           }
@@ -330,10 +331,10 @@ export function PartiesPage() {
       },
       syncDexie: async () => {
         await db().parties.put(deactivatedParty);
-        if (deactivatedParty.partyType === "CUSTOMER" || deactivatedParty.partyType === "BOTH") {
+        if (isSundryDebtor(deactivatedParty.partyType)) {
           await db().customers.put(deactivatedParty as any);
         }
-        if (deactivatedParty.partyType === "SUPPLIER" || deactivatedParty.partyType === "BOTH") {
+        if (isSundryCreditor(deactivatedParty.partyType)) {
           await db().suppliers.put(deactivatedParty as any);
         }
         if (activeCompany?.id && user?.uid) {
@@ -349,8 +350,8 @@ export function PartiesPage() {
       rollbackDexie: async (prev) => {
         if (prev) {
           await db().parties.put(prev);
-          if (prev.partyType === "CUSTOMER" || prev.partyType === "BOTH") await db().customers.put(prev as any);
-          if (prev.partyType === "SUPPLIER" || prev.partyType === "BOTH") await db().suppliers.put(prev as any);
+          if (isSundryDebtor(prev.partyType)) await db().customers.put(prev as any);
+          if (isSundryCreditor(prev.partyType)) await db().suppliers.put(prev as any);
           if (activeCompany?.id && user?.uid) {
             await cacheEntity({ uid: user.uid, companyId: activeCompany.id, entityType: "party", entityId: id, data: prev });
           }
@@ -359,10 +360,10 @@ export function PartiesPage() {
       serverMutation: async () => {
         if (activeCompany?.id && firebaseDb) {
           await set(ref(firebaseDb, `companyData/${activeCompany.id}/parties/${id}`), sanitizeForFirebase(deactivatedParty));
-          if (deactivatedParty.partyType === "CUSTOMER" || deactivatedParty.partyType === "BOTH") {
+          if (isSundryDebtor(deactivatedParty.partyType)) {
             await set(ref(firebaseDb, `companyData/${activeCompany.id}/customers/${id}`), sanitizeForFirebase(deactivatedParty));
           }
-          if (deactivatedParty.partyType === "SUPPLIER" || deactivatedParty.partyType === "BOTH") {
+          if (isSundryCreditor(deactivatedParty.partyType)) {
             await set(ref(firebaseDb, `companyData/${activeCompany.id}/suppliers/${id}`), sanitizeForFirebase(deactivatedParty));
           }
         }
@@ -416,6 +417,14 @@ export function PartiesPage() {
       const isNew =
         !cloudRows.some((p) => p.id === partyData.id) &&
         !dexieRows.some((p) => p.id === partyData.id);
+
+      if (isNew && activeCompany?.id && !partyData.partyCode) {
+        partyData.partyCode = await allocatePartyCode({
+          companyId: activeCompany.id,
+          partyId: partyData.id,
+          kind: isSundryCreditor(partyData.partyType) && !isSundryDebtor(partyData.partyType) ? "supplier" : "customer",
+        });
+      }
 
       await performOptimisticMutation<Party>({
         entityType: "party",
@@ -512,14 +521,14 @@ export function PartiesPage() {
       <div className="space-y-4">
         <PageHeader
           title="Party Master"
-          description="Unified Tally-grade ledger directory for Sundry Debtors and Sundry Creditors with credit control and multiple shipping destinations."
+          description="Unified customer and supplier directory with credit control, unique business IDs, and multiple shipping destinations."
           actions={
             <div className="flex items-center gap-2">
-              <Button onClick={() => openNew("SUNDRY_DEBTORS")} className="gap-1.5 shadow-sm">
-                <Plus className="h-4 w-4" /> New Sundry Debtor
+              <Button onClick={() => openNew("SUNDRY_DEBTOR")} className="gap-1.5 shadow-sm">
+                <Plus className="h-4 w-4" /> New Customer
               </Button>
-              <Button onClick={() => openNew("SUNDRY_CREDITORS")} variant="outline" className="gap-1.5 shadow-sm">
-                <Plus className="h-4 w-4" /> New Sundry Creditor
+              <Button onClick={() => openNew("SUNDRY_CREDITOR")} variant="outline" className="gap-1.5 shadow-sm">
+                <Plus className="h-4 w-4" /> New Supplier
               </Button>
             </div>
           }
@@ -530,8 +539,8 @@ export function PartiesPage() {
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full sm:w-auto">
             <TabsList className="grid grid-cols-4 w-full sm:w-auto text-xs">
               <TabsTrigger value="ALL">All ({activeCount})</TabsTrigger>
-              <TabsTrigger value="SUNDRY_DEBTORS">Sundry Debtors</TabsTrigger>
-              <TabsTrigger value="SUNDRY_CREDITORS">Sundry Creditors</TabsTrigger>
+              <TabsTrigger value="SUNDRY_DEBTORS">Customers</TabsTrigger>
+              <TabsTrigger value="SUNDRY_CREDITORS">Suppliers</TabsTrigger>
               <TabsTrigger value="INACTIVE">Inactive ({inactiveCount})</TabsTrigger>
             </TabsList>
           </Tabs>
@@ -591,6 +600,11 @@ export function PartiesPage() {
                         </div>
                         {party.tradingName && (
                           <div className="text-[11px] text-muted-foreground">{party.tradingName}</div>
+                        )}
+                        {party.partyCode && (
+                          <div className="mt-0.5 font-mono text-[10px] font-semibold tracking-wide text-primary" title="Unique Party ID">
+                            ID: {party.partyCode}
+                          </div>
                         )}
                         {party.addresses && party.addresses.length > 0 && (
                           <div className="text-[10px] text-primary/80 flex items-center gap-0.5 mt-0.5">
@@ -705,7 +719,9 @@ export function PartiesPage() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base font-bold">
                 <Users className="h-5 w-5 text-primary" />
-                {editing.id && rows.some(r => r.id === editing.id) ? "Edit Party Master" : "Create New Party Master"}
+                {editing.id && rows.some(r => r.id === editing.id)
+                  ? `Edit ${getPartyTypeLabel(editing.partyType)}`
+                  : `New ${getPartyTypeLabel(editing.partyType)}`}
               </DialogTitle>
             </DialogHeader>
 
@@ -731,7 +747,7 @@ export function PartiesPage() {
               </div>
 
               <div>
-                <Label className="text-xs">Party Type *</Label>
+                <Label className="text-xs">Relationship *</Label>
                 <Select
                   value={normalizePartyType(editing.partyType)}
                   onValueChange={(val: PartyType) => setEditing((p) => ({ ...p, partyType: val }))}
@@ -740,8 +756,8 @@ export function PartiesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="SUNDRY_DEBTORS">Sundry Debtors (Customers / Accounts Receivable)</SelectItem>
-                    <SelectItem value="SUNDRY_CREDITORS">Sundry Creditors (Suppliers / Accounts Payable)</SelectItem>
+                    <SelectItem value="SUNDRY_DEBTOR">Customer</SelectItem>
+                    <SelectItem value="SUNDRY_CREDITOR">Supplier</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

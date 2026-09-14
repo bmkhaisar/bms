@@ -88,6 +88,14 @@
           ".indexOn": ["name", "createdAt", "updatedAt"],
           ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
+        "parties": {
+          ".indexOn": ["partyCode", "name", "partyType", "createdAt", "updatedAt"],
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+        },
+        "productSizes": {
+          ".indexOn": ["productId", "lastUsedAt", "usageCount"],
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+        },
         "suppliers": {
           ".indexOn": ["name", "createdAt", "updatedAt"],
           ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"

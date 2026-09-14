@@ -44,7 +44,7 @@ test("2. Credit Days: 0 days means 'Payment Due Immediately'", () => {
 test("3. Bill To / Ship To Separation & Snapshot Persistence", () => {
   // Quotation form separation
   const quotationForm = fs.readFileSync(path.join(rootDir, "src/components/app/QuotationForm.tsx"), "utf-8");
-  assert.ok(quotationForm.includes("BILL TO (Customer / Sundry Debtor)"), "Quotation has separate BILL TO card");
+  assert.ok(quotationForm.includes("BILL TO (Customer)"), "Quotation has separate customer-facing BILL TO card");
   assert.ok(quotationForm.includes("SHIP TO (Delivery Destination / Consignee)"), "Quotation has separate SHIP TO card");
   assert.ok(quotationForm.includes("Same as Billing Address"), "Quotation has Same as Billing Address toggle");
   assert.ok(quotationForm.includes("billToSnapshot"), "Quotation persists billToSnapshot");
@@ -52,7 +52,7 @@ test("3. Bill To / Ship To Separation & Snapshot Persistence", () => {
 
   // DocumentListPage separation for Invoices
   const docListPage = fs.readFileSync(path.join(rootDir, "src/components/app/DocumentListPage.tsx"), "utf-8");
-  assert.ok(docListPage.includes("BILL TO (Customer / Sundry Debtor)"), "Invoice has separate BILL TO section");
+  assert.ok(docListPage.includes("BILL TO (Customer)"), "Invoice has separate customer-facing BILL TO section");
   assert.ok(docListPage.includes("SHIP TO (Delivery Destination / Consignee)"), "Invoice has separate SHIP TO section");
   assert.ok(docListPage.includes("billToSnapshot"), "Invoice persists billToSnapshot");
   assert.ok(docListPage.includes("shippingAddressSnapshot"), "Invoice persists shippingAddressSnapshot");

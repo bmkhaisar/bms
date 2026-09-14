@@ -50,6 +50,7 @@ export function PartySearchSelect({
   const filtered = parties.filter((p) => {
     if (!normQ) return true;
     if (normalizeName(p.name).includes(normQ)) return true;
+    if (p.partyCode && p.partyCode.toLowerCase().includes(normQ)) return true;
     if (p.company && normalizeName(p.company).includes(normQ)) return true;
     if ((p as Customer).mobile && String((p as Customer).mobile).includes(query)) return true;
     if ((p as Customer).phone && String((p as Customer).phone).includes(query)) return true;
@@ -85,6 +86,9 @@ export function PartySearchSelect({
                 <span className="truncate font-medium flex items-center gap-1.5">
                   <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                   <span className="truncate">{selectedParty.name}</span>
+                  {selectedParty.partyCode && (
+                    <span className="shrink-0 font-mono text-[10px] font-semibold text-primary">{selectedParty.partyCode}</span>
+                  )}
                   {selectedParty.company && (
                     <span className="text-[11px] text-muted-foreground truncate">({selectedParty.company})</span>
                   )}
@@ -163,6 +167,7 @@ export function PartySearchSelect({
                         </Badge>
                       </div>
                       <div className="text-[10px] text-muted-foreground truncate flex items-center gap-2">
+                        {p.partyCode && <span className="font-mono font-semibold text-primary">{p.partyCode}</span>}
                         {p.gstin && <span className="font-mono">{p.gstin}</span>}
                         {(p as Customer).mobile && <span>{(p as Customer).mobile}</span>}
                         {locStr && <span>&bull; {locStr}</span>}

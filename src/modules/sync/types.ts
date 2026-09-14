@@ -6,7 +6,7 @@ export interface OutboxMutation {
   uid: string;                     // Authenticated user who created the mutation
   companyId: string;               // Target company
   financialYearId: string;         // Financial year context
-  entityType: "company" | "customer" | "supplier" | "product" | "invoice" | "quotation" | "receipt" | "payment" | "voucher" | "stock" | "category";
+  entityType: "company" | "customer" | "supplier" | "product" | "productSize" | "invoice" | "quotation" | "receipt" | "payment" | "voucher" | "stock" | "category";
   entityId: string;                // ID of target entity
   operation: "create" | "update" | "post" | "void" | "adjust";
   payload: Record<string, unknown>; // Normalized mutation payload

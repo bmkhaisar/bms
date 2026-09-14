@@ -502,12 +502,11 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
     : [];
 
   if (isTaxDoc) {
-    tableHeaders = ["#", "Item Description", "HSN/SAC", "Qty", "Unit", "Rate", "Discount", "GST", "Amount"];
+    tableHeaders = ["SL No.", "Particulars", "Size", "HSN/SAC", "Qty", "Unit", "Rate", "Discount", "GST", "Amount"];
     tableRows = effectiveItems.map((item, idx) => {
       let desc = item.productName || item.name;
       if (item.description && item.description !== desc) desc += `\n${item.description}`;
-      if (item.size) desc += `\nSize: ${item.size}`;
-      if (item.measurementSummary) desc += `\n${item.measurementSummary}`;
+      if (item.measurementSummary && item.measurementSummary !== item.size) desc += `\n${item.measurementSummary}`;
       const disc = item.discountPercent ?? item.discountPct ?? 0;
       const rate = item.rate !== undefined ? item.rate : ((item.ratePaise || 0) / 100);
       const amt = item.total !== undefined ? item.total : (item.lineAmount || 0);
@@ -515,6 +514,7 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       return [
         idx + 1,
         desc,
+        item.size || item.sizeSnapshot?.label || "—",
         item.hsn || "—",
         item.quantity,
         item.unit || item.uomLabel || "NOS",
@@ -525,30 +525,31 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       ];
     });
     colStyles = {
-      0: { cellWidth: 8, halign: "center" },
+      0: { cellWidth: 10, halign: "center" },
       1: { cellWidth: "auto" },
-      2: { cellWidth: 16, halign: "center" },
-      3: { cellWidth: 12, halign: "right" },
-      4: { cellWidth: 12, halign: "center" },
-      5: { cellWidth: 20, halign: "right" },
-      6: { cellWidth: 12, halign: "center" },
-      7: { cellWidth: 14, halign: "center" },
-      8: { cellWidth: 24, halign: "right" },
+      2: { cellWidth: 22, halign: "center" },
+      3: { cellWidth: 15, halign: "center" },
+      4: { cellWidth: 11, halign: "right" },
+      5: { cellWidth: 11, halign: "center" },
+      6: { cellWidth: 19, halign: "right" },
+      7: { cellWidth: 12, halign: "center" },
+      8: { cellWidth: 12, halign: "center" },
+      9: { cellWidth: 22, halign: "right" },
     };
   } else {
     // Clean Commercial / Non-GST Table without empty GST columns
-    tableHeaders = ["#", "Item Description", "Qty", "Unit", "Rate", "Discount", "Amount"];
+    tableHeaders = ["SL No.", "Particulars", "Size", "Qty", "Unit", "Rate", "Discount", "Amount"];
     tableRows = effectiveItems.map((item, idx) => {
       let desc = item.productName || item.name;
       if (item.description && item.description !== desc) desc += `\n${item.description}`;
-      if (item.size) desc += `\nSize: ${item.size}`;
-      if (item.measurementSummary) desc += `\n${item.measurementSummary}`;
+      if (item.measurementSummary && item.measurementSummary !== item.size) desc += `\n${item.measurementSummary}`;
       const disc = item.discountPercent ?? item.discountPct ?? 0;
       const rate = item.rate !== undefined ? item.rate : ((item.ratePaise || 0) / 100);
       const amt = item.total !== undefined ? item.total : (item.lineAmount || 0);
       return [
         idx + 1,
         desc,
+        item.size || item.sizeSnapshot?.label || "—",
         item.quantity,
         item.unit || item.uomLabel || "NOS",
         money(rate),
@@ -557,13 +558,14 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       ];
     });
     colStyles = {
-      0: { cellWidth: 8, halign: "center" },
+      0: { cellWidth: 10, halign: "center" },
       1: { cellWidth: "auto" },
-      2: { cellWidth: 16, halign: "right" },
-      3: { cellWidth: 16, halign: "center" },
-      4: { cellWidth: 24, halign: "right" },
-      5: { cellWidth: 18, halign: "center" },
-      6: { cellWidth: 28, halign: "right" },
+      2: { cellWidth: 25, halign: "center" },
+      3: { cellWidth: 16, halign: "right" },
+      4: { cellWidth: 16, halign: "center" },
+      5: { cellWidth: 24, halign: "right" },
+      6: { cellWidth: 18, halign: "center" },
+      7: { cellWidth: 26, halign: "right" },
     };
   }
 
