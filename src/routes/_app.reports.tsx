@@ -12,7 +12,7 @@ import {
   type Party,
 } from "@/lib/db";
 import { useLive } from "@/lib/useLive";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, Fragment } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -285,8 +285,8 @@ function SalesReport({ from, to }: { from?: number; to?: number }) {
                 const charges = i.extraChargesTotal || 0;
 
                 return (
-                  <>
-                    <TableRow key={i.id} className="cursor-pointer hover:bg-muted/40" onClick={() => setExpandedId(isExpanded ? null : i.id)}>
+                  <Fragment key={i.id}>
+                    <TableRow className="cursor-pointer hover:bg-muted/40" onClick={() => setExpandedId(isExpanded ? null : i.id)}>
                       <TableCell className="p-2 text-center text-muted-foreground">
                         {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                       </TableCell>
@@ -330,7 +330,7 @@ function SalesReport({ from, to }: { from?: number; to?: number }) {
                         </TableCell>
                       </TableRow>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
               {rows.length === 0 && (
@@ -953,7 +953,7 @@ function ProfitReport({ from, to }: { from?: number; to?: number }) {
                 const margin = item.revenue - item.cost;
                 const marginPct = item.revenue > 0 ? (margin / item.revenue) * 100 : 0;
                 return (
-                  <TableRow key={idx}>
+                  <TableRow key={`${item.name}-${idx}`}>
                     <TableCell className="font-medium text-xs">
                       {item.name}
                       {item.missingCost && <Badge variant="outline" className="ml-2 text-[9px] text-amber-600 border-amber-300">Missing Cost</Badge>}

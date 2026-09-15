@@ -367,6 +367,7 @@ export interface Invoice {
   extraChargesTotal?: number;
   amountPaid: number; balance: number; isIgst: boolean;
   advanceAllocatedPaise?: number;
+  customerCreditAppliedPaise?: number;
   advanceAllocations?: {
     receiptId: string;
     receiptNumber: string;
@@ -443,6 +444,8 @@ export interface Receipt {
     advanceTaxAdjustedPaise?: number;
   }[];
   advanceAvailablePaise?: number;
+  customerCreditPaise?: number;
+  unappliedCreditPaise?: number;
 
   // PRD Addendum § 5: Frozen Advance Tax & Audit Snapshot
   supplyType?: "GOODS" | "SERVICES" | "MIXED" | "UNSPECIFIED";

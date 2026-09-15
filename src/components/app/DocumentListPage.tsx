@@ -44,7 +44,7 @@ import { InvoicePartyStatusPanel } from "./InvoicePartyStatusPanel";
 import { PartyAddressSelect } from "./PartyAddressSelect";
 import { AdvanceRestrictionModal } from "./AdvanceRestrictionModal";
 import { CalculationReconciliationModal } from "./CalculationReconciliationModal";
-import { getPartyFinancialInsight } from "@/modules/accounting/services/partyAdvanceService";
+import { getPartyFinancialInsight, calculateCustomerCreditFromReceipts } from "@/modules/accounting/services/partyAdvanceService";
 import { validateDocumentTotals } from "@/modules/tax/canonicalCalculation";
 import { formatAddressLines } from "./AddressDrawer";
 import { firebaseDb } from "@/config/firebase";
@@ -63,6 +63,7 @@ import {
   createPostedDocumentCorrectionDraft,
   isPostedFinancialDocument,
 } from "@/modules/documents/postedDocumentCorrection";
+import { allocateAdvanceAgainstInvoice } from "@/modules/accounting/services/partyAdvanceService";
 
 type AnyDoc = Invoice | Quotation | Purchase;
 
@@ -108,15 +109,45 @@ export function DocumentListPage<T extends AnyDoc>({
   const [recoverableDraft, setRecoverableDraft] = useState<{ data: T; savedAt: number } | null>(null);
   const [company, setCompany] = useState<CompanySettings | null>(null);
 
-  const { closeDocument } = useDocumentDeepLink({
+  const { closeDocument: clearDeepLink, markManualOpen } = useDocumentDeepLink({
     documents: rows,
     onOpen: (document) => setPreview(document),
     onClose: () => {
       setPreview(null);
-      setEditing(null);
-      setOpen(false);
     },
   });
+
+  const initialEditingStateRef = useRef<string | null>(null);
+
+  function isEditorDirty(): boolean {
+    if (!editing || !initialEditingStateRef.current) return false;
+    try {
+      return JSON.stringify(editing) !== initialEditingStateRef.current;
+    } catch {
+      return false;
+    }
+  }
+
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+
+  function handleCancelOrCloseEditor() {
+    if (savingDoc) return;
+    if (isEditorDirty()) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    forceCloseEditor();
+  }
+
+  function forceCloseEditor() {
+    setShowDiscardConfirm(false);
+    setOpen(false);
+    setEditing(null);
+    initialEditingStateRef.current = null;
+    clearDeepLink();
+  }
+
+  const closeDocument = handleCancelOrCloseEditor;
 
   // Optimistic row overrides for instant local state sync without waiting for Dexie/Firebase
   const [optimisticOverrides, setOptimisticOverrides] = useState<Map<string, T | null>>(new Map());
@@ -146,20 +177,16 @@ export function DocumentListPage<T extends AnyDoc>({
     return db().receipts.where("customerId").equals(custId).toArray();
   }, [(editing as any)?.customerId]);
 
-  const availableCustomerAdvance = useMemo(() => {
-    return (customerReceipts || [])
-      .filter(r => r.postingStatus !== "reversed" && r.postingStatus !== "refunded")
-      .reduce((sum, r) => {
-        if (r.advanceAvailablePaise !== undefined) {
-          return sum + (r.advanceAvailablePaise / 100);
-        }
-        if (r.allocationType === "ADVANCE") {
-          const allocated = (r.allocatedInvoices || []).reduce((acc, a) => acc + (a.amountPaise / 100), 0);
-          return sum + Math.max(0, r.amount - allocated);
-        }
-        return sum;
-      }, 0);
-  }, [customerReceipts]);
+  const customerCreditResult = useMemo(() => {
+    const custId = (editing as any)?.customerId;
+    if (!custId || !customerReceipts) {
+      return { availableCreditRupees: 0, availableCreditPaise: 0, receiptsBreakdown: [] };
+    }
+    return calculateCustomerCreditFromReceipts(custId, customerReceipts);
+  }, [(editing as any)?.customerId, customerReceipts]);
+
+  const availableCustomerCredit = customerCreditResult.availableCreditRupees;
+  const availableCustomerAdvance = availableCustomerCredit;
 
   // Advance payment restriction modal state (PRD §§ 16-18)
   const [advanceRestrictionData, setAdvanceRestrictionData] = useState<{
@@ -446,13 +473,17 @@ export function DocumentListPage<T extends AnyDoc>({
       gstCalculationMode: "overall" as const,
       overallGstRate: 18,
     };
+    markManualOpen();
+    let initDoc: T;
     if (kind === "invoice") {
-      setEditing({ ...base, customerId: "", cgstTotal: 0, sgstTotal: 0, igstTotal: 0, isIgst: false, amountPaid: 0, balance: 0, status: "draft", postingStatus: "draft", sourceType: "DIRECT", gstCalculationMode: "overall", overallGstRate: 18 } as unknown as T);
+      initDoc = { ...base, customerId: "", cgstTotal: 0, sgstTotal: 0, igstTotal: 0, isIgst: false, amountPaid: 0, balance: 0, status: "draft", postingStatus: "draft", sourceType: "DIRECT", gstCalculationMode: "overall", overallGstRate: 18 } as unknown as T;
     } else if (kind === "quotation") {
-      setEditing({ ...base, customerId: "", status: "draft", gstCalculationMode: "overall", overallGstRate: 18 } as unknown as T);
+      initDoc = { ...base, customerId: "", status: "draft", gstCalculationMode: "overall", overallGstRate: 18 } as unknown as T;
     } else {
-      setEditing({ ...base, supplierId: "", amountPaid: 0, balance: 0, status: "draft", postingStatus: "draft" } as unknown as T);
+      initDoc = { ...base, supplierId: "", amountPaid: 0, balance: 0, status: "draft", postingStatus: "draft" } as unknown as T;
     }
+    setEditing(initDoc);
+    initialEditingStateRef.current = JSON.stringify(initDoc);
     const saved = loadDraft<T>(kind);
     if (saved && saved.data && (saved.data.items?.length > 0 || (saved.data as any).customerId || (saved.data as Purchase).supplierId)) {
       setRecoverableDraft(saved);
@@ -478,6 +509,8 @@ export function DocumentListPage<T extends AnyDoc>({
       setCorrectionReason("");
       return;
     }
+    markManualOpen();
+    initialEditingStateRef.current = JSON.stringify(r);
     setEditing({ ...r });
     const isDocNonGst = (r as any).gstTotal === 0 && (r as any).cgstTotal === 0 && (r as any).igstTotal === 0 && (r as any).items?.every((it: LineItem) => it.gstRate === 0);
     setEnableGst(!isDocNonGst);
@@ -553,6 +586,8 @@ export function DocumentListPage<T extends AnyDoc>({
 
       setCorrectionTarget(null);
       setCorrectionReason("");
+      markManualOpen();
+      initialEditingStateRef.current = JSON.stringify(replacement);
       setEditing(replacement);
       setEnableGst(Number((replacement as any).gstTotal || 0) > 0);
       setOpen(true);
@@ -590,22 +625,8 @@ export function DocumentListPage<T extends AnyDoc>({
     }
   }
 
-  // Debounced Firebase-backed autosave. Previewing or changing routes cannot discard a working document.
-  useEffect(() => {
-    if (!open || !editing) return;
-    const hasContent = (editing.items && editing.items.length > 0) || Boolean((editing as any).customerId) || Boolean((editing as Purchase).supplierId);
-    if (hasContent) {
-      const timer = setTimeout(() => {
-        persistWorkingDraft(editing).catch((error) => console.warn("[DocumentListPage] Draft autosave failed:", error));
-      }, 750);
-      return () => clearTimeout(timer);
-    }
-  }, [open, editing, kind, activeCompany?.id, activeFinancialYear?.id, user?.uid, savingDoc]);
-
-  draftFlushRef.current = () => {
-    if (open && editing) void persistWorkingDraft(editing).catch((error) => console.warn("[DocumentListPage] Final draft flush failed:", error));
-  };
-  useEffect(() => () => draftFlushRef.current?.(), []);
+  // Draft autosave disabled to preserve explicit user save lifecycle and prevent unwanted draft creation
+  draftFlushRef.current = () => {};
 
   // Auto-update Intra/Inter state when party or place of supply changes
   function onPartySelect(selectedPartyId: string) {
@@ -887,6 +908,13 @@ export function DocumentListPage<T extends AnyDoc>({
       const clientMutationId = (inv as any).clientMutationId || uid();
       (inv as any).clientMutationId = clientMutationId;
 
+      if (inv.customerCreditAppliedPaise && inv.customerCreditAppliedPaise > 0) {
+        try {
+          await allocateAdvanceAgainstInvoice({ invoice: inv, customerId: partyId });
+        } catch (creditAllocErr) {
+          console.warn("[DocumentListPage] Background credit allocation note:", creditAllocErr);
+        }
+      }
       const prev = await db().invoices.get(inv.id);
       const amendmentOriginal = inv.amendedFromId
         ? await db().invoices.get(inv.amendedFromId)
@@ -954,6 +982,9 @@ export function DocumentListPage<T extends AnyDoc>({
       setPostingPhase("posted");
       clearDraft(kind);
       setRecoverableDraft(null);
+      initialEditingStateRef.current = null;
+      setOpen(false);
+      setEditing(null);
       closeDocument();
       toast.success("Invoice posted");
 
@@ -1090,8 +1121,11 @@ export function DocumentListPage<T extends AnyDoc>({
 
       clearDraft(kind);
       setRecoverableDraft(null);
-      toast.success(kind === "purchase" ? "Purchase posted" : "Quotation saved");
+      initialEditingStateRef.current = null;
+      setOpen(false);
+      setEditing(null);
       closeDocument();
+      toast.success(kind === "purchase" ? "Purchase posted" : "Quotation saved");
     } catch (err: any) {
       toast.error(err?.message || "Failed to save document");
     } finally {
@@ -1195,6 +1229,8 @@ export function DocumentListPage<T extends AnyDoc>({
     const dup = { ...r, id: uid(), number, createdAt: Date.now(), date: Date.now() } as T;
     if (kind === "invoice") { (dup as unknown as Invoice).amountPaid = 0; (dup as unknown as Invoice).balance = (dup as unknown as Invoice).grandTotal; (dup as unknown as Invoice).status = "unpaid"; }
     if (kind === "purchase") { (dup as unknown as Purchase).amountPaid = 0; (dup as unknown as Purchase).balance = (dup as unknown as Purchase).grandTotal; (dup as unknown as Purchase).status = "unpaid"; }
+    markManualOpen();
+    initialEditingStateRef.current = JSON.stringify(dup);
     setEditing(dup); setOpen(true);
   }
 
@@ -1574,7 +1610,7 @@ export function DocumentListPage<T extends AnyDoc>({
       )}
 
       {/* Editor Dialog */}
-      <Dialog open={open} onOpenChange={(o) => { if (o) setOpen(true); else closeDocument(); }}>
+      <Dialog open={open} onOpenChange={(o) => { if (o) setOpen(true); else handleCancelOrCloseEditor(); }}>
         <DialogContent className="flex h-[min(95dvh,840px)] max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-5xl flex-col overflow-hidden gap-0 p-0">
           <DialogHeader className="shrink-0 border-b px-4 py-3 sm:px-6">
             <DialogTitle className="flex items-center justify-between gap-3 text-base pr-8 sm:pr-10">
@@ -1821,21 +1857,54 @@ export function DocumentListPage<T extends AnyDoc>({
                     </div>
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
-                        <Label className="text-xs">Available Advance</Label>
+                        <Label className="text-xs">Available Customer Credit</Label>
                         <span className="font-mono font-bold text-xs text-emerald-600">
-                          {formatMoney(availableCustomerAdvance)}
+                          {formatMoney(availableCustomerCredit)}
                         </span>
                       </div>
                       <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5 text-[11px] text-muted-foreground flex items-center justify-between">
                         <span>
-                          {availableCustomerAdvance > 0
-                            ? `Customer has ${formatMoney(availableCustomerAdvance)} advance available`
-                            : "No unallocated advance"}
+                          {availableCustomerCredit > 0
+                            ? `Customer has ${formatMoney(availableCustomerCredit)} credit available`
+                            : "No unapplied customer credit"}
                         </span>
-                        {availableCustomerAdvance > 0 && (
-                          <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
-                            Apply via Receipt
-                          </span>
+                        {availableCustomerCredit > 0 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            className="h-6 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20"
+                            onClick={() => {
+                              const extraCharges = (editing as any).extraCharges || [];
+                              const extraChargesTotal = extraCharges.reduce((s: number, c: ExtraCharge) => s + (Number(c.amount) || 0), 0);
+                              const totals = computeTotals(editing.items, Boolean((editing as any).isIgst), {
+                                enableGst,
+                                gstCalculationMode: (editing as any).gstCalculationMode,
+                                overallGstRate: (editing as any).overallGstRate,
+                              });
+                              const grandTotal = totals.grandTotal + extraChargesTotal;
+                              const currentPaid = (editing as any).amountPaid || 0;
+                              const currentBal = Math.max(0, grandTotal - currentPaid);
+                              const toApply = Math.min(availableCustomerCredit, currentBal);
+                              if (toApply <= 0) {
+                                toast.info("Invoice has no outstanding balance to apply credit against.");
+                                return;
+                              }
+                              const newPaid = currentPaid + toApply;
+                              const newBal = Math.max(0, grandTotal - newPaid);
+                              const creditPaise = Math.round(toApply * 100);
+                              setEditing({
+                                ...editing,
+                                amountPaid: newPaid,
+                                balance: newBal,
+                                customerCreditAppliedPaise: ((editing as any).customerCreditAppliedPaise || 0) + creditPaise,
+                                advanceAllocatedPaise: ((editing as any).advanceAllocatedPaise || 0) + creditPaise,
+                              } as T);
+                              toast.success(`Applied ₹${toApply.toLocaleString("en-IN", { minimumFractionDigits: 2 })} Customer Credit`);
+                            }}
+                          >
+                            Apply Credit
+                          </Button>
                         )}
                       </div>
                     </div>
@@ -1888,7 +1957,7 @@ export function DocumentListPage<T extends AnyDoc>({
                     )}
                     <div className="space-y-1 sm:col-span-2">
                       <Label className="text-xs">Load from Quotation (Preserves items, specs, terms)</Label>
-                      <Select onValueChange={applyQuotationToInvoice}>
+                      <Select value="" onValueChange={applyQuotationToInvoice}>
                         <SelectTrigger className="h-9 text-xs">
                           <SelectValue placeholder="Select an approved quotation to copy into invoice…" />
                         </SelectTrigger>
@@ -2208,7 +2277,7 @@ export function DocumentListPage<T extends AnyDoc>({
             </div>
           )}
           <DialogFooter className="shrink-0 gap-2 border-t bg-background px-3 py-3 sm:px-6">
-            <Button variant="ghost" onClick={closeDocument} disabled={savingDoc} className="w-full sm:w-auto">Cancel</Button>
+            <Button type="button" variant="ghost" onClick={closeDocument} disabled={savingDoc} className="w-full sm:w-auto">Cancel</Button>
             {kind === "invoice" && editing && (
               <Button type="button" variant="outline" onClick={() => setPreview(editing)} disabled={savingDoc} className="w-full sm:w-auto gap-1.5">
                 <FileText className="h-4 w-4" /> Invoice Preview
@@ -2348,7 +2417,7 @@ export function DocumentListPage<T extends AnyDoc>({
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <Label className="text-xs">Received Into (Ledger)</Label>
-                  <Select value={receiptSettlementLedgerId} onValueChange={setReceiptSettlementLedgerId}>
+                  <Select value={receiptSettlementLedgerId || ""} onValueChange={setReceiptSettlementLedgerId}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Default Cash" /></SelectTrigger>
                     <SelectContent>
                       {settlementLedgers.map((l) => (
@@ -2359,7 +2428,7 @@ export function DocumentListPage<T extends AnyDoc>({
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Payment Method</Label>
-                  <Select value={receiptPaymentMethod} onValueChange={setReceiptPaymentMethod}>
+                  <Select value={receiptPaymentMethod || "cash"} onValueChange={setReceiptPaymentMethod}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="cash">Cash</SelectItem>
@@ -2630,6 +2699,17 @@ export function DocumentListPage<T extends AnyDoc>({
             setIsDeletingDoc(false);
           }
         }}
+      />
+
+      <ConfirmDialog
+        open={showDiscardConfirm}
+        onOpenChange={setShowDiscardConfirm}
+        title="Discard unsaved changes?"
+        description="You have unsaved changes. Discard them?"
+        confirmText="Discard"
+        cancelText="Keep Editing"
+        destructive={true}
+        onConfirm={forceCloseEditor}
       />
     </>
   );

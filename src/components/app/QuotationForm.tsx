@@ -31,6 +31,7 @@ import { LineItemsEditor } from "./LineItemsEditor";
 import { GeneralInformationEditor } from "./GeneralInformationEditor";
 import { TechnicalSpecificationsEditor } from "./TechnicalSpecificationsEditor";
 import { StructuredTermsEditor } from "./StructuredTermsEditor";
+import { ConfirmDialog } from "./ConfirmDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -84,6 +85,7 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
   const [quickProductOpen, setQuickProductOpen] = useState(false);
   const [insightCustomerId, setInsightCustomerId] = useState<string | null>(null);
   const [pendingGstMode, setPendingGstMode] = useState<"item_wise" | "overall" | null>(null);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const draftFlushRef = useRef<Quotation | null>(null);
 
   useEffect(() => {
@@ -142,6 +144,42 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
       void Promise.resolve(draftSaveCallbackRef.current(pending)).catch((error) => console.warn("[QuotationForm] Final draft flush failed:", error));
     }
   }, []);
+
+  const isDirty = useMemo(() => {
+    const strip = (doc: Quotation) => ({
+      customerId: doc.customerId || "",
+      billingAddressId: doc.billingAddressId || "",
+      shippingAddressId: doc.shippingAddressId || "",
+      sameAsBilling: doc.sameAsBilling !== false,
+      items: (doc.items || []).map(it => ({
+        productId: it.productId,
+        name: it.name,
+        quantity: it.quantity,
+        rate: it.rate,
+        discountPct: it.discountPct,
+        gstRate: it.gstRate,
+        unit: it.unit,
+        size: it.size,
+      })),
+      extraCharges: (doc.extraCharges || []).map(c => ({ name: c.name, amount: Number(c.amount) || 0 })),
+      validity: doc.validity || 0,
+      paymentTerms: (doc as any).paymentTerms || "",
+      deliveryTerms: (doc as any).deliveryTerms || "",
+    });
+    try {
+      return JSON.stringify(strip(normalizedInitial)) !== JSON.stringify(strip(q));
+    } catch {
+      return false;
+    }
+  }, [normalizedInitial, q]);
+
+  const handleCancel = () => {
+    if (isDirty) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    onCancel();
+  };
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
@@ -349,7 +387,7 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
           <div className="truncate text-base font-semibold sm:text-lg">{q.number}</div>
         </div>
         <div className="flex shrink-0 gap-2">
-          <Button variant="ghost" size="sm" onClick={onCancel} className="gap-1.5"><X className="h-4 w-4" /> <span className="hidden sm:inline">Cancel</span></Button>
+          <Button variant="ghost" size="sm" onClick={handleCancel} className="gap-1.5"><X className="h-4 w-4" /> <span className="hidden sm:inline">Cancel</span></Button>
           <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
             <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save"}
           </Button>
@@ -783,6 +821,17 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <ConfirmDialog
+        open={showDiscardConfirm}
+        onOpenChange={setShowDiscardConfirm}
+        title="Discard unsaved changes?"
+        description="You have unsaved changes. Discard them?"
+        confirmText="Discard"
+        cancelText="Keep Editing"
+        destructive={true}
+        onConfirm={onCancel}
+      />
     </div>
   );
 }

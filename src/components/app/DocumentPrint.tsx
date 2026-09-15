@@ -187,7 +187,7 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
       {/* Document Section Order: Terms & Conditions -> Bank Settlement -> Signatory */}
       <footer className="mt-6 space-y-3 border-t pt-3 text-[10px]">
         {/* 1. Terms & Conditions */}
-        {((doc as any).terms || company.terms || (company as any).invoiceTermsMarkdown) && (
+        {!isReceipt && ((doc as any).terms || company.terms || (company as any).invoiceTermsMarkdown) && (
           <div className="rounded border border-gray-200 p-2 bg-gray-50/50">
             <div className="font-semibold text-gray-900 mb-1">Terms & Conditions</div>
             <div className="text-gray-700 whitespace-pre-line text-[11px]">

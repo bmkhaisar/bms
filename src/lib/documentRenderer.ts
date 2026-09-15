@@ -83,6 +83,14 @@ export interface NormalizedDocument {
   supplierInvoiceDate?: number;
   receiptDetails?: {
     receiptVoucherNumber?: string;
+    allocationType?: string;
+    invoiceNumber?: string;
+    invoiceDate?: number;
+    invoiceTotal?: number;
+    balanceBefore?: number;
+    amountAllocated?: number;
+    balanceAfter?: number;
+    customerCreditCreated?: number;
     natureOfSupply?: string;
     placeOfSupply?: string;
     taxableAmount?: number;
@@ -369,63 +377,98 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       leftY += 3.5;
     }
 
-    // Right Column: SHIP TO
+    // Right Column: SHIP TO or PAYMENT DETAILS (for Receipt)
     const shipX = margin + colW + 6;
     let rightY = y;
 
-    // Driver Copy Highlight Box (PRD § 33: Display destination prominently)
-    if (isDriverCopy) {
-      doc.setDrawColor(30, 64, 175);
-      doc.setFillColor(239, 246, 255);
-      doc.roundedRect(shipX - 2, y - 2, colW + 4, 30, 1, 1, "FD");
-    }
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(isDriverCopy ? 30 : 107, isDriverCopy ? 64 : 114, isDriverCopy ? 175 : 128);
-    const shipTitle = isDriverCopy
-      ? "DELIVERY DESTINATION (DRIVER COPY)"
-      : isTransportCopy
-      ? "CONSIGNEE / TRANSPORT DESTINATION"
-      : "SHIP TO / CONSIGNEE DETAILS";
-    doc.text(shipTitle, shipX, rightY);
-    rightY += 4.5;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
-    doc.setTextColor(17, 24, 39);
-    const consigneeName = party.shipToName || party.name || "Customer / Consignee";
-    doc.text(consigneeName, shipX, rightY, { maxWidth: colW });
-    rightY += 4.5;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(75, 85, 99);
-
-    const shipAddress = party.shipToAddress || party.shippingAddress || party.address || "Same as billing address";
-    const shipAddrLines = doc.splitTextToSize(shipAddress, colW);
-    for (let i = 0; i < Math.min(shipAddrLines.length, 3); i++) {
-      doc.text(shipAddrLines[i], shipX, rightY);
-      rightY += 3.5;
-    }
-
-    if (party.shipToCity || party.shipToState || party.shipToPincode) {
-      doc.text(
-        `${party.shipToCity || ""} ${party.shipToState || ""} ${party.shipToPincode || ""}`.trim(),
-        shipX,
-        rightY
-      );
-      rightY += 3.5;
-    }
-    if (party.shipToGstin) {
+    if (docData.kind === "receipt") {
       doc.setFont("helvetica", "bold");
-      doc.text(`GSTIN: ${party.shipToGstin}`, shipX, rightY);
+      doc.setFontSize(8);
+      doc.setTextColor(107, 114, 128);
+      doc.text("PAYMENT & SETTLEMENT DETAILS", shipX, rightY);
+      rightY += 4.5;
+
       doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(75, 85, 99);
+
+      if (docData.receiptDetails?.invoiceNumber) {
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 64, 175);
+        doc.text(`Payment Against: ${docData.receiptDetails.invoiceNumber}`, shipX, rightY);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(75, 85, 99);
+        rightY += 4;
+      }
+      const pMethod = docData.receiptDetails?.paymentMethod || docData.paymentMode || "Cash";
+      doc.text(`Payment Method: ${pMethod}`, shipX, rightY);
       rightY += 3.5;
-    }
-    if (party.shipToPhone) {
-      doc.text(`Contact: ${party.shipToPhone}`, shipX, rightY);
+
+      const sLedger = docData.receiptDetails?.settlementLedgerName || "Cash/Bank Account";
+      doc.text(`Settlement Ledger: ${sLedger}`, shipX, rightY);
       rightY += 3.5;
+
+      if (docData.receiptDetails?.referenceNumber) {
+        doc.text(`Ref / Cheque No: ${docData.receiptDetails.referenceNumber}`, shipX, rightY);
+        rightY += 3.5;
+      }
+      doc.text(`Receipt Date: ${formatDate(docData.date)}`, shipX, rightY);
+      rightY += 3.5;
+    } else {
+      // Driver Copy Highlight Box (PRD § 33: Display destination prominently)
+      if (isDriverCopy) {
+        doc.setDrawColor(30, 64, 175);
+        doc.setFillColor(239, 246, 255);
+        doc.roundedRect(shipX - 2, y - 2, colW + 4, 30, 1, 1, "FD");
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(isDriverCopy ? 30 : 107, isDriverCopy ? 64 : 114, isDriverCopy ? 175 : 128);
+      const shipTitle = isDriverCopy
+        ? "DELIVERY DESTINATION (DRIVER COPY)"
+        : isTransportCopy
+        ? "CONSIGNEE / TRANSPORT DESTINATION"
+        : "SHIP TO / CONSIGNEE DETAILS";
+      doc.text(shipTitle, shipX, rightY);
+      rightY += 4.5;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9.5);
+      doc.setTextColor(17, 24, 39);
+      const consigneeName = party.shipToName || party.name || "Customer / Consignee";
+      doc.text(consigneeName, shipX, rightY, { maxWidth: colW });
+      rightY += 4.5;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(75, 85, 99);
+
+      const shipAddress = party.shipToAddress || party.shippingAddress || party.address || "Same as billing address";
+      const shipAddrLines = doc.splitTextToSize(shipAddress, colW);
+      for (let i = 0; i < Math.min(shipAddrLines.length, 3); i++) {
+        doc.text(shipAddrLines[i], shipX, rightY);
+        rightY += 3.5;
+      }
+
+      if (party.shipToCity || party.shipToState || party.shipToPincode) {
+        doc.text(
+          `${party.shipToCity || ""} ${party.shipToState || ""} ${party.shipToPincode || ""}`.trim(),
+          shipX,
+          rightY
+        );
+        rightY += 3.5;
+      }
+      if (party.shipToGstin) {
+        doc.setFont("helvetica", "bold");
+        doc.text(`GSTIN: ${party.shipToGstin}`, shipX, rightY);
+        doc.setFont("helvetica", "normal");
+        rightY += 3.5;
+      }
+      if (party.shipToPhone) {
+        doc.text(`Contact: ${party.shipToPhone}`, shipX, rightY);
+        rightY += 3.5;
+      }
     }
 
     y = Math.max(leftY, rightY) + 3;
@@ -501,7 +544,37 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       ]
     : [];
 
-  if (isTaxDoc) {
+  if (docData.kind === "receipt" && !isTaxDoc) {
+    // Professional Receipt Voucher Allocation Table (PRD §§ 6, 20)
+    tableHeaders = ["SL No.", "Payment Against", "Invoice Date", "Invoice Amount", "Balance Before", "Allocated", "Balance After"];
+    const invNum = docData.receiptDetails?.invoiceNumber || (docData.number ? "Invoice Settlement" : "On Account");
+    const invDate = docData.receiptDetails?.invoiceDate ? formatDate(docData.receiptDetails.invoiceDate) : "—";
+    const invTotal = docData.receiptDetails?.invoiceTotal !== undefined ? docData.receiptDetails.invoiceTotal : (docData.receiptDetails?.balanceBefore ?? docData.grandTotal);
+    const balBefore = docData.receiptDetails?.balanceBefore !== undefined ? docData.receiptDetails.balanceBefore : docData.grandTotal;
+    const allocated = docData.receiptDetails?.amountAllocated !== undefined ? docData.receiptDetails.amountAllocated : docData.grandTotal;
+    const balAfter = docData.receiptDetails?.balanceAfter !== undefined ? docData.receiptDetails.balanceAfter : Math.max(0, balBefore - allocated);
+
+    tableRows = [
+      [
+        1,
+        invNum,
+        invDate,
+        money(invTotal),
+        money(balBefore),
+        money(allocated),
+        money(balAfter),
+      ],
+    ];
+    colStyles = {
+      0: { cellWidth: 12, halign: "center" },
+      1: { cellWidth: "auto" },
+      2: { cellWidth: 24, halign: "center" },
+      3: { cellWidth: 26, halign: "right" },
+      4: { cellWidth: 26, halign: "right" },
+      5: { cellWidth: 28, halign: "right" },
+      6: { cellWidth: 26, halign: "right" },
+    };
+  } else if (isTaxDoc) {
     tableHeaders = ["SL No.", "Particulars", "Size", "HSN/SAC", "Qty", "Unit", "Rate", "Discount", "GST", "Amount"];
     tableRows = effectiveItems.map((item, idx) => {
       let desc = item.productName || item.name;
@@ -607,6 +680,17 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
 
   y = (doc as any).lastAutoTable.finalY + 4;
 
+  if (docData.kind === "receipt" && docData.receiptDetails?.customerCreditCreated && docData.receiptDetails.customerCreditCreated > 0) {
+    doc.setFillColor(236, 253, 245);
+    doc.setDrawColor(5, 150, 105);
+    doc.roundedRect(margin, y - 1, pageW - margin * 2, 8, 1, 1, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.setTextColor(4, 120, 87);
+    doc.text(`Customer Credit Created: ${money(docData.receiptDetails.customerCreditCreated)} (Unapplied credit kept on customer account for future invoices)`, margin + 4, y + 4.5);
+    y += 11;
+  }
+
   if (y > pageH - 60) {
     doc.addPage();
     renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
@@ -621,9 +705,22 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   doc.setFontSize(8.5);
   doc.setTextColor(75, 85, 99);
 
-  doc.text(isTaxDoc ? "Taxable Subtotal:" : "Subtotal:", totalsX, y);
-  doc.text(money(docData.subtotal), valX, y, { align: "right" });
-  y += 4;
+  if (docData.kind === "receipt" && !isTaxDoc) {
+    if (docData.receiptDetails?.amountAllocated !== undefined) {
+      doc.text("Allocated to Invoice:", totalsX - 25, y);
+      doc.text(money(docData.receiptDetails.amountAllocated), valX, y, { align: "right" });
+      y += 4;
+    }
+    if (docData.receiptDetails?.customerCreditCreated && docData.receiptDetails.customerCreditCreated > 0) {
+      doc.text("Customer Credit Created:", totalsX - 25, y);
+      doc.text(money(docData.receiptDetails.customerCreditCreated), valX, y, { align: "right" });
+      y += 4;
+    }
+  } else {
+    doc.text(isTaxDoc ? "Taxable Subtotal:" : "Subtotal:", totalsX, y);
+    doc.text(money(docData.subtotal), valX, y, { align: "right" });
+    y += 4;
+  }
 
   if (docData.discountTotal > 0) {
     doc.text("Discount Total:", totalsX, y);
@@ -690,7 +787,7 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   y += 6;
 
   // 7. Terms & Conditions (Rendered before Bank Details, supports Markdown lists, hanging indent)
-  const showTerms = docData.includeTerms !== false &&
+  const showTerms = docData.kind !== "receipt" && docData.includeTerms !== false &&
     (docData.termsSnapshot?.length || (docData as any).showInvoiceTerms !== false && (comp as any).showInvoiceTerms !== false);
 
   if (showTerms && (docData.terms || docData.termsSnapshot?.length || (comp as any).invoiceTermsMarkdown || comp.terms)) {

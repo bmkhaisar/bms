@@ -87,6 +87,14 @@ export function InvoicePartyStatusPanel({
                   {formatMoney(insight.outstandingReceivableRupees)}
                 </span>
               </div>
+              {insight.availableAdvanceRupees > 0 && (
+                <div>
+                  <span className="text-muted-foreground">Customer Credit: </span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    {formatMoney(insight.availableAdvanceRupees)}
+                  </span>
+                </div>
+              )}
               {insight.creditLimitPaise > 0 && (
                 <div>
                   <span className="text-muted-foreground">Credit Limit: </span>

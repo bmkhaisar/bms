@@ -45,7 +45,7 @@ export const Route = createFileRoute("/system-admin")({
   component: SystemAdminPage,
 });
 
-export function SystemAdminPage() {
+function SystemAdminPage() {
   const { user, isPlatformAdmin, signOutAndSwitchAccount, authInitializing, claimsLoading } = useAuth();
   const { companies: userTenantCompanies, switchCompany } = useActiveCompany();
   const nav = useNavigate();

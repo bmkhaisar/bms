@@ -31,7 +31,7 @@ const EXPORT_TABLES = [
   "purchases",
 ] as const;
 
-export function BackupPage() {
+function BackupPage() {
   const { activeCompany, activeFinancialYear, isOwner } = useActiveCompany();
   const { user } = useAuth();
   const [clearDeviceOpen, setClearDeviceOpen] = useState(false);

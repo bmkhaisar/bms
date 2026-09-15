@@ -16,7 +16,7 @@ export const Route = createFileRoute("/about")({
   component: AboutPage,
 });
 
-export function AboutPage() {
+function AboutPage() {
   return (
     <PublicShell>
       <div className="grid gap-6 lg:grid-cols-3">

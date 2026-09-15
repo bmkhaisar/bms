@@ -65,6 +65,7 @@ function ProductsPage() {
   const [editing, setEditing] = useState<Product>(empty);
   const [saving, setSaving] = useState(false);
   const [selectedProductIdForDrawer, setSelectedProductIdForDrawer] = useState<string | null>(null);
+  const [showPriceWarning, setShowPriceWarning] = useState(false);
 
   // Deletion / Deactivation modal target state
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -234,12 +235,21 @@ function ProductsPage() {
     });
   }
 
-  async function save() {
+  function handleSaveClick() {
     if (!editing.name.trim()) {
       toast.error("Product name is required");
       return;
     }
+    const price = Number(editing.sellingPrice);
+    if (!price || price <= 0) {
+      setShowPriceWarning(true);
+      return;
+    }
+    saveProduct();
+  }
 
+  async function saveProduct() {
+    setShowPriceWarning(false);
     setSaving(true);
     try {
       const productToSave: Product = {
@@ -638,7 +648,7 @@ function ProductsPage() {
             <Button variant="ghost" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={save} disabled={saving}>
+            <Button onClick={handleSaveClick} disabled={saving}>
               {saving ? (
                 <>
                   <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
@@ -685,6 +695,18 @@ function ProductsPage() {
             await removePermanent(deleteTarget.product);
           }
           setDeleteTarget(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={showPriceWarning}
+        onOpenChange={setShowPriceWarning}
+        title="Selling price is not set."
+        description="Future invoices will require the rate to be entered manually."
+        cancelText="Go Back"
+        confirmText="Save Without Price"
+        onConfirm={async () => {
+          await saveProduct();
         }}
       />
 

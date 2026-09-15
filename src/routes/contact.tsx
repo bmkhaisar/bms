@@ -16,7 +16,7 @@ export const Route = createFileRoute("/contact")({
   component: ContactPage,
 });
 
-export function ContactPage() {
+function ContactPage() {
   return (
     <PublicShell>
       <div className="mx-auto max-w-3xl">

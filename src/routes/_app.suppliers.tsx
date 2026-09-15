@@ -43,7 +43,7 @@ const empty: Supplier = {
   createdAt: 0,
 };
 
-export function SuppliersPage() {
+function SuppliersPage() {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Supplier>(() => db().suppliers.orderBy("name").toArray());

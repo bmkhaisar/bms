@@ -33,7 +33,7 @@ export const Route = createFileRoute("/_app/settings")({
   component: SettingsPage,
 });
 
-export function SettingsPage() {
+function SettingsPage() {
   const { user } = useAuth();
   const { activeCompany, isOwner, can } = useActiveCompany();
   const canEdit = isOwner || can("company.settings.update");

@@ -23,7 +23,7 @@ export const Route = createFileRoute("/_app/categories")({
   component: CategoriesPage,
 });
 
-export function CategoriesPage() {
+function CategoriesPage() {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Category>(() => db().categories.orderBy("name").toArray());

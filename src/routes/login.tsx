@@ -25,7 +25,7 @@ export const Route = createFileRoute("/login")({
   component: LoginPage,
 });
 
-export function LoginPage() {
+function LoginPage() {
   const nav = useNavigate();
   const { signIn, isAuthenticated, isPlatformAdmin, authInitializing, claimsLoading, user, setResolutionState } = useAuth();
   const { companies, loading: companiesLoading } = useActiveCompany();

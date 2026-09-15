@@ -46,7 +46,7 @@ export const Route = createFileRoute("/_app/receipts")({
   component: ReceiptsAndPaymentsPage,
 });
 
-export function ReceiptsAndPaymentsPage() {
+function ReceiptsAndPaymentsPage() {
   const { user } = useAuth();
   const { activeCompany, activeFinancialYear } = useActiveCompany();
   const [activeTab, setActiveTab] = useState<"receipts" | "payments">("receipts");
@@ -126,6 +126,16 @@ export function ReceiptsAndPaymentsPage() {
     const customer = customers.find((c) => c.id === r.customerId);
     const comp = activeCompany || r.companySnapshot;
     const isAdvance = r.allocationType === "ADVANCE" || !r.invoiceId;
+    const inv = invoices.find((i) => i.id === r.invoiceId) || (r.allocatedInvoices && r.allocatedInvoices[0] ? invoices.find(i => i.id === r.allocatedInvoices![0].invoiceId) : undefined);
+    
+    const allocPaise = r.allocatedInvoices && r.allocatedInvoices[0]
+      ? r.allocatedInvoices[0].amountPaise
+      : (r.invoiceId && inv ? Math.min(Math.round(r.amount * 100), Math.round(inv.grandTotal * 100)) : 0);
+    const amountAllocated = allocPaise > 0 ? allocPaise / 100 : (r.invoiceId ? r.amount : 0);
+    const customerCreditCreated = (r.customerCreditPaise !== undefined ? r.customerCreditPaise : (r.advanceAvailablePaise !== undefined ? r.advanceAvailablePaise : 0)) / 100;
+    const balanceBefore = inv ? (inv.balance !== undefined ? inv.balance + amountAllocated : inv.grandTotal) : undefined;
+    const balanceAfter = inv ? (inv.balance !== undefined ? inv.balance : Math.max(0, (balanceBefore || 0) - amountAllocated)) : undefined;
+
     const docData: NormalizedDocument = {
       kind: "receipt",
       title: isAdvance ? "ADVANCE RECEIPT VOUCHER" : "RECEIPT VOUCHER",
@@ -158,8 +168,17 @@ export function ReceiptsAndPaymentsPage() {
       paymentMode: r.paymentMethod || r.mode,
       signatorySnapshot: r.signatorySnapshot,
       signatoryOverride: r.signatoryOverride,
+      includeTerms: false,
       receiptDetails: {
         receiptVoucherNumber: r.receiptVoucherId || r.number,
+        allocationType: r.allocationType || (r.invoiceId ? "AGAINST_REF" : "ADVANCE"),
+        invoiceNumber: (r as any).invoiceNumber || inv?.number,
+        invoiceDate: inv?.date,
+        invoiceTotal: inv?.grandTotal,
+        balanceBefore,
+        amountAllocated,
+        balanceAfter,
+        customerCreditCreated,
         natureOfSupply: r.supplyType,
         placeOfSupply: r.placeOfSupplySnapshot || customer?.stateCode || comp?.stateCode,
         taxableAmount: r.taxableAmountPaise ? r.taxableAmountPaise / 100 : undefined,
@@ -365,11 +384,38 @@ export function ReceiptsAndPaymentsPage() {
         await db().receipts.put(frozenReceipt);
       }
 
-      // Update linked invoice balance if applicable
+      // Build authoritative allocation for AGAINST_REF
+      if (editingReceipt.invoiceId) {
+        const targetInv = await db().invoices.get(editingReceipt.invoiceId);
+        if (targetInv) {
+          const invTotalPaise = Math.round(targetInv.grandTotal * 100);
+          const invPaidPaise = Math.round((targetInv.amountPaid || 0) * 100);
+          const invOutstandingPaise = Math.max(0, invTotalPaise - invPaidPaise);
+          const typedPaise = Math.round(editingReceipt.amount * 100);
+          const allocatedPaise = Math.min(typedPaise, invOutstandingPaise);
+          const excessPaise = Math.max(0, typedPaise - allocatedPaise);
+
+          editingReceipt.allocatedInvoices = [{
+            invoiceId: targetInv.id,
+            invoiceNumber: targetInv.number,
+            amountPaise: allocatedPaise,
+          }];
+          if (excessPaise > 0) {
+            editingReceipt.advanceAvailablePaise = excessPaise;
+            editingReceipt.customerCreditPaise = excessPaise;
+            editingReceipt.unappliedCreditPaise = excessPaise;
+          }
+        }
+      }
+
+      // Update linked invoice balance if applicable (offline / local Dexie fallback)
       if (editingReceipt.invoiceId && !(activeCompany?.id && activeFinancialYear?.id && user)) {
         const inv = await db().invoices.get(editingReceipt.invoiceId);
         if (inv) {
-          const paid = inv.amountPaid + editingReceipt.amount;
+          const targetAlloc = editingReceipt.allocatedInvoices?.[0]?.amountPaise !== undefined
+            ? editingReceipt.allocatedInvoices[0].amountPaise / 100
+            : Math.min(editingReceipt.amount, inv.balance);
+          const paid = inv.amountPaid + targetAlloc;
           const balance = Math.max(0, inv.grandTotal - paid);
           inv.amountPaid = paid;
           inv.balance = balance;
@@ -718,451 +764,538 @@ export function ReceiptsAndPaymentsPage() {
           if (!o) setEditingReceipt(null);
         }}
       >
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
+        <DialogContent className="max-w-xl max-h-[90dvh] flex flex-col p-0 overflow-hidden sm:rounded-2xl">
+          <DialogHeader className="p-6 pb-3 border-b shrink-0 bg-background/95 backdrop-blur">
             <DialogTitle>Record Customer Receipt</DialogTitle>
           </DialogHeader>
           {editingReceipt && (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Receipt Number</Label>
-                <Input value={editingReceipt.number} readOnly className="font-mono bg-muted/40" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Receipt Date</Label>
-                <Input
-                  type="date"
-                  value={toDateInput(editingReceipt.date)}
-                  onChange={(e) =>
-                    setEditingReceipt({ ...editingReceipt, date: fromDateInput(e.target.value) })
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Customer *</Label>
-                <Select
-                  value={editingReceipt.customerId}
-                  onValueChange={(v) => {
-                    const cust = customers.find((c) => c.id === v);
-                    const isAdvanceCust = cust?.paymentPolicy === "ADVANCE";
-                    setEditingReceipt({
-                      ...editingReceipt,
-                      customerId: v,
-                      invoiceId: undefined,
-                      allocationType: isAdvanceCust ? "ADVANCE" : "ON_ACCOUNT",
-                      reference: isAdvanceCust ? `ADV-${editingReceipt.number}` : editingReceipt.reference,
-                    });
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select customer…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name} {c.paymentPolicy === "ADVANCE" ? "• [ADVANCE]" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Allocation Type</Label>
-                <Select
-                  value={editingReceipt.allocationType || (editingReceipt.invoiceId ? "AGAINST_REF" : "ON_ACCOUNT")}
-                  onValueChange={(v: "ADVANCE" | "AGAINST_REF" | "ON_ACCOUNT") => {
-                    setEditingReceipt({
-                      ...editingReceipt,
-                      allocationType: v,
-                      invoiceId: v === "AGAINST_REF" ? editingReceipt.invoiceId : undefined,
-                      reference: v === "ADVANCE" ? (editingReceipt.reference || `ADV-${editingReceipt.number}`) : editingReceipt.reference,
-                    });
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ADVANCE">Advance (Customer Deposit)</SelectItem>
-                    <SelectItem value="AGAINST_REF">Against Invoice (Reference)</SelectItem>
-                    <SelectItem value="ON_ACCOUNT">On Account (General)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              {editingReceipt.allocationType === "AGAINST_REF" && (
+            <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-4 space-y-4 scrollbar-thin">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Against Invoice</Label>
-                  <Select
-                    value={editingReceipt.invoiceId || "none"}
-                    onValueChange={(v) =>
-                      setEditingReceipt({ ...editingReceipt, invoiceId: v === "none" ? undefined : v })
+                  <Label className="text-xs">Receipt Number</Label>
+                  <Input value={editingReceipt.number} readOnly className="font-mono bg-muted/40" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Receipt Date</Label>
+                  <Input
+                    type="date"
+                    value={toDateInput(editingReceipt.date)}
+                    onChange={(e) =>
+                      setEditingReceipt({ ...editingReceipt, date: fromDateInput(e.target.value) })
                     }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Customer *</Label>
+                  <Select
+                    value={editingReceipt.customerId || ""}
+                    onValueChange={(v) => {
+                      const cust = customers.find((c) => c.id === v);
+                      const isAdvanceCust = cust?.paymentPolicy === "ADVANCE";
+                      setEditingReceipt({
+                        ...editingReceipt,
+                        customerId: v,
+                        invoiceId: undefined,
+                        allocationType: isAdvanceCust ? "ADVANCE" : "ON_ACCOUNT",
+                        reference: isAdvanceCust ? `ADV-${editingReceipt.number}` : editingReceipt.reference,
+                      });
+                    }}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select invoice…" />
+                      <SelectValue placeholder="Select customer…" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Select Invoice</SelectItem>
-                      {custInvoices.map((i) => (
-                        <SelectItem key={i.id} value={i.id}>
-                          {i.number} · Bal {formatMoney(i.balance)}
+                      {customers.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name} {c.paymentPolicy === "ADVANCE" ? "• [ADVANCE]" : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-              )}
-              <div className="space-y-1.5">
-                <Label className="text-xs">Reference Number</Label>
-                <Input
-                  value={editingReceipt.reference || ""}
-                  onChange={(e) => setEditingReceipt({ ...editingReceipt, reference: e.target.value })}
-                  placeholder="e.g. ADV-00012 or Cheque #"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Amount (₹) *</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={editingReceipt.amount || ""}
-                  onChange={(e) =>
-                    setEditingReceipt({ ...editingReceipt, amount: Number(e.target.value) || 0 })
-                  }
-                  placeholder="0.00"
-                />
-              </div>
-              {/* PRD Addendum § 12: User-Friendly Advance Form */}
-              {editingReceipt.allocationType === "ADVANCE" && (
-                <div className="sm:col-span-2 space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-foreground">Advance For *</Label>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={(editingReceipt.supplyType || "GOODS") === "GOODS" ? "default" : "outline"}
-                        className="text-xs justify-start h-8"
-                        onClick={() => setEditingReceipt({ ...editingReceipt, supplyType: "GOODS" })}
-                      >
-                        Goods
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={editingReceipt.supplyType === "SERVICES" ? "default" : "outline"}
-                        className="text-xs justify-start h-8"
-                        onClick={() => setEditingReceipt({ ...editingReceipt, supplyType: "SERVICES" })}
-                      >
-                        Services
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={editingReceipt.supplyType === "MIXED" ? "default" : "outline"}
-                        className="text-xs justify-start h-8"
-                        onClick={() => setEditingReceipt({ ...editingReceipt, supplyType: "MIXED" })}
-                      >
-                        Goods + Services
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={editingReceipt.supplyType === "UNSPECIFIED" ? "default" : "outline"}
-                        className="text-xs justify-start h-8"
-                        onClick={() => setEditingReceipt({ ...editingReceipt, supplyType: "UNSPECIFIED" })}
-                      >
-                        Not decided yet
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* GOODS FLOW (PRD Addendum § 2) */}
-                  {(editingReceipt.supplyType || "GOODS") === "GOODS" && (
-                    <div className="text-xs text-muted-foreground bg-card/70 p-2.5 rounded-lg border border-border/50">
-                      <p className="font-semibold text-foreground">Goods Advance (No Advance Output GST)</p>
-                      <p className="mt-0.5 text-[11px]">
-                        Cash/Bank Dr | Customer Advance Cr. Under GST Notification 66/2017-CT, advances on goods do not generate Output GST. Sales Revenue & GST will be recognized on the eventual Tax Invoice.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* SERVICES FLOW (PRD Addendum § 3, § 4) */}
-                  {editingReceipt.supplyType === "SERVICES" && (
-                    <div className="space-y-3 bg-card/80 p-3 rounded-lg border border-border/60">
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        <div className="space-y-1">
-                          <Label className="text-[11px]">GST Rate (%)</Label>
-                          <Select
-                            value={String(editingReceipt.taxProfileSnapshot?.gstRate ?? 18)}
-                            onValueChange={(val) =>
-                              setEditingReceipt({
-                                ...editingReceipt,
-                                taxProfileSnapshot: {
-                                  ...(editingReceipt.taxProfileSnapshot || {}),
-                                  gstRate: Number(val),
-                                  isTaxInclusive: editingReceipt.taxProfileSnapshot?.isTaxInclusive ?? true,
-                                },
-                              })
-                            }
-                          >
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="18">18% (Standard Services)</SelectItem>
-                              <SelectItem value="12">12%</SelectItem>
-                              <SelectItem value="5">5%</SelectItem>
-                              <SelectItem value="28">28%</SelectItem>
-                              <SelectItem value="0">0% (Exempt)</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <Label className="text-[11px]">Tax Calculation</Label>
-                          <Select
-                            value={editingReceipt.taxProfileSnapshot?.isTaxInclusive !== false ? "inclusive" : "exclusive"}
-                            onValueChange={(val) =>
-                              setEditingReceipt({
-                                ...editingReceipt,
-                                taxProfileSnapshot: {
-                                  ...(editingReceipt.taxProfileSnapshot || { gstRate: 18 }),
-                                  isTaxInclusive: val === "inclusive",
-                                },
-                              })
-                            }
-                          >
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="inclusive">Tax Inclusive (Gross)</SelectItem>
-                              <SelectItem value="exclusive">Tax Exclusive (Base)</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <Label className="text-[11px]">Place of Supply (State)</Label>
-                          <Input
-                            className="h-8 text-xs"
-                            placeholder="State Code (e.g. 27)"
-                            value={
-                              editingReceipt.placeOfSupplySnapshot ||
-                              customers.find((c) => c.id === editingReceipt.customerId)?.stateCode ||
-                              activeCompany?.stateCode ||
-                              ""
-                            }
-                            onChange={(e) =>
-                              setEditingReceipt({
-                                ...editingReceipt,
-                                placeOfSupplySnapshot: e.target.value,
-                              })
-                            }
-                          />
-                        </div>
-                      </div>
-
-                      {/* Authoritative Calculation Preview */}
-                      {advanceTaxPreview && (
-                        <div className="grid grid-cols-3 gap-2 p-2.5 rounded bg-muted/40 text-xs font-mono border border-border/40">
-                          <div>
-                            <span className="text-[10px] text-muted-foreground block">Taxable Advance</span>
-                            <span className="font-bold text-foreground">
-                              {formatMoney(advanceTaxPreview.taxableAdvance)}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-muted-foreground block">
-                              {advanceTaxPreview.igstPaise > 0 ? "IGST (Inter-State)" : "CGST + SGST (Intra)"}
-                            </span>
-                            <span className="font-bold text-amber-600 dark:text-amber-400">
-                              {formatMoney(advanceTaxPreview.totalTaxPaise / 100)}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-muted-foreground block">Total Advance</span>
-                            <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                              {formatMoney(advanceTaxPreview.advanceAmountPaise / 100)}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* MIXED GOODS + SERVICES (PRD Addendum § 8) */}
-                  {editingReceipt.supplyType === "MIXED" && (
-                    <div className="space-y-3 bg-card/80 p-3 rounded-lg border border-border/60">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <Label className="text-[11px]">Goods Advance (₹ - No Tax)</Label>
-                          <Input
-                            type="number"
-                            className="h-8 text-xs font-mono"
-                            placeholder="0.00"
-                            value={(editingReceipt.mixedBreakdown?.goodsAmountPaise || 0) / 100 || ""}
-                            onChange={(e) => {
-                              const goodsRs = Number(e.target.value) || 0;
-                              const totalRs = editingReceipt.amount || 0;
-                              const servRs = Math.max(0, totalRs - goodsRs);
-                              setEditingReceipt({
-                                ...editingReceipt,
-                                mixedBreakdown: {
-                                  goodsAmountPaise: Math.round(goodsRs * 100),
-                                  serviceAmountPaise: Math.round(servRs * 100),
-                                  serviceTaxablePaise: 0,
-                                  serviceTaxPaise: 0,
-                                },
-                              });
-                            }}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px]">Service Advance (₹ - Taxable)</Label>
-                          <Input
-                            type="number"
-                            className="h-8 text-xs font-mono"
-                            placeholder="0.00"
-                            value={(editingReceipt.mixedBreakdown?.serviceAmountPaise || 0) / 100 || ""}
-                            onChange={(e) => {
-                              const servRs = Number(e.target.value) || 0;
-                              const goodsRs = Math.max(0, (editingReceipt.amount || 0) - servRs);
-                              setEditingReceipt({
-                                ...editingReceipt,
-                                mixedBreakdown: {
-                                  goodsAmountPaise: Math.round(goodsRs * 100),
-                                  serviceAmountPaise: Math.round(servRs * 100),
-                                  serviceTaxablePaise: 0,
-                                  serviceTaxPaise: 0,
-                                },
-                              });
-                            }}
-                          />
-                        </div>
-                      </div>
-                      {advanceTaxPreview && (
-                        <div className="text-[11px] font-mono p-2 rounded bg-muted/40 flex justify-between">
-                          <span>Goods (No GST): {formatMoney((editingReceipt.mixedBreakdown?.goodsAmountPaise || 0) / 100)}</span>
-                          <span className="text-amber-600 dark:text-amber-400 font-semibold">
-                            Service GST: {formatMoney(advanceTaxPreview.totalTaxPaise / 100)}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* NOT DECIDED YET (PRD Addendum § 7) */}
-                  {editingReceipt.supplyType === "UNSPECIFIED" && (
-                    <div className="flex items-start gap-2.5 text-xs bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-lg text-amber-800 dark:text-amber-300">
-                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
-                      <div>
-                        <p className="font-semibold">Tax treatment will need review when this advance is allocated.</p>
-                        <p className="text-[11px] opacity-90 mt-0.5">
-                          Advance is recorded with taxTreatment = PENDING_CLASSIFICATION. No tax rate is assumed or guessed until the final supply is identified.
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Allocation Type</Label>
+                  <Select
+                    value={editingReceipt.allocationType || (editingReceipt.invoiceId ? "AGAINST_REF" : "ON_ACCOUNT")}
+                    onValueChange={(v: "ADVANCE" | "AGAINST_REF" | "ON_ACCOUNT") => {
+                      setEditingReceipt({
+                        ...editingReceipt,
+                        allocationType: v,
+                        invoiceId: v === "AGAINST_REF" ? editingReceipt.invoiceId : undefined,
+                        reference: v === "ADVANCE" ? (editingReceipt.reference || `ADV-${editingReceipt.number}`) : editingReceipt.reference,
+                      });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ADVANCE">Advance (Customer Deposit)</SelectItem>
+                      <SelectItem value="AGAINST_REF">Against Invoice (Reference)</SelectItem>
+                      <SelectItem value="ON_ACCOUNT">On Account (General)</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-              )}
+                {editingReceipt.allocationType === "AGAINST_REF" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Against Invoice</Label>
+                    <Select
+                      value={editingReceipt.invoiceId || "none"}
+                      onValueChange={(v) =>
+                        setEditingReceipt({ ...editingReceipt, invoiceId: v === "none" ? undefined : v })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select invoice…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Select Invoice</SelectItem>
+                        {custInvoices.map((i) => (
+                          <SelectItem key={i.id} value={i.id}>
+                            {i.number} · Bal {formatMoney(i.balance)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
 
-              <div className="space-y-1.5">
-                <Label className="text-xs">Payment Method</Label>
-                <Select
-                  value={editingReceipt.paymentMethod || editingReceipt.mode || "cash"}
-                  onValueChange={(v: any) => {
-                    const nextMethod = v;
-                    const nextLedger = nextMethod === "cash"
-                      ? (cashLedgers[0]?.id || `led_${activeCompany?.id || "default"}_cash`)
-                      : (bankLedgers[0]?.id || cashLedgers[0]?.id || `led_${activeCompany?.id || "default"}_bank`);
-                    setEditingReceipt({
-                      ...editingReceipt,
-                      mode: (v === "bank_transfer" ? "bank" : v) as any,
-                      paymentMethod: nextMethod,
-                      settlementLedgerId: nextLedger,
-                    });
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cash">Cash in Hand</SelectItem>
-                    <SelectItem value="bank_transfer">Bank Transfer (NEFT/RTGS/IMPS)</SelectItem>
-                    <SelectItem value="upi">UPI / QR</SelectItem>
-                    <SelectItem value="cheque">Bank Cheque</SelectItem>
-                    <SelectItem value="card">Debit / Credit Card</SelectItem>
-                    <SelectItem value="other">Other Settlement</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Settlement Ledger (Cash/Bank) *</Label>
-                <Select
-                  value={editingReceipt.settlementLedgerId || (editingReceipt.paymentMethod === "cash" ? cashLedgers[0]?.id : bankLedgers[0]?.id)}
-                  onValueChange={(v) =>
-                    setEditingReceipt({ ...editingReceipt, settlementLedgerId: v })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Real Cash/Bank Ledger" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {editingReceipt.paymentMethod === "cash" ? (
-                      cashLedgers.length > 0 ? (
-                        cashLedgers.map((l) => (
-                          <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-                        ))
-                      ) : (
-                        <SelectItem value={`led_${activeCompany?.id || "default"}_cash`}>Cash Account</SelectItem>
-                      )
-                    ) : (
-                      bankLedgers.length > 0 ? (
-                        bankLedgers.map((l) => (
-                          <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-                        ))
-                      ) : (
-                        <SelectItem value={`led_${activeCompany?.id || "default"}_bank`}>Bank Account</SelectItem>
-                      )
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-              {editingReceipt.paymentMethod === "cheque" && (
-                <>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Cheque Number</Label>
-                    <Input
-                      value={editingReceipt.chequeNumber || ""}
-                      onChange={(e) => setEditingReceipt({ ...editingReceipt, chequeNumber: e.target.value })}
-                      placeholder="e.g. 000123"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Cheque Date</Label>
-                    <Input
-                      type="date"
-                      value={editingReceipt.chequeDate || ""}
-                      onChange={(e) => setEditingReceipt({ ...editingReceipt, chequeDate: e.target.value })}
-                    />
-                  </div>
-                </>
-              )}
-              {editingReceipt.paymentMethod !== "cash" && editingReceipt.paymentMethod !== "cheque" && (
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label className="text-xs">Transaction / UTR Reference</Label>
+                {/* PRD § 7 & 8: Real-Time Invoice Balance & Overpayment Warning */}
+                {editingReceipt.allocationType === "AGAINST_REF" && editingReceipt.invoiceId && (() => {
+                  const selectedInv = custInvoices.find(i => i.id === editingReceipt.invoiceId);
+                  if (!selectedInv) return null;
+                  const invTotal = selectedInv.grandTotal;
+                  const alreadyReceived = selectedInv.amountPaid || 0;
+                  const outstanding = Math.max(0, selectedInv.balance ?? (invTotal - alreadyReceived));
+                  const typedAmount = Number(editingReceipt.amount) || 0;
+                  const allocated = Math.min(typedAmount, outstanding);
+                  const projectedRemaining = Math.max(0, outstanding - typedAmount);
+                  const excess = Math.max(0, typedAmount - outstanding);
+
+                  return (
+                    <div className="sm:col-span-2 space-y-2.5 rounded-xl border border-primary/20 bg-primary/5 p-3.5 text-xs">
+                      <div className="flex items-center justify-between font-semibold border-b pb-1.5">
+                        <span className="text-primary font-bold">Invoice Settlement: {selectedInv.number}</span>
+                        <span className="text-muted-foreground">{formatDate(selectedInv.date)}</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 py-1">
+                        <div>
+                          <div className="text-[11px] text-muted-foreground">Invoice Total</div>
+                          <div className="font-semibold text-foreground">{formatMoney(invTotal)}</div>
+                        </div>
+                        <div>
+                          <div className="text-[11px] text-muted-foreground">Already Received</div>
+                          <div className="font-semibold text-emerald-600">{formatMoney(alreadyReceived)}</div>
+                        </div>
+                        <div>
+                          <div className="text-[11px] text-muted-foreground">Current Outstanding</div>
+                          <div className="font-bold text-primary">{formatMoney(outstanding)}</div>
+                        </div>
+                      </div>
+
+                      {typedAmount > 0 && (
+                        <div className="pt-2 border-t space-y-2">
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <span className="text-muted-foreground">Allocated to Invoice: </span>
+                              <span className="font-semibold text-foreground">{formatMoney(allocated)}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Projected Balance: </span>
+                              <span className="font-semibold text-foreground">{formatMoney(projectedRemaining)}</span>
+                            </div>
+                          </div>
+
+                          {excess > 0 && (
+                            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-amber-900 dark:text-amber-200 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <div className="font-semibold flex items-center gap-1.5">
+                                  <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                                  Receipt Overpayment Detected:
+                                </div>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                                  +{formatMoney(excess)} Customer Credit
+                                </span>
+                              </div>
+                              <div className="text-[11px] leading-relaxed">
+                                <strong>{formatMoney(excess)}</strong> exceeds the selected invoice balance (outstanding: {formatMoney(outstanding)}).
+                                The excess will be kept as <strong>Customer Credit</strong> on account for future invoices.
+                              </div>
+                              <div className="mt-2 flex flex-wrap items-center justify-end gap-2 pt-1 border-t border-amber-500/20">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-[11px] bg-background text-foreground"
+                                  onClick={() => setEditingReceipt({ ...editingReceipt, amount: outstanding })}
+                                >
+                                  Cap to Invoice Balance ({formatMoney(outstanding)})
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Reference Number</Label>
                   <Input
                     value={editingReceipt.reference || ""}
                     onChange={(e) => setEditingReceipt({ ...editingReceipt, reference: e.target.value })}
-                    placeholder="e.g. UPI Ref / Bank UTR Number"
+                    placeholder="e.g. ADV-00012 or Cheque #"
                   />
                 </div>
-              )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Amount (₹) *</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={editingReceipt.amount || ""}
+                    onChange={(e) =>
+                      setEditingReceipt({ ...editingReceipt, amount: Number(e.target.value) || 0 })
+                    }
+                    placeholder="0.00"
+                  />
+                </div>
+
+                {/* ADVANCE GST ACCORDION */}
+                {editingReceipt.allocationType === "ADVANCE" && (
+                  <div className="space-y-3 sm:col-span-2 pt-2 border-t">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Advance Supply Classification *</Label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setEditingReceipt({ ...editingReceipt, supplyType: "GOODS" })}
+                          className={`p-2.5 text-left rounded-lg border transition-all text-xs ${
+                            (editingReceipt.supplyType || "GOODS") === "GOODS"
+                              ? "border-primary bg-primary/10 text-primary font-bold shadow-xs"
+                              : "border-border hover:bg-muted/50 text-muted-foreground"
+                          }`}
+                        >
+                          <div className="font-semibold">Goods Advance</div>
+                          <div className="text-[10px] opacity-80 mt-0.5">No GST on advance (Notif 66/2017)</div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingReceipt({ ...editingReceipt, supplyType: "SERVICES" })}
+                          className={`p-2.5 text-left rounded-lg border transition-all text-xs ${
+                            editingReceipt.supplyType === "SERVICES"
+                              ? "border-primary bg-primary/10 text-primary font-bold shadow-xs"
+                              : "border-border hover:bg-muted/50 text-muted-foreground"
+                          }`}
+                        >
+                          <div className="font-semibold">Services Advance</div>
+                          <div className="text-[10px] opacity-80 mt-0.5">GST recognized at receipt</div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingReceipt({ ...editingReceipt, supplyType: "MIXED" })}
+                          className={`p-2.5 text-left rounded-lg border transition-all text-xs ${
+                            editingReceipt.supplyType === "MIXED"
+                              ? "border-primary bg-primary/10 text-primary font-bold shadow-xs"
+                              : "border-border hover:bg-muted/50 text-muted-foreground"
+                          }`}
+                        >
+                          <div className="font-semibold">Mixed Supply</div>
+                          <div className="text-[10px] opacity-80 mt-0.5">Split Goods & Services</div>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* GOODS ADVANCE NOTICE */}
+                    {(editingReceipt.supplyType || "GOODS") === "GOODS" && (
+                      <div className="flex items-start gap-2.5 text-xs bg-emerald-500/10 border border-emerald-500/30 p-2.5 rounded-lg text-emerald-800 dark:text-emerald-300">
+                        <ShieldCheck className="h-4 w-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                        <div>
+                          <p className="font-semibold text-foreground">Goods Advance (No Advance Output GST)</p>
+                          <p className="text-[11px] opacity-90 mt-0.5">
+                            Cash/Bank Dr | Customer Advance Cr. Under GST Notification 66/2017-CT, advances on goods do not generate Output GST. Sales Revenue & GST will be recognized on the eventual Tax Invoice.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SERVICES ADVANCE FORM */}
+                    {editingReceipt.supplyType === "SERVICES" && (
+                      <div className="space-y-3 bg-card/80 p-3 rounded-lg border border-border/60">
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">GST Rate (%)</Label>
+                            <Select
+                              value={String(editingReceipt.taxProfileSnapshot?.gstRate ?? 18)}
+                              onValueChange={(v) =>
+                                setEditingReceipt({
+                                  ...editingReceipt,
+                                  taxProfileSnapshot: {
+                                    ...editingReceipt.taxProfileSnapshot,
+                                    gstRate: Number(v),
+                                    isTaxInclusive: editingReceipt.taxProfileSnapshot?.isTaxInclusive ?? true,
+                                  },
+                                })
+                              }
+                            >
+                              <SelectTrigger className="h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="18">18% (Standard Services)</SelectItem>
+                                <SelectItem value="12">12%</SelectItem>
+                                <SelectItem value="5">5%</SelectItem>
+                                <SelectItem value="28">28%</SelectItem>
+                                <SelectItem value="0">0% (Exempt)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Tax Mode</Label>
+                            <Select
+                              value={editingReceipt.taxProfileSnapshot?.isTaxInclusive !== false ? "inclusive" : "exclusive"}
+                              onValueChange={(v) =>
+                                setEditingReceipt({
+                                  ...editingReceipt,
+                                  taxProfileSnapshot: {
+                                    ...editingReceipt.taxProfileSnapshot,
+                                    isTaxInclusive: v === "inclusive",
+                                    gstRate: editingReceipt.taxProfileSnapshot?.gstRate ?? 18,
+                                  },
+                                })
+                              }
+                            >
+                              <SelectTrigger className="h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="inclusive">Tax Inclusive (Gross)</SelectItem>
+                                <SelectItem value="exclusive">Tax Exclusive (Base)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Place of Supply (State)</Label>
+                            <Input
+                              className="h-8 text-xs"
+                              placeholder="State Code (e.g. 27)"
+                              value={
+                                editingReceipt.placeOfSupplySnapshot ||
+                                customers.find((c) => c.id === editingReceipt.customerId)?.stateCode ||
+                                activeCompany?.stateCode ||
+                                ""
+                              }
+                              onChange={(e) =>
+                                setEditingReceipt({
+                                  ...editingReceipt,
+                                  placeOfSupplySnapshot: e.target.value,
+                                })
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        {/* Authoritative Calculation Preview */}
+                        {advanceTaxPreview && (
+                          <div className="grid grid-cols-3 gap-2 p-2.5 rounded bg-muted/40 text-xs font-mono border border-border/40">
+                            <div>
+                              <span className="text-[10px] text-muted-foreground block">Taxable Advance</span>
+                              <span className="font-bold text-foreground">
+                                {formatMoney(advanceTaxPreview.taxableAdvance)}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-muted-foreground block">
+                                {advanceTaxPreview.igstPaise > 0 ? "IGST (Inter-State)" : "CGST + SGST (Intra)"}
+                              </span>
+                              <span className="font-bold text-amber-600 dark:text-amber-400">
+                                {formatMoney(advanceTaxPreview.totalTaxPaise / 100)}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-muted-foreground block">Total Advance</span>
+                              <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                                {formatMoney(advanceTaxPreview.advanceAmountPaise / 100)}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* MIXED GOODS + SERVICES (PRD Addendum § 8) */}
+                    {editingReceipt.supplyType === "MIXED" && (
+                      <div className="space-y-3 bg-card/80 p-3 rounded-lg border border-border/60">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Goods Advance (₹ - No Tax)</Label>
+                            <Input
+                              type="number"
+                              className="h-8 text-xs font-mono"
+                              placeholder="0.00"
+                              value={(editingReceipt.mixedBreakdown?.goodsAmountPaise || 0) / 100 || ""}
+                              onChange={(e) => {
+                                const goodsRs = Number(e.target.value) || 0;
+                                const totalRs = editingReceipt.amount || 0;
+                                const servRs = Math.max(0, totalRs - goodsRs);
+                                setEditingReceipt({
+                                  ...editingReceipt,
+                                  mixedBreakdown: {
+                                    goodsAmountPaise: Math.round(goodsRs * 100),
+                                    serviceAmountPaise: Math.round(servRs * 100),
+                                    serviceTaxablePaise: 0,
+                                    serviceTaxPaise: 0,
+                                  },
+                                });
+                              }}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px]">Service Advance (₹ - Taxable)</Label>
+                            <Input
+                              type="number"
+                              className="h-8 text-xs font-mono"
+                              placeholder="0.00"
+                              value={(editingReceipt.mixedBreakdown?.serviceAmountPaise || 0) / 100 || ""}
+                              onChange={(e) => {
+                                const servRs = Number(e.target.value) || 0;
+                                const goodsRs = Math.max(0, (editingReceipt.amount || 0) - servRs);
+                                setEditingReceipt({
+                                  ...editingReceipt,
+                                  mixedBreakdown: {
+                                    goodsAmountPaise: Math.round(goodsRs * 100),
+                                    serviceAmountPaise: Math.round(servRs * 100),
+                                    serviceTaxablePaise: 0,
+                                    serviceTaxPaise: 0,
+                                  },
+                                });
+                              }}
+                            />
+                          </div>
+                        </div>
+                        {advanceTaxPreview && (
+                          <div className="text-[11px] font-mono p-2 rounded bg-muted/40 flex justify-between">
+                            <span>Goods (No GST): {formatMoney((editingReceipt.mixedBreakdown?.goodsAmountPaise || 0) / 100)}</span>
+                            <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                              Service GST: {formatMoney(advanceTaxPreview.totalTaxPaise / 100)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* NOT DECIDED YET (PRD Addendum § 7) */}
+                    {editingReceipt.supplyType === "UNSPECIFIED" && (
+                      <div className="flex items-start gap-2.5 text-xs bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-lg text-amber-800 dark:text-amber-300">
+                        <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                        <div>
+                          <p className="font-semibold">Tax treatment will need review when this advance is allocated.</p>
+                          <p className="text-[11px] opacity-90 mt-0.5">
+                            Advance is recorded with taxTreatment = PENDING_CLASSIFICATION. No tax rate is assumed or guessed until the final supply is identified.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Payment Method</Label>
+                  <Select
+                    value={editingReceipt.paymentMethod || editingReceipt.mode || "cash"}
+                    onValueChange={(v: any) => {
+                      const nextMethod = v;
+                      const nextLedger = nextMethod === "cash"
+                        ? (cashLedgers[0]?.id || `led_${activeCompany?.id || "default"}_cash`)
+                        : (bankLedgers[0]?.id || cashLedgers[0]?.id || `led_${activeCompany?.id || "default"}_bank`);
+                      setEditingReceipt({
+                        ...editingReceipt,
+                        mode: (v === "bank_transfer" ? "bank" : v) as any,
+                        paymentMethod: nextMethod,
+                        settlementLedgerId: nextLedger,
+                      });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cash">Cash in Hand</SelectItem>
+                      <SelectItem value="bank_transfer">Bank Transfer (NEFT/RTGS/IMPS)</SelectItem>
+                      <SelectItem value="upi">UPI / QR</SelectItem>
+                      <SelectItem value="cheque">Bank Cheque</SelectItem>
+                      <SelectItem value="card">Debit / Credit Card</SelectItem>
+                      <SelectItem value="other">Other Settlement</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Settlement Ledger (Cash/Bank) *</Label>
+                  <Select
+                    value={editingReceipt.settlementLedgerId || (editingReceipt.paymentMethod === "cash" ? cashLedgers[0]?.id : bankLedgers[0]?.id) || ""}
+                    onValueChange={(v) =>
+                      setEditingReceipt({ ...editingReceipt, settlementLedgerId: v })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Real Cash/Bank Ledger" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {editingReceipt.paymentMethod === "cash" ? (
+                        cashLedgers.length > 0 ? (
+                          cashLedgers.map((l) => (
+                            <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value={`led_${activeCompany?.id || "default"}_cash`}>Cash Account</SelectItem>
+                        )
+                      ) : (
+                        bankLedgers.length > 0 ? (
+                          bankLedgers.map((l) => (
+                            <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value={`led_${activeCompany?.id || "default"}_bank`}>Bank Account</SelectItem>
+                        )
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {editingReceipt.paymentMethod === "cheque" && (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Cheque Number</Label>
+                      <Input
+                        value={editingReceipt.chequeNumber || ""}
+                        onChange={(e) => setEditingReceipt({ ...editingReceipt, chequeNumber: e.target.value })}
+                        placeholder="e.g. 000123"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Cheque Date</Label>
+                      <Input
+                        type="date"
+                        value={editingReceipt.chequeDate || ""}
+                        onChange={(e) => setEditingReceipt({ ...editingReceipt, chequeDate: e.target.value })}
+                      />
+                    </div>
+                  </>
+                )}
+                {editingReceipt.paymentMethod !== "cash" && editingReceipt.paymentMethod !== "cheque" && (
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label className="text-xs">Transaction / UTR Reference</Label>
+                    <Input
+                      value={editingReceipt.reference || ""}
+                      onChange={(e) => setEditingReceipt({ ...editingReceipt, reference: e.target.value })}
+                      placeholder="e.g. UPI Ref / Bank UTR Number"
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="p-4 border-t shrink-0 bg-background/95 backdrop-blur flex justify-end gap-2">
             <Button variant="outline" onClick={() => setOpenReceipt(false)}>
               Cancel
             </Button>
@@ -1187,166 +1320,168 @@ export function ReceiptsAndPaymentsPage() {
           if (!o) setEditingPayment(null);
         }}
       >
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
+        <DialogContent className="max-w-xl max-h-[90dvh] flex flex-col p-0 overflow-hidden sm:rounded-2xl">
+          <DialogHeader className="p-6 pb-3 border-b shrink-0 bg-background/95 backdrop-blur">
             <DialogTitle>Record Supplier Payment</DialogTitle>
           </DialogHeader>
           {editingPayment && (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Payment Ref</Label>
-                <Input value={editingPayment.number} readOnly className="font-mono bg-muted/40" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Payment Date</Label>
-                <Input
-                  type="date"
-                  value={toDateInput(editingPayment.date)}
-                  onChange={(e) =>
-                    setEditingPayment({ ...editingPayment, date: fromDateInput(e.target.value) })
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Supplier / Vendor *</Label>
-                <Select
-                  value={editingPayment.supplierId}
-                  onValueChange={(v) => setEditingPayment({ ...editingPayment, supplierId: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select vendor…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {suppliers.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Amount (₹) *</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={editingPayment.amount || ""}
-                  onChange={(e) =>
-                    setEditingPayment({ ...editingPayment, amount: Number(e.target.value) || 0 })
-                  }
-                  placeholder="0.00"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Payment Method</Label>
-                <Select
-                  value={editingPayment.paymentMethod || editingPayment.mode || "bank"}
-                  onValueChange={(v: any) => {
-                    const nextMethod = v;
-                    const nextLedger = nextMethod === "cash"
-                      ? (cashLedgers[0]?.id || `led_${activeCompany?.id || "default"}_cash`)
-                      : (bankLedgers[0]?.id || cashLedgers[0]?.id || `led_${activeCompany?.id || "default"}_bank`);
-                    setEditingPayment({
-                      ...editingPayment,
-                      mode: (v === "bank_transfer" ? "bank" : v) as any,
-                      paymentMethod: nextMethod,
-                      settlementLedgerId: nextLedger,
-                    });
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="bank_transfer">Bank Transfer (NEFT/RTGS/IMPS)</SelectItem>
-                    <SelectItem value="cash">Cash in Hand</SelectItem>
-                    <SelectItem value="upi">UPI / QR</SelectItem>
-                    <SelectItem value="cheque">Bank Cheque</SelectItem>
-                    <SelectItem value="card">Company Card</SelectItem>
-                    <SelectItem value="other">Other Payment</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label className="text-xs">Apply Against Purchase</Label>
-                <Select
-                  value={editingPayment.purchaseId || "none"}
-                  onValueChange={(v) => setEditingPayment((current) => current ? { ...current, purchaseId: v === "none" ? undefined : v } : current)}
-                >
-                  <SelectTrigger><SelectValue placeholder="On account / select purchase" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">On account</SelectItem>
-                    {purchases.filter((p) => p.supplierId === editingPayment.supplierId && p.balance > 0).map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.number} · Balance {formatMoney(p.balance)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Settlement Ledger (Cash/Bank) *</Label>
-                <Select
-                  value={editingPayment.settlementLedgerId || (editingPayment.paymentMethod === "cash" ? cashLedgers[0]?.id : bankLedgers[0]?.id)}
-                  onValueChange={(v) =>
-                    setEditingPayment({ ...editingPayment, settlementLedgerId: v })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Real Cash/Bank Ledger" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {editingPayment.paymentMethod === "cash" ? (
-                      cashLedgers.length > 0 ? (
-                        cashLedgers.map((l) => (
-                          <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-                        ))
-                      ) : (
-                        <SelectItem value={`led_${activeCompany?.id || "default"}_cash`}>Cash Account</SelectItem>
-                      )
-                    ) : (
-                      bankLedgers.length > 0 ? (
-                        bankLedgers.map((l) => (
-                          <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-                        ))
-                      ) : (
-                        <SelectItem value={`led_${activeCompany?.id || "default"}_bank`}>Bank Account</SelectItem>
-                      )
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-              {editingPayment.paymentMethod === "cheque" && (
-                <>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Cheque Number</Label>
-                    <Input
-                      value={editingPayment.chequeNumber || ""}
-                      onChange={(e) => setEditingPayment({ ...editingPayment, chequeNumber: e.target.value })}
-                      placeholder="e.g. 000123"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Cheque Date</Label>
-                    <Input
-                      type="date"
-                      value={editingPayment.chequeDate || ""}
-                      onChange={(e) => setEditingPayment({ ...editingPayment, chequeDate: e.target.value })}
-                    />
-                  </div>
-                </>
-              )}
-              {editingPayment.paymentMethod !== "cash" && editingPayment.paymentMethod !== "cheque" && (
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label className="text-xs">Transaction / UTR Reference</Label>
+            <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-4 space-y-4 scrollbar-thin">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Payment Ref</Label>
+                  <Input value={editingPayment.number} readOnly className="font-mono bg-muted/40" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Payment Date</Label>
                   <Input
-                    value={editingPayment.reference || ""}
-                    onChange={(e) => setEditingPayment({ ...editingPayment, reference: e.target.value })}
-                    placeholder="e.g. UPI Ref / Bank UTR Number"
+                    type="date"
+                    value={toDateInput(editingPayment.date)}
+                    onChange={(e) =>
+                      setEditingPayment({ ...editingPayment, date: fromDateInput(e.target.value) })
+                    }
                   />
                 </div>
-              )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Supplier / Vendor *</Label>
+                  <Select
+                    value={editingPayment.supplierId || ""}
+                    onValueChange={(v) => setEditingPayment({ ...editingPayment, supplierId: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select vendor…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {suppliers.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Amount (₹) *</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={editingPayment.amount || ""}
+                    onChange={(e) =>
+                      setEditingPayment({ ...editingPayment, amount: Number(e.target.value) || 0 })
+                    }
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Payment Method</Label>
+                  <Select
+                    value={editingPayment.paymentMethod || editingPayment.mode || "bank"}
+                    onValueChange={(v: any) => {
+                      const nextMethod = v;
+                      const nextLedger = nextMethod === "cash"
+                        ? (cashLedgers[0]?.id || `led_${activeCompany?.id || "default"}_cash`)
+                        : (bankLedgers[0]?.id || cashLedgers[0]?.id || `led_${activeCompany?.id || "default"}_bank`);
+                      setEditingPayment({
+                        ...editingPayment,
+                        mode: (v === "bank_transfer" ? "bank" : v) as any,
+                        paymentMethod: nextMethod,
+                        settlementLedgerId: nextLedger,
+                      });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="bank_transfer">Bank Transfer (NEFT/RTGS/IMPS)</SelectItem>
+                      <SelectItem value="cash">Cash in Hand</SelectItem>
+                      <SelectItem value="upi">UPI / QR</SelectItem>
+                      <SelectItem value="cheque">Bank Cheque</SelectItem>
+                      <SelectItem value="card">Company Card</SelectItem>
+                      <SelectItem value="other">Other Payment</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs">Apply Against Purchase</Label>
+                  <Select
+                    value={editingPayment.purchaseId || "none"}
+                    onValueChange={(v) => setEditingPayment((current) => current ? { ...current, purchaseId: v === "none" ? undefined : v } : current)}
+                  >
+                    <SelectTrigger><SelectValue placeholder="On account / select purchase" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">On account</SelectItem>
+                      {purchases.filter((p) => p.supplierId === editingPayment.supplierId && p.balance > 0).map((p) => (
+                        <SelectItem key={p.id} value={p.id}>{p.number} · Balance {formatMoney(p.balance)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Settlement Ledger (Cash/Bank) *</Label>
+                  <Select
+                    value={editingPayment.settlementLedgerId || (editingPayment.paymentMethod === "cash" ? cashLedgers[0]?.id : bankLedgers[0]?.id) || ""}
+                    onValueChange={(v) =>
+                      setEditingPayment({ ...editingPayment, settlementLedgerId: v })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Real Cash/Bank Ledger" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {editingPayment.paymentMethod === "cash" ? (
+                        cashLedgers.length > 0 ? (
+                          cashLedgers.map((l) => (
+                            <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value={`led_${activeCompany?.id || "default"}_cash`}>Cash Account</SelectItem>
+                        )
+                      ) : (
+                        bankLedgers.length > 0 ? (
+                          bankLedgers.map((l) => (
+                            <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value={`led_${activeCompany?.id || "default"}_bank`}>Bank Account</SelectItem>
+                        )
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {editingPayment.paymentMethod === "cheque" && (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Cheque Number</Label>
+                      <Input
+                        value={editingPayment.chequeNumber || ""}
+                        onChange={(e) => setEditingPayment({ ...editingPayment, chequeNumber: e.target.value })}
+                        placeholder="e.g. 000123"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Cheque Date</Label>
+                      <Input
+                        type="date"
+                        value={editingPayment.chequeDate || ""}
+                        onChange={(e) => setEditingPayment({ ...editingPayment, chequeDate: e.target.value })}
+                      />
+                    </div>
+                  </>
+                )}
+                {editingPayment.paymentMethod !== "cash" && editingPayment.paymentMethod !== "cheque" && (
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label className="text-xs">Transaction / UTR Reference</Label>
+                    <Input
+                      value={editingPayment.reference || ""}
+                      onChange={(e) => setEditingPayment({ ...editingPayment, reference: e.target.value })}
+                      placeholder="e.g. UPI Ref / Bank UTR Number"
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="p-4 border-t shrink-0 bg-background/95 backdrop-blur flex justify-end gap-2">
             <Button variant="outline" onClick={() => setOpenPayment(false)}>
               Cancel
             </Button>
@@ -1390,15 +1525,15 @@ export function ReceiptsAndPaymentsPage() {
           if (!o) setRefundReceipt(null);
         }}
       >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
+        <DialogContent className="max-w-md max-h-[90dvh] flex flex-col p-0 overflow-hidden sm:rounded-2xl">
+          <DialogHeader className="p-6 pb-3 border-b shrink-0 bg-background/95 backdrop-blur">
             <DialogTitle className="flex items-center gap-2">
               <RotateCcw className="h-5 w-5 text-amber-600 dark:text-amber-400" />
               Process Advance Refund
             </DialogTitle>
           </DialogHeader>
           {refundReceipt && (
-            <div className="space-y-3.5 py-2 text-xs">
+            <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-4 space-y-3.5 text-xs scrollbar-thin">
               <div className="rounded-lg border bg-muted/30 p-3 space-y-1 font-mono">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Receipt Voucher:</span>
@@ -1458,7 +1593,7 @@ export function ReceiptsAndPaymentsPage() {
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Refund From Account (Cash / Bank) *</Label>
                 <Select
-                  value={refundLedgerId}
+                  value={refundLedgerId || ""}
                   onValueChange={(v) => setRefundLedgerId(v)}
                 >
                   <SelectTrigger>
@@ -1480,7 +1615,7 @@ export function ReceiptsAndPaymentsPage() {
               </div>
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="p-4 border-t shrink-0 bg-background/95 backdrop-blur flex justify-end gap-2">
             <Button variant="outline" onClick={() => setRefundReceipt(null)}>
               Cancel
             </Button>

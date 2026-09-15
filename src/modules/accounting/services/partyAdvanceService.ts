@@ -57,6 +57,161 @@ export interface PartyDualFinancialPosition {
   };
 }
 
+export interface CustomerCreditAllocation {
+  invoiceId: string;
+  invoiceNumber: string;
+  amountPaise: number;
+  amountRupees: number;
+}
+
+export interface CustomerCreditBreakdown {
+  receiptId: string;
+  receiptNumber: string;
+  receiptDate: number;
+  totalReceivedPaise: number;
+  totalReceivedRupees: number;
+  allocatedAgainstInvoicesPaise: number;
+  allocatedAgainstInvoicesRupees: number;
+  remainingCreditPaise: number;
+  remainingCreditRupees: number;
+  allocations: CustomerCreditAllocation[];
+}
+
+export interface CanonicalCustomerCreditResult {
+  partyId: string;
+  availableCreditPaise: number;
+  availableCreditRupees: number;
+  totalReceivedPaise: number;
+  totalAllocatedPaise: number;
+  receiptsBreakdown: CustomerCreditBreakdown[];
+}
+
+/**
+ * Pure authoritative calculation of customer credit from receipts.
+ * AUTHORITATIVE FORMULA:
+ * AVAILABLE CUSTOMER CREDIT = valid posted unapplied customer allocations - credit already applied - reversals/refunds.
+ * Only real authoritative allocations count.
+ */
+export function calculateCustomerCreditFromReceipts(
+  partyId: string,
+  receipts: Receipt[]
+): CanonicalCustomerCreditResult {
+  const partyReceipts = (receipts || []).filter((r) => (r.customerId === partyId || (r as any).partyId === partyId));
+  
+  // Exclude failed, reversed, refunded, draft, cancelled
+  const validReceipts = partyReceipts.filter((r) => {
+    if (r.postingStatus === "failed" || r.postingStatus === "reversed" || r.postingStatus === "refunded") return false;
+    if (r.postingStatus === "draft" || (r as any).status === "draft" || (r as any).status === "cancelled") return false;
+    return true;
+  });
+
+  let totalReceivedPaise = 0;
+  let totalAllocatedPaise = 0;
+  const receiptsBreakdown: CustomerCreditBreakdown[] = [];
+
+  for (const r of validReceipts) {
+    const netReceivedPaise = Math.max(0, toPaise(r.amount) - (r.refundAmountPaise || 0));
+    totalReceivedPaise += netReceivedPaise;
+
+    let allocatedPaise = 0;
+    let remainingCreditPaise = 0;
+    let allocations: CustomerCreditAllocation[] = [];
+
+    if (r.allocatedInvoices && r.allocatedInvoices.length > 0) {
+      allocatedPaise = r.allocatedInvoices.reduce((s, a) => s + (a.amountPaise || 0), 0);
+      remainingCreditPaise = Math.max(0, netReceivedPaise - allocatedPaise);
+      allocations = r.allocatedInvoices.map((a) => ({
+        invoiceId: a.invoiceId,
+        invoiceNumber: a.invoiceNumber || "",
+        amountPaise: a.amountPaise,
+        amountRupees: toRupees(a.amountPaise),
+      }));
+    } else if (r.invoiceId && r.invoiceId !== "none") {
+      // Against Invoice: if explicit unapplied overpayment credit was recorded
+      const explicitExcess = r.customerCreditPaise ?? r.advanceAvailablePaise ?? r.unappliedCreditPaise;
+      if (typeof explicitExcess === "number" && explicitExcess > 0) {
+        remainingCreditPaise = Math.min(netReceivedPaise, explicitExcess);
+        allocatedPaise = Math.max(0, netReceivedPaise - remainingCreditPaise);
+      } else {
+        // Receipt was 100% against this invoice (e.g. historical REC/...0003)
+        allocatedPaise = netReceivedPaise;
+        remainingCreditPaise = 0;
+      }
+      allocations = [
+        {
+          invoiceId: r.invoiceId,
+          invoiceNumber: "",
+          amountPaise: allocatedPaise,
+          amountRupees: toRupees(allocatedPaise),
+        },
+      ];
+    } else {
+      // Advance or On Account with no explicit allocatedInvoices
+      const explicitExcess = r.advanceAvailablePaise ?? r.customerCreditPaise ?? r.unappliedCreditPaise;
+      if (typeof explicitExcess === "number") {
+        remainingCreditPaise = Math.min(netReceivedPaise, explicitExcess);
+        allocatedPaise = Math.max(0, netReceivedPaise - remainingCreditPaise);
+      } else {
+        remainingCreditPaise = netReceivedPaise;
+        allocatedPaise = 0;
+      }
+      allocations = [];
+    }
+
+    totalAllocatedPaise += allocatedPaise;
+    receiptsBreakdown.push({
+      receiptId: r.id,
+      receiptNumber: r.number,
+      receiptDate: r.date,
+      totalReceivedPaise: netReceivedPaise,
+      totalReceivedRupees: toRupees(netReceivedPaise),
+      allocatedAgainstInvoicesPaise: allocatedPaise,
+      allocatedAgainstInvoicesRupees: toRupees(allocatedPaise),
+      remainingCreditPaise,
+      remainingCreditRupees: toRupees(remainingCreditPaise),
+      allocations,
+    });
+  }
+
+  const availableCreditPaise = receiptsBreakdown.reduce((sum, b) => sum + b.remainingCreditPaise, 0);
+
+  return {
+    partyId,
+    availableCreditPaise,
+    availableCreditRupees: toRupees(availableCreditPaise),
+    totalReceivedPaise,
+    totalAllocatedPaise,
+    receiptsBreakdown,
+  };
+}
+
+/**
+ * Derives canonical real-time customer credit position for a party.
+ * Authoritative single source of truth across all screens (Party Master, Customer Insight, Invoice, Receipts, Reports).
+ */
+export async function getCanonicalCustomerCredit(
+  partyId: string,
+  receiptsOverride?: Receipt[]
+): Promise<CanonicalCustomerCreditResult> {
+  if (typeof window === "undefined" && !receiptsOverride) {
+    return {
+      partyId,
+      availableCreditPaise: 0,
+      availableCreditRupees: 0,
+      totalReceivedPaise: 0,
+      totalAllocatedPaise: 0,
+      receiptsBreakdown: [],
+    };
+  }
+
+  let receipts = receiptsOverride;
+  if (!receipts && typeof window !== "undefined") {
+    receipts = await db().receipts.where("customerId").equals(partyId).toArray();
+  }
+
+  return calculateCustomerCreditFromReceipts(partyId, receipts || []);
+}
+
 /**
  * Derives real-time financial position, unapplied advances, and credit exposure for a party.
  * Purely derived from posted receipts, invoices, and allocations (PRD §§ 15, 63, 65, 66).
@@ -92,22 +247,8 @@ export async function getPartyFinancialInsight(
   const creditLimitPaise = Math.round((party?.creditLimit || 0) * 100);
   const creditDays = party?.creditDays ?? 30;
 
-  // 2. Fetch receipts for this customer
-  const receipts: Receipt[] = await db().receipts
-    .where("customerId")
-    .equals(partyId)
-    .toArray();
-
-  let totalAdvanceReceivedPaise = 0;
-  for (const r of receipts) {
-    if (r.postingStatus !== "failed" && r.postingStatus !== "reversed") {
-      const isAdvance = r.allocationType === "ADVANCE" || !r.invoiceId;
-      if (isAdvance) {
-        const netPaise = Math.max(0, toPaise(r.amount) - (r.refundAmountPaise || 0));
-        totalAdvanceReceivedPaise += netPaise;
-      }
-    }
-  }
+  // 2. Fetch canonical customer credit
+  const canonicalCredit = await getCanonicalCustomerCredit(partyId);
 
   // 3. Fetch invoices for this customer
   const invoices: Invoice[] = await db().invoices
@@ -117,11 +258,10 @@ export async function getPartyFinancialInsight(
 
   let totalInvoicedPaise = 0;
   let totalPaidPaise = 0;
-  let totalAdvanceAllocatedPaise = 0;
   let outstandingReceivablePaise = 0;
 
   for (const inv of invoices) {
-    if (inv.status !== "cancelled") {
+    if (inv.status !== "cancelled" && inv.postingStatus !== "reversed") {
       const invTotalPaise = toPaise(inv.grandTotal);
       const paidPaise = toPaise(inv.amountPaid);
       totalInvoicedPaise += invTotalPaise;
@@ -130,26 +270,20 @@ export async function getPartyFinancialInsight(
       // Unpaid balance
       const balancePaise = Math.max(0, invTotalPaise - paidPaise);
       outstandingReceivablePaise += balancePaise;
-
-      // Track advance applied
-      if (inv.advanceAllocatedPaise) {
-        totalAdvanceAllocatedPaise += inv.advanceAllocatedPaise;
-      }
     }
   }
 
-  // Available Advance: total advance receipts minus allocations
-  const availableAdvancePaise = Math.max(0, totalAdvanceReceivedPaise - totalAdvanceAllocatedPaise);
+  const availableAdvancePaise = canonicalCredit.availableCreditPaise;
 
   return {
     partyId,
     paymentPolicy,
     creditLimitPaise,
     creditDays,
-    totalAdvanceReceivedPaise,
-    totalAdvanceAllocatedPaise,
+    totalAdvanceReceivedPaise: canonicalCredit.totalReceivedPaise,
+    totalAdvanceAllocatedPaise: canonicalCredit.totalAllocatedPaise,
     availableAdvancePaise,
-    availableAdvanceRupees: toRupees(availableAdvancePaise),
+    availableAdvanceRupees: canonicalCredit.availableCreditRupees,
     totalInvoicedPaise,
     totalPaidPaise,
     outstandingReceivablePaise,
@@ -233,17 +367,13 @@ export async function getPartyDualFinancialPosition(
   const unpaidInvoicesCount = postedInvoices.filter((i) => i.balance > 0.01).length;
 
   const validReceipts = (receipts || []).filter(
-    (r) => r.postingStatus !== "failed" && r.postingStatus !== "reversed"
+    (r) => r.postingStatus !== "failed" && r.postingStatus !== "reversed" && r.postingStatus !== "refunded"
   );
   const totalReceiptsPaise = validReceipts.reduce((s, r) => s + toPaise(r.amount), 0);
 
-  const advanceReceipts = validReceipts.filter((r) => r.allocationType === "ADVANCE" || !r.invoiceId);
-  const totalAdvanceReceivedPaise = advanceReceipts.reduce(
-    (s, r) => s + Math.max(0, toPaise(r.amount) - (r.refundAmountPaise || 0)),
-    0
-  );
-  const totalAdvanceAllocatedPaise = postedInvoices.reduce((s, i) => s + (i.advanceAllocatedPaise || 0), 0);
-  const advanceReceivedPaise = Math.max(0, totalAdvanceReceivedPaise - totalAdvanceAllocatedPaise);
+  // Canonical customer credit position
+  const canonicalCredit = calculateCustomerCreditFromReceipts(partyId, receipts || []);
+  const advanceReceivedRupees = canonicalCredit.availableCreditRupees;
 
   // --- PURCHASE SIDE (Accounts Payable) ---
   const postedPurchases = (purchases || []).filter(
@@ -269,7 +399,7 @@ export async function getPartyDualFinancialPosition(
       totalInvoicedRupees: toRupees(totalInvoicedPaise),
       receiptsRupees: toRupees(totalReceiptsPaise),
       receivableOutstandingRupees: toRupees(receivableOutstandingPaise),
-      advanceReceivedRupees: toRupees(advanceReceivedPaise),
+      advanceReceivedRupees,
       unpaidInvoicesCount,
     },
     purchaseSide: {
@@ -308,19 +438,17 @@ export async function allocateAdvanceAgainstInvoice(params: {
   if (typeof window !== "undefined") {
     // 1. Fetch available advance receipts for this customer (FIFO by date)
     const receipts = await db().receipts.where("customerId").equals(customerId).toArray();
+    const creditResult = calculateCustomerCreditFromReceipts(customerId, receipts);
+    const creditByReceiptId = new Map(creditResult.receiptsBreakdown.map((b) => [b.receiptId, b.remainingCreditPaise]));
+    
     const candidateReceipts = receipts
-      .filter((r) => {
-        const isAdv = r.allocationType === "ADVANCE" || !r.invoiceId;
-        const isNotFailed = r.postingStatus !== "failed" && r.postingStatus !== "reversed" && r.postingStatus !== "refunded";
-        return isAdv && isNotFailed;
-      })
+      .filter((r) => (creditByReceiptId.get(r.id) || 0) > 0)
       .sort((a, b) => a.date - b.date);
 
     for (const r of candidateReceipts) {
       if (neededPaise <= 0) break;
 
-      const fullRecPaise = toPaise(r.amount) - (r.refundAmountPaise || 0);
-      const availableInRec = r.advanceAvailablePaise !== undefined ? r.advanceAvailablePaise : fullRecPaise;
+      const availableInRec = creditByReceiptId.get(r.id) || 0;
       if (availableInRec <= 0) continue;
 
       const toAllocFromThisRec = Math.min(neededPaise, availableInRec);
@@ -344,6 +472,8 @@ export async function allocateAdvanceAgainstInvoice(params: {
 
       // Update receipt remaining available advance and allocated invoice link
       r.advanceAvailablePaise = Math.max(0, availableInRec - toAllocFromThisRec);
+      r.customerCreditPaise = r.advanceAvailablePaise;
+      r.unappliedCreditPaise = r.advanceAvailablePaise;
       r.allocatedInvoices = [
         ...(r.allocatedInvoices || []),
         {
@@ -376,6 +506,7 @@ export async function allocateAdvanceAgainstInvoice(params: {
     amountPaid: newAmountPaid,
     balance: newBalance,
     advanceAllocatedPaise: (invoice.advanceAllocatedPaise || 0) + totalAllocatedPaise,
+    customerCreditAppliedPaise: (invoice.customerCreditAppliedPaise || 0) + totalAllocatedPaise,
     advanceAllocations: [...(invoice.advanceAllocations || []), ...newAllocations],
     advanceTaxPreviouslyAccounted: (invoice.advanceTaxPreviouslyAccounted || 0) + advanceTaxAdjustedRupees,
     advanceGstAdjustedPaise: (invoice.advanceGstAdjustedPaise || 0) + totalTaxAdjustedPaise,

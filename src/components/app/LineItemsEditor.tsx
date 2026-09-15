@@ -158,7 +158,7 @@ export function LineItemsEditor({
   // Product Search Filter (Case-insensitive & Alias resilient)
   function getFilteredProducts(q: string) {
     const norm = normalizeSearchToken(q);
-    if (!norm) return products.slice(0, 15);
+    if (!norm) return products.slice(0, 20);
     return products.filter((p) => {
       if (normalizeName(p.name).includes(norm)) return true;
       if (p.sku && p.sku.toLowerCase().includes(norm)) return true;
@@ -169,7 +169,7 @@ export function LineItemsEditor({
         }
       }
       return false;
-    });
+    }).slice(0, 25);
   }
 
   return (
@@ -359,7 +359,7 @@ export function LineItemsEditor({
                           />
                         </div>
 
-                        <div className="max-h-52 overflow-y-auto space-y-1 scrollbar-hidden">
+                        <div className="max-h-[160px] overflow-y-auto space-y-1 scrollbar-thin">
                           {searchQuery && getFilteredProducts(searchQuery).length === 0 && (
                             <div className="p-2 text-center text-muted-foreground">
                               No catalog match.

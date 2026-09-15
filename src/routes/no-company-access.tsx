@@ -13,7 +13,7 @@ export const Route = createFileRoute("/no-company-access")({
   component: NoCompanyAccessPage,
 });
 
-export function NoCompanyAccessPage() {
+function NoCompanyAccessPage() {
   const { user, isPlatformAdmin, signOutAndSwitchAccount, initializing, authInitializing, claimsLoading, resolutionState } = useAuth();
   const { companies, loading: companiesLoading } = useActiveCompany();
   const nav = useNavigate();

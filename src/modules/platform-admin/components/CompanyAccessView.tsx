@@ -41,6 +41,7 @@ import {
   Building2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import {
   listCompaniesPlatformAdminFn,
   listCompanyMembershipsFn,
@@ -90,6 +91,22 @@ export function CompanyAccessView({ idToken }: CompanyAccessViewProps) {
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferTarget, setTransferTarget] = useState("");
   const [transferSubmitting, setTransferSubmitting] = useState(false);
+
+  const [confirmAction, setConfirmAction] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+    confirmText: string;
+    destructive?: boolean;
+    onConfirm: () => Promise<void>;
+  }>({
+    open: false,
+    title: "",
+    description: "",
+    confirmText: "Confirm",
+    destructive: false,
+    onConfirm: async () => {},
+  });
 
   const getAuthToken = useCallback(
     async (force = false) => {
@@ -262,49 +279,61 @@ export function CompanyAccessView({ idToken }: CompanyAccessViewProps) {
     }
   };
 
-  const handleSuspend = async (targetUid: string) => {
-    if (!confirm("Are you sure you want to suspend this user's access?")) return;
-    try {
-      const token = await getAuthToken(true);
-      if (!token) return;
-      const res = await suspendCompanyAccessFn({
-        data: { idToken: token, companyId: selectedCompanyId, targetUid },
-      });
-      if (res.success) {
-        toast.success("Access suspended.");
-        loadMemberships(true);
-      } else {
-        toast.error(res.error || "Failed to suspend access.");
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error";
-      toast.error(msg);
-    }
+  const handleSuspend = (targetUid: string) => {
+    setConfirmAction({
+      open: true,
+      title: "Suspend User Access?",
+      description: "Are you sure you want to suspend this user's access? They will temporarily be unable to perform operations in this company.",
+      confirmText: "Suspend Access",
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          const token = await getAuthToken(true);
+          if (!token) return;
+          const res = await suspendCompanyAccessFn({
+            data: { idToken: token, companyId: selectedCompanyId, targetUid },
+          });
+          if (res.success) {
+            toast.success("Access suspended.");
+            loadMemberships(true);
+          } else {
+            toast.error(res.error || "Failed to suspend access.");
+          }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : "Error";
+          toast.error(msg);
+        }
+      },
+    });
   };
 
-  const handleRevoke = async (targetUid: string) => {
-    if (
-      !confirm(
-        "Are you sure you want to REVOKE this user's access? The user will immediately lose access to this company's operational workspace."
-      )
-    )
-      return;
-    try {
-      const token = await getAuthToken(true);
-      if (!token) return;
-      const res = await revokeCompanyAccessFn({
-        data: { idToken: token, companyId: selectedCompanyId, targetUid },
-      });
-      if (res.success) {
-        toast.success("Access revoked.");
-        loadMemberships(true);
-      } else {
-        toast.error(res.error || "Failed to revoke access.");
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error";
-      toast.error(msg);
-    }
+  const handleRevoke = (targetUid: string) => {
+    setConfirmAction({
+      open: true,
+      title: "Revoke User Access?",
+      description:
+        "Are you sure you want to REVOKE this user's access? The user will immediately lose access to this company's operational workspace.",
+      confirmText: "Revoke Access",
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          const token = await getAuthToken(true);
+          if (!token) return;
+          const res = await revokeCompanyAccessFn({
+            data: { idToken: token, companyId: selectedCompanyId, targetUid },
+          });
+          if (res.success) {
+            toast.success("Access revoked.");
+            loadMemberships(true);
+          } else {
+            toast.error(res.error || "Failed to revoke access.");
+          }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : "Error";
+          toast.error(msg);
+        }
+      },
+    });
   };
 
   const handleTransferOwnership = async (e: React.FormEvent) => {
@@ -754,6 +783,16 @@ export function CompanyAccessView({ idToken }: CompanyAccessViewProps) {
           </form>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={confirmAction.open}
+        onOpenChange={(open) => setConfirmAction((prev) => ({ ...prev, open }))}
+        title={confirmAction.title}
+        description={confirmAction.description}
+        confirmText={confirmAction.confirmText}
+        destructive={confirmAction.destructive}
+        onConfirm={confirmAction.onConfirm}
+      />
     </div>
   );
 }

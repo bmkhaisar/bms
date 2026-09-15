@@ -12,7 +12,7 @@ export const Route = createFileRoute("/platform-admin-setup-required")({
   component: PlatformAdminSetupRequiredPage,
 });
 
-export function PlatformAdminSetupRequiredPage() {
+function PlatformAdminSetupRequiredPage() {
   const { user, isPlatformAdmin, refreshClaims, signOutAndSwitchAccount, initializing } = useAuth();
   const nav = useNavigate();
   const [checking, setChecking] = useState(false);

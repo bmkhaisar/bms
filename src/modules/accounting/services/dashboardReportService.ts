@@ -38,6 +38,50 @@ export interface DashboardMetrics {
   hasData: boolean;
 }
 
+export function resolveDocumentTaxes(doc: Invoice | Purchase) {
+  const docAny = doc as any;
+  if (docAny.taxSnapshot) {
+    const s = docAny.taxSnapshot;
+    return {
+      taxable: s.taxableValue ?? ((doc.subtotal || 0) - (doc.discountTotal || 0)),
+      cgst: s.cgst || 0,
+      sgst: s.sgst || 0,
+      igst: s.igst || 0,
+      cess: s.cess || 0,
+      totalTax: (s.cgst || 0) + (s.sgst || 0) + (s.igst || 0) + (s.cess || 0),
+      isInterState: Boolean(s.isInterState),
+    };
+  }
+
+  const isInterState = Boolean(docAny.isIgst || (doc.igstTotal && doc.igstTotal > 0));
+  const rawGstTotal = doc.gstTotal || 0;
+
+  if (isInterState) {
+    const igst = doc.igstTotal || rawGstTotal;
+    return {
+      taxable: (doc.subtotal || 0) - (doc.discountTotal || 0),
+      cgst: 0,
+      sgst: 0,
+      igst,
+      cess: docAny.cessTotal || 0,
+      totalTax: igst + (docAny.cessTotal || 0),
+      isInterState: true,
+    };
+  } else {
+    const cgst = doc.cgstTotal || (rawGstTotal ? rawGstTotal / 2 : 0);
+    const sgst = doc.sgstTotal || (rawGstTotal ? rawGstTotal / 2 : 0);
+    return {
+      taxable: (doc.subtotal || 0) - (doc.discountTotal || 0),
+      cgst,
+      sgst,
+      igst: 0,
+      cess: docAny.cessTotal || 0,
+      totalTax: cgst + sgst + (docAny.cessTotal || 0),
+      isInterState: false,
+    };
+  }
+}
+
 /**
  * Computes authoritative dashboard financial KPIs from formal double-entry ledgers,
  * sales documents, purchases, receipts, and inventory stock.
@@ -187,28 +231,14 @@ export function computeDashboardMetrics(params: {
   }
 
   // 5. Authoritative GST Breakdown (Output GST, Input GST, Net GST Position)
-  const gstOutputPaise = ledgers
-    .filter((l) => l.name.toLowerCase().includes("output gst"))
-    .reduce((sum, l) => sum + Math.abs(l.currentBalance || 0), 0);
-  const gstInputPaise = ledgers
-    .filter((l) => l.name.toLowerCase().includes("input gst"))
-    .reduce((sum, l) => sum + Math.abs(l.currentBalance || 0), 0);
-
-  const outputGst =
-    gstOutputPaise > 0
-      ? gstOutputPaise / 100
-      : fyInvoices.reduce((s, i) => s + (i.gstTotal || 0), 0);
-
-  const inputGst =
-    gstInputPaise > 0
-      ? gstInputPaise / 100
-      : fyPurchases.reduce((s, p) => s + (p.gstTotal || 0), 0);
-
+  // Reconciled with GST Report calculation: Output GST comes directly from posted fyInvoices
+  const outputGst = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).totalTax, 0);
+  const inputGst = fyPurchases.reduce((s, p) => s + resolveDocumentTaxes(p).totalTax, 0);
   const netGst = outputGst - inputGst;
 
-  const cgstOutput = fyInvoices.reduce((s, i) => s + (i.cgstTotal || 0), 0);
-  const sgstOutput = fyInvoices.reduce((s, i) => s + (i.sgstTotal || 0), 0);
-  const igstOutput = fyInvoices.reduce((s, i) => s + (i.igstTotal || 0), 0);
+  const cgstOutput = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).cgst, 0);
+  const sgstOutput = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).sgst, 0);
+  const igstOutput = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).igst, 0);
 
   // 6. Monthly Trend Series (Last 6 Months)
   const trendMonths: Array<{ label: string; sales: number; purchases: number }> = [];

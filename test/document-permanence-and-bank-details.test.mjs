@@ -32,22 +32,21 @@ test("master tabs also use the centralized realtime owner instead of competing p
   }
 });
 
-test("working invoices and purchases autosave to Firebase and flush again on route unmount", () => {
+test("working invoices and purchases retain draft persistence and dirty-check protection", () => {
   const source = read("src/components/app/DocumentListPage.tsx");
   assert.match(source, /async function persistWorkingDraft/);
-  assert.match(source, /await authoritativeSaveEntity/);
   assert.match(source, /status: "draft"/);
   assert.match(source, /postingStatus: "draft"/);
-  assert.match(source, /750/);
-  assert.match(source, /Final draft flush failed/);
+  assert.match(source, /isEditorDirty/);
+  assert.match(source, /You have unsaved changes\. Discard them\?/);
 });
 
-test("working quotations autosave authoritatively and flush on route unmount", () => {
+test("working quotations protect against unsaved changes without auto-creating unwanted drafts", () => {
   const form = read("src/components/app/QuotationForm.tsx");
   const page = read("src/components/app/QuotationsPage.tsx");
-  assert.match(form, /onDraftSave/);
-  assert.match(form, /Final draft flush failed/);
-  assert.match(page, /async function saveQuotationDraft/);
+  assert.match(form, /isDirty/);
+  assert.match(form, /You have unsaved changes\. Discard them\?/);
+  assert.match(page, /closeQuotationEditor/);
   assert.match(page, /authoritativeSaveEntity/);
 });
 

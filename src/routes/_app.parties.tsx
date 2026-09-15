@@ -78,7 +78,7 @@ const emptyParty: Party = {
   createdAt: 0,
 };
 
-export function PartiesPage() {
+function PartiesPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();

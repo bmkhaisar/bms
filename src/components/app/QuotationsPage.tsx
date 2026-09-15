@@ -54,7 +54,7 @@ export function QuotationsPage() {
   const { activeCompany, activeFinancialYear } = useActiveCompany();
   const navigate = useNavigate();
 
-  const { closeDocument: closeQuotationEditor } = useDocumentDeepLink({
+  const { closeDocument: closeQuotationEditor, markManualOpen } = useDocumentDeepLink({
     documents: rows,
     onOpen: (quotation) => setEditing({ ...quotation }),
     onClose: () => setEditing(null),
@@ -122,6 +122,7 @@ export function QuotationsPage() {
   }
 
   async function openNew() {
+    markManualOpen();
     let idToken: string | undefined;
     try { idToken = await user?.getIdToken(); } catch {}
     const financialYear = await resolveFinancialYear(idToken);
@@ -140,6 +141,7 @@ export function QuotationsPage() {
     });
   }
   async function duplicate(r: Quotation) {
+    markManualOpen();
     let idToken: string | undefined;
     try { idToken = await user?.getIdToken(); } catch {}
     const financialYear = await resolveFinancialYear(idToken);
@@ -390,7 +392,7 @@ export function QuotationsPage() {
                           <Button size="icon" variant="ghost" title="Convert to Invoice" onClick={() => handleConvert(r)} className="text-emerald-600 hover:bg-emerald-500/10">
                             <FileCheck className="h-4 w-4" />
                           </Button>
-                          <Button size="icon" variant="ghost" title="Edit" onClick={() => setEditing({ ...r })}><Pencil className="h-4 w-4" /></Button>
+                          <Button size="icon" variant="ghost" title="Edit" onClick={() => { markManualOpen(); setEditing({ ...r }); }}><Pencil className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Print" onClick={() => printQuote(r)}><Printer className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Duplicate" onClick={() => duplicate(r)}><Copy className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Delete" onClick={() => setDeleteId(r.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
@@ -411,7 +413,7 @@ export function QuotationsPage() {
         open={!!previewQuotation}
         onOpenChange={(o) => !o && setPreviewQuotation(null)}
         quotation={previewQuotation}
-        onEdit={(q) => setEditing({ ...q })}
+        onEdit={(q) => { markManualOpen(); setEditing({ ...q }); }}
         onConvert={(q) => handleConvert(q)}
       />
 

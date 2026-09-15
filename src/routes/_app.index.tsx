@@ -58,7 +58,7 @@ export const Route = createFileRoute("/_app/")({
   component: Dashboard,
 });
 
-export function Dashboard() {
+function Dashboard() {
   const { activeCompany, activeFinancialYear } = useActiveCompany();
 
   // Local Dexie collections with bounded financial year queries for scale

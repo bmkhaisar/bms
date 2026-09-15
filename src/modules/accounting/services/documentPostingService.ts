@@ -711,11 +711,34 @@ export async function postReceiptTransaction(params: {
     };
 
     const previousReceipt = await db().receipts.get(updatedReceipt.id);
-    const receiptAllocations = updatedReceipt.allocatedInvoices?.length
-      ? updatedReceipt.allocatedInvoices
-      : updatedReceipt.invoiceId
-        ? [{ invoiceId: updatedReceipt.invoiceId, invoiceNumber: "", amountPaise }]
-        : [];
+    let receiptAllocations = updatedReceipt.allocatedInvoices?.length
+      ? [...updatedReceipt.allocatedInvoices]
+      : [];
+
+    if (!receiptAllocations.length && updatedReceipt.invoiceId) {
+      const targetInv = await db().invoices.get(updatedReceipt.invoiceId);
+      if (targetInv) {
+        const invTotalPaise = Math.round(targetInv.grandTotal * 100);
+        const invPaidPaise = Math.round((targetInv.amountPaid || 0) * 100);
+        const invOutstandingPaise = Math.max(0, invTotalPaise - invPaidPaise);
+        const allocatedPaise = Math.min(amountPaise, invOutstandingPaise);
+        const excessPaise = Math.max(0, amountPaise - allocatedPaise);
+
+        receiptAllocations = [{
+          invoiceId: targetInv.id,
+          invoiceNumber: targetInv.number,
+          amountPaise: allocatedPaise,
+        }];
+        updatedReceipt.allocatedInvoices = receiptAllocations;
+        if (excessPaise > 0) {
+          updatedReceipt.advanceAvailablePaise = excessPaise;
+          updatedReceipt.customerCreditPaise = excessPaise;
+          updatedReceipt.unappliedCreditPaise = excessPaise;
+        }
+      } else {
+        receiptAllocations = [{ invoiceId: updatedReceipt.invoiceId, invoiceNumber: "", amountPaise }];
+      }
+    }
     const previousReceiptAllocations = previousReceipt?.allocatedInvoices?.length
       ? previousReceipt.allocatedInvoices
       : previousReceipt?.invoiceId
