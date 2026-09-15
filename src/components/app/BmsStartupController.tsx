@@ -140,18 +140,6 @@ export function BmsStartupController({
       }
 
       startupState.markCompleted();
-
-      // Allow 350ms exit fade
-      const exitTimer = setTimeout(() => {
-        exitCompletedRef.current = true;
-        setIsStartupActive(false);
-        setIsExiting(false);
-        if (typeof document !== "undefined") {
-          document.body.style.overflow = "";
-        }
-      }, 350);
-
-      return () => clearTimeout(exitTimer);
     }
   }, [
     mounted,
@@ -163,6 +151,22 @@ export function BmsStartupController({
     nav,
   ]);
 
+  // Dedicated exit fade completion timer — cannot be aborted by dependency re-renders
+  useEffect(() => {
+    if (!isExiting) return;
+
+    const timer = setTimeout(() => {
+      exitCompletedRef.current = true;
+      setIsStartupActive(false);
+      setIsExiting(false);
+      if (typeof document !== "undefined") {
+        document.body.style.overflow = "";
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [isExiting]);
+
   const handleRetry = () => {
     if (typeof window !== "undefined") {
       window.location.reload();
@@ -171,30 +175,33 @@ export function BmsStartupController({
 
   const isExtended = animationDone && authDestination.type === "waiting";
 
+  // When startup has finished, render children directly without any wrapper, inert, or pointer-event restrictions
+  if (!isStartupActive) {
+    return <>{children}</>;
+  }
+
   return (
     <>
       {/* 100% OPAQUE STARTUP SURFACE
           Covers viewport from initial SSR / first-paint with zero UI bleed-through */}
-      {isStartupActive && (
-        <TheBalancedLedger
-          isExiting={isExiting}
-          isExtended={isExtended}
-          isTimeout={isTimeout}
-          onRetry={handleRetry}
-        />
-      )}
+      <TheBalancedLedger
+        isExiting={isExiting}
+        isExtended={isExtended}
+        isTimeout={isTimeout}
+        onRetry={handleRetry}
+      />
 
       {/* UNDERLYING APPLICATION
           Kept mounted concurrently so auth, Dexie, active company, and sync listeners
           run from T=0 without deadlock.
-          When startup is active: completely hidden, inert, untabbable, and non-accessible.
-          When startup completes: fully active, accessible, and visible with zero layout shift. */}
+          When startup is active (and not yet exiting): hidden and inert.
+          As soon as exiting begins: fully visible and interactive. */}
       <div
-        aria-hidden={isStartupActive ? "true" : undefined}
-        inert={isStartupActive ? true : undefined}
+        aria-hidden={!isExiting ? "true" : undefined}
+        inert={!isExiting ? true : undefined}
         style={{
-          visibility: isStartupActive && !isExiting ? "hidden" : "visible",
-          pointerEvents: isStartupActive ? "none" : "auto",
+          visibility: !isExiting ? "hidden" : "visible",
+          pointerEvents: !isExiting ? "none" : "auto",
         }}
       >
         {children}

@@ -233,7 +233,7 @@ export function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="h-9 text-sm"
-                  disabled={lockoutStatus.isLocked || loading || entering}
+                  disabled={loading || entering}
                   required
                 />
               </div>
@@ -247,7 +247,7 @@ export function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="h-9 text-sm"
-                  disabled={lockoutStatus.isLocked || loading || entering}
+                  disabled={loading || entering}
                   required
                 />
               </div>
