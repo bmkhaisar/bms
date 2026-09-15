@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AppShell, PageHeader } from "@/components/app/AppShell";
 import {
   db,
@@ -40,6 +40,7 @@ import { AddressDrawer } from "@/components/app/AddressDrawer";
 import { isIndia, getPostalCodeLabel, getPostalCodePlaceholder, validatePostalCode } from "@/lib/countryValidation";
 import { performOptimisticMutation } from "@/lib/mutationPipeline";
 import { checkEntityHistoricalUsage, type HistoricalUsageResult } from "@/lib/historicalUsage";
+import { documentDeepLink } from "@/lib/useDocumentDeepLink";
 
 export const Route = createFileRoute("/_app/parties")({
   head: () => ({ meta: [{ title: "Party Master — BMS NEXT" }] }),
@@ -78,6 +79,7 @@ const emptyParty: Party = {
 };
 
 export function PartiesPage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Party>(() => db().parties.orderBy("name").toArray());
@@ -876,6 +878,10 @@ export function PartiesPage() {
           open={!!selectedPartyForInsight}
           onOpenChange={(o) => !o && setSelectedPartyForInsight(null)}
           customerId={selectedPartyForInsight}
+          onSelectInvoice={(invoiceId) => {
+            setSelectedPartyForInsight(null);
+            navigate({ to: documentDeepLink("/invoices", invoiceId) as never });
+          }}
         />
 
         {/* Address Drawer for adding multiple addresses */}

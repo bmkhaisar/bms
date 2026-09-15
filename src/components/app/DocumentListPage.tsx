@@ -56,6 +56,13 @@ import { reverseVoucherServerFn } from "@/functions/reverseVoucherFn";
 import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
 import { authoritativeDeleteDraft, authoritativeVoidPosted, authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
 import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYearFn";
+import { useDocumentDeepLink, documentDeepLink } from "@/lib/useDocumentDeepLink";
+import { useNavigate } from "@tanstack/react-router";
+import {
+  assertPostedDocumentNotDirectlyMutable,
+  createPostedDocumentCorrectionDraft,
+  isPostedFinancialDocument,
+} from "@/modules/documents/postedDocumentCorrection";
 
 type AnyDoc = Invoice | Quotation | Purchase;
 
@@ -67,6 +74,7 @@ export function DocumentListPage<T extends AnyDoc>({
   addLabel: string;
   tableFor: "customer" | "supplier";
 }) {
+  const navigate = useNavigate();
   const rows = useLive<T>(async () => {
     const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
     return (await table.orderBy("createdAt").reverse().toArray()) as unknown as T[];
@@ -93,9 +101,22 @@ export function DocumentListPage<T extends AnyDoc>({
   const [preview, setPreview] = useState<T | null>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>("");
   const [deleteTargetDoc, setDeleteTargetDoc] = useState<{ doc: T; isPosted: boolean } | null>(null);
+  const [correctionTarget, setCorrectionTarget] = useState<T | null>(null);
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [startingCorrection, setStartingCorrection] = useState(false);
   const [isDeletingDoc, setIsDeletingDoc] = useState<boolean>(false);
   const [recoverableDraft, setRecoverableDraft] = useState<{ data: T; savedAt: number } | null>(null);
   const [company, setCompany] = useState<CompanySettings | null>(null);
+
+  const { closeDocument } = useDocumentDeepLink({
+    documents: rows,
+    onOpen: (document) => setPreview(document),
+    onClose: () => {
+      setPreview(null);
+      setEditing(null);
+      setOpen(false);
+    },
+  });
 
   // Optimistic row overrides for instant local state sync without waiting for Dexie/Firebase
   const [optimisticOverrides, setOptimisticOverrides] = useState<Map<string, T | null>>(new Map());
@@ -287,13 +308,8 @@ export function DocumentListPage<T extends AnyDoc>({
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const queryParam = params.get("q");
-    const idParam = params.get("id");
     if (queryParam) setQ(queryParam);
-    if (idParam && rows.length > 0) {
-      const match = rows.find((r) => r.id === idParam || (r as AnyDoc).number === idParam);
-      if (match) setPreview(match);
-    }
-  }, [rows]);
+  }, []);
 
   const parties = useMemo(() => {
     if (tableFor === "customer") {
@@ -457,10 +473,95 @@ export function DocumentListPage<T extends AnyDoc>({
   }, [activeCompany?.id, user?.uid]);
 
   function openEdit(r: T) {
+    if (kind !== "quotation" && isPostedFinancialDocument(r as Invoice | Purchase)) {
+      setCorrectionTarget(r);
+      setCorrectionReason("");
+      return;
+    }
     setEditing({ ...r });
     const isDocNonGst = (r as any).gstTotal === 0 && (r as any).cgstTotal === 0 && (r as any).igstTotal === 0 && (r as any).items?.every((it: LineItem) => it.gstRate === 0);
     setEnableGst(!isDocNonGst);
     setOpen(true);
+  }
+
+  async function beginPostedCorrection() {
+    if (!correctionTarget || kind === "quotation") return;
+    if (!correctionReason.trim()) {
+      toast.error("Enter a correction reason to preserve the accounting audit trail.");
+      return;
+    }
+    setStartingCorrection(true);
+    try {
+      let idToken: string | undefined;
+      try { idToken = await user?.getIdToken(); } catch {}
+      const financialYearId = (correctionTarget as any).financialYearId || activeFinancialYear?.id;
+      const customPrefix = kind === "invoice" ? activeCompany?.invoicePrefix : activeCompany?.purchasePrefix;
+      const replacementNumber = await getNextDocumentNumber({
+        kind,
+        companyId: activeCompany?.id,
+        financialYearId,
+        fyName: activeFinancialYear?.name,
+        idToken,
+        customPrefix,
+      });
+      const replacement = createPostedDocumentCorrectionDraft({
+        original: correctionTarget as Invoice | Purchase,
+        replacementId: uid(),
+        replacementNumber,
+        reason: correctionReason,
+      }) as T;
+
+      // Invoice reversal is deferred until the user explicitly posts the
+      // correction draft. Purchase correction uses the same explicit reversal
+      // service now because purchases do not have a separate amend endpoint.
+      if (kind === "purchase" && !activeCompany?.id) {
+        throw new Error("An active company connection is required to correct a posted purchase.");
+      }
+      if (kind === "purchase" && activeCompany?.id) {
+        const reversal = await authoritativeVoidPosted({
+          companyId: activeCompany.id,
+          financialYearId,
+          kind: "purchase",
+          doc: correctionTarget,
+          user,
+          idToken,
+          reversalReason: `Correction of Purchase ${correctionTarget.number}: ${correctionReason.trim()}`,
+        });
+        (replacement as Purchase).reversalVoucherId = (reversal.voidedDoc as Purchase).reversalVoucherId;
+        await authoritativeSaveEntity({
+          companyId: activeCompany.id,
+          financialYearId,
+          kind: "purchase",
+          entity: replacement,
+          uid: user?.uid,
+          action: "create",
+        });
+        await authoritativeSaveEntity({
+          companyId: activeCompany.id,
+          financialYearId,
+          kind: "purchase",
+          entity: {
+            ...reversal.voidedDoc,
+            correctedPurchaseId: replacement.id,
+            supersededByPurchaseId: replacement.id,
+            correctionReason: correctionReason.trim(),
+          },
+          uid: user?.uid,
+          action: "update",
+        });
+      }
+
+      setCorrectionTarget(null);
+      setCorrectionReason("");
+      setEditing(replacement);
+      setEnableGst(Number((replacement as any).gstTotal || 0) > 0);
+      setOpen(true);
+      toast.success(`${kind === "invoice" ? "Invoice" : "Purchase"} correction draft created`);
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to start the controlled correction.");
+    } finally {
+      setStartingCorrection(false);
+    }
   }
 
   async function persistWorkingDraft(value: T) {
@@ -594,6 +695,17 @@ export function DocumentListPage<T extends AnyDoc>({
 
   async function save() {
     if (!editing) return;
+    if (kind !== "quotation") {
+      const stored = kind === "invoice"
+        ? await db().invoices.get(editing.id)
+        : await db().purchases.get(editing.id);
+      try {
+        assertPostedDocumentNotDirectlyMutable(stored as Invoice | Purchase | undefined, editing as Invoice | Purchase);
+      } catch (error: any) {
+        toast.error(error.message);
+        return;
+      }
+    }
     const partyId = (editing as any).customerId ?? (editing as Purchase).supplierId;
     if (!partyId) { toast.error(`Please select a ${tableFor}`); return; }
     if (!editing.items.length) { toast.error("Please add at least one line item"); return; }
@@ -776,8 +888,9 @@ export function DocumentListPage<T extends AnyDoc>({
       (inv as any).clientMutationId = clientMutationId;
 
       const prev = await db().invoices.get(inv.id);
-      if (prev) await applyStockDelta(prev.items, 1); // revert old
-      await applyStockDelta(inv.items, -1);
+      const amendmentOriginal = inv.amendedFromId
+        ? await db().invoices.get(inv.amendedFromId)
+        : undefined;
 
       let authoritativeInvoice: Invoice = inv;
 
@@ -788,17 +901,17 @@ export function DocumentListPage<T extends AnyDoc>({
           uid: user.uid,
         });
 
-        if (prev && prev.postingStatus === "posted") {
+        if (amendmentOriginal) {
           const res = await amendPostedInvoiceTransaction({
             companyId: activeCompany.id,
             financialYearId: resolvedFinancialYearId,
-            originalInvoice: prev,
+            originalInvoice: amendmentOriginal,
             correctedInvoice: inv,
             company: activeCompany,
             customerLedgerId: custLedger,
             idToken,
             uid: user.uid,
-            amendmentReason: "Invoice edit and amendment",
+            amendmentReason: inv.correctionReason || "Controlled posted invoice correction",
             clientMutationId,
           });
           if (!res.success) {
@@ -827,21 +940,9 @@ export function DocumentListPage<T extends AnyDoc>({
         }
       }
 
-      // Immediately upsert returned invoice into Dexie & optimistic React list
-      await db().invoices.put(authoritativeInvoice);
+      // Authoritative voucher + invoice commits have succeeded. Reconcile the
+      // visible page immediately without waiting for this device's realtime echo.
       setOptimisticOverrides(prevMap => new Map(prevMap).set(authoritativeInvoice.id, authoritativeInvoice as unknown as T));
-
-      const sourceQuotationId = authoritativeInvoice.sourceQuotationId || authoritativeInvoice.convertedFromQuotationId;
-      if (sourceQuotationId) {
-        const sourceQuotation = quotations.find((quote) => quote.id === sourceQuotationId);
-        if (activeCompany?.id && firebaseDb) {
-          await update(ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${sourceQuotationId}`), {
-            status: "converted", convertedInvoiceId: authoritativeInvoice.id, updatedAt: Date.now(),
-          });
-        }
-        if (sourceQuotation) await db().quotations.put({ ...sourceQuotation, status: "converted", convertedInvoiceId: authoritativeInvoice.id });
-      }
-
       if (activeCompany?.id) {
         reconcileDocumentPostSuccess({
           entityType: "invoice",
@@ -850,8 +951,27 @@ export function DocumentListPage<T extends AnyDoc>({
           action: prev ? "update" : "create",
         });
       }
-
       setPostingPhase("posted");
+      clearDraft(kind);
+      setRecoverableDraft(null);
+      closeDocument();
+      toast.success("Invoice posted");
+
+      void db().invoices.put(authoritativeInvoice).catch((error) =>
+        console.warn("Invoice Dexie projection update warning:", error));
+      const sourceQuotationId = authoritativeInvoice.sourceQuotationId || authoritativeInvoice.convertedFromQuotationId;
+      if (sourceQuotationId) {
+        const sourceQuotation = quotations.find((quote) => quote.id === sourceQuotationId);
+        void (async () => {
+          if (activeCompany?.id && firebaseDb) {
+            await update(ref(firebaseDb, `companyData/${activeCompany.id}/quotations/${sourceQuotationId}`), {
+              status: "converted", convertedInvoiceId: authoritativeInvoice.id, updatedAt: Date.now(),
+            });
+          }
+          if (sourceQuotation) await db().quotations.put({ ...sourceQuotation, status: "converted", convertedInvoiceId: authoritativeInvoice.id });
+        })().catch((error) => console.warn("Quotation link projection update warning:", error));
+      }
+      return;
     } else if (kind === "purchase") {
       const pu = patched as Purchase;
       const resolvedFinancialYearId = pu.financialYearId || activeFinancialYear?.id;
@@ -970,9 +1090,8 @@ export function DocumentListPage<T extends AnyDoc>({
 
       clearDraft(kind);
       setRecoverableDraft(null);
-      toast.success(kind === "invoice" ? "Invoice posted" : kind === "purchase" ? "Purchase posted" : "Quotation saved");
-      setOpen(false);
-      setEditing(null);
+      toast.success(kind === "purchase" ? "Purchase posted" : "Quotation saved");
+      closeDocument();
     } catch (err: any) {
       toast.error(err?.message || "Failed to save document");
     } finally {
@@ -1298,11 +1417,31 @@ export function DocumentListPage<T extends AnyDoc>({
                         <TableRow key={r.id}>
                           <TableCell className="font-mono font-medium">
                             <div>{r.number}</div>
+                            {kind === "invoice" && (r as Invoice).amendedFromId && (
+                              <div className="mt-1 text-[9px] font-sans font-medium text-amber-700">
+                                Corrected from {(rows as Invoice[]).find((item) => item.id === (r as Invoice).amendedFromId)?.number || (r as Invoice).amendedFromId}
+                              </div>
+                            )}
+                            {kind === "invoice" && (r as Invoice).supersededByInvoiceId && (
+                              <div className="mt-1 text-[9px] font-sans font-medium text-muted-foreground">
+                                Superseded by {(rows as Invoice[]).find((item) => item.id === (r as Invoice).supersededByInvoiceId)?.number || (r as Invoice).supersededByInvoiceId}
+                              </div>
+                            )}
+                            {kind === "purchase" && (r as Purchase).amendedFromId && (
+                              <div className="mt-1 text-[9px] font-sans font-medium text-amber-700">
+                                Corrected from {(rows as Purchase[]).find((item) => item.id === (r as Purchase).amendedFromId)?.number || (r as Purchase).amendedFromId}
+                              </div>
+                            )}
+                            {kind === "purchase" && (r as Purchase).supersededByPurchaseId && (
+                              <div className="mt-1 text-[9px] font-sans font-medium text-muted-foreground">
+                                Superseded by {(rows as Purchase[]).find((item) => item.id === (r as Purchase).supersededByPurchaseId)?.number || (r as Purchase).supersededByPurchaseId}
+                              </div>
+                            )}
                             {kind === "invoice" && (
                               (r as unknown as Invoice).sourceType === "QUOTATION" || (r as unknown as Invoice).convertedFromQuotationId
                                 ? <button type="button" className="mt-1 rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-blue-700 hover:underline" onClick={() => {
                                   const sourceId = (r as unknown as Invoice).sourceQuotationId || (r as unknown as Invoice).convertedFromQuotationId;
-                                  if (sourceId && typeof window !== "undefined") window.location.assign(`/quotations?id=${encodeURIComponent(sourceId)}`);
+                                  if (sourceId) navigate({ to: documentDeepLink("/quotations", sourceId) as never });
                                   }}>From {(r as unknown as Invoice).sourceQuotationNumber || "Quotation"}</button>
                                 : <span className="mt-1 inline-block rounded bg-slate-500/10 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-slate-600">Direct Invoice</span>
                             )}
@@ -1382,7 +1521,12 @@ export function DocumentListPage<T extends AnyDoc>({
                               <Button size="icon" variant="ghost" title="View / Print" onClick={() => setPreview(r)}>
                                 <Printer className="h-3.5 w-3.5" />
                               </Button>
-                              <Button size="icon" variant="ghost" title="Edit" onClick={() => openEdit(r)}>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                title={kind !== "quotation" && isPostedFinancialDocument(r as Invoice | Purchase) ? `Correct Posted ${kind === "invoice" ? "Invoice" : "Purchase"}` : "Edit"}
+                                onClick={() => openEdit(r)}
+                              >
                                 <Pencil className="h-3.5 w-3.5" />
                               </Button>
                               <Button size="icon" variant="ghost" title="Duplicate" onClick={() => duplicate(r)}>
@@ -1430,7 +1574,7 @@ export function DocumentListPage<T extends AnyDoc>({
       )}
 
       {/* Editor Dialog */}
-      <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setEditing(null); }}>
+      <Dialog open={open} onOpenChange={(o) => { if (o) setOpen(true); else closeDocument(); }}>
         <DialogContent className="flex h-[min(95dvh,840px)] max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-5xl flex-col overflow-hidden gap-0 p-0">
           <DialogHeader className="shrink-0 border-b px-4 py-3 sm:px-6">
             <DialogTitle className="flex items-center justify-between gap-3 text-base pr-8 sm:pr-10">
@@ -1453,6 +1597,14 @@ export function DocumentListPage<T extends AnyDoc>({
           </DialogHeader>
           {editing && (
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden overscroll-contain scrollbar-hidden px-3 py-4 sm:px-6 text-xs">
+              {kind !== "quotation" && (editing as Invoice | Purchase).amendedFromId && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                  <div className="font-semibold">
+                    Corrected from {rows.find((row) => row.id === (editing as Invoice | Purchase).amendedFromId)?.number || (editing as Invoice | Purchase).amendedFromId}
+                  </div>
+                  <div className="mt-0.5 text-[11px]">Reason: {(editing as Invoice | Purchase).correctionReason}</div>
+                </div>
+              )}
               {kind === "invoice" && (
                 <div className="space-y-4">
                   {/* Bill To & Ship To Side-by-Side Cards */}
@@ -2056,7 +2208,7 @@ export function DocumentListPage<T extends AnyDoc>({
             </div>
           )}
           <DialogFooter className="shrink-0 gap-2 border-t bg-background px-3 py-3 sm:px-6">
-            <Button variant="ghost" onClick={() => setOpen(false)} disabled={savingDoc} className="w-full sm:w-auto">Cancel</Button>
+            <Button variant="ghost" onClick={closeDocument} disabled={savingDoc} className="w-full sm:w-auto">Cancel</Button>
             {kind === "invoice" && editing && (
               <Button type="button" variant="outline" onClick={() => setPreview(editing)} disabled={savingDoc} className="w-full sm:w-auto gap-1.5">
                 <FileText className="h-4 w-4" /> Invoice Preview
@@ -2089,7 +2241,7 @@ export function DocumentListPage<T extends AnyDoc>({
       </Dialog>
 
       {/* Preview / Print / PDF */}
-      <Dialog open={!!preview} onOpenChange={o => !o && setPreview(null)}>
+      <Dialog open={!!preview} onOpenChange={o => !o && closeDocument()}>
         <DialogContent className="max-w-5xl max-h-[95vh] flex flex-col">
           <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center justify-between gap-2 pr-8 sm:pr-10">
@@ -2127,6 +2279,44 @@ export function DocumentListPage<T extends AnyDoc>({
           {preview && previewPdfUrl && (
             <iframe id="canonical-pdf-preview" title={`${preview.number} PDF preview`} src={previewPdfUrl} className="min-h-[70vh] w-full flex-1 rounded-xl border bg-muted/40" />
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Explicit posted-document correction gate. */}
+      <Dialog open={Boolean(correctionTarget)} onOpenChange={(o) => {
+        if (!o && !startingCorrection) {
+          setCorrectionTarget(null);
+          setCorrectionReason("");
+        }
+      }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Correct Posted {kind === "invoice" ? "Invoice" : "Purchase"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+              This {kind} has already been posted to accounting. Financial changes require a controlled correction so ledger, GST, stock and audit history remain consistent.
+            </div>
+            <div className="text-xs text-muted-foreground">
+              The posted record <strong className="font-mono text-foreground">{correctionTarget?.number}</strong> will never be overwritten. A new linked correction draft will use a new immutable ID and document number.
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="posted-correction-reason">Correction reason *</Label>
+              <Textarea
+                id="posted-correction-reason"
+                value={correctionReason}
+                onChange={(event) => setCorrectionReason(event.target.value)}
+                placeholder="Explain why this posted document must be corrected"
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={startingCorrection} onClick={() => setCorrectionTarget(null)}>Cancel</Button>
+            <Button disabled={startingCorrection || !correctionReason.trim()} onClick={beginPostedCorrection}>
+              {startingCorrection ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Preparing…</> : "Create Correction Draft"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -2272,8 +2462,7 @@ export function DocumentListPage<T extends AnyDoc>({
             await db().invoices.put(inv);
             toast.success(`Invoice ${inv.number} saved as draft`);
             setAdvanceRestrictionData(null);
-            setOpen(false);
-            setEditing(null);
+            closeDocument();
           }}
         />
       )}
@@ -2297,8 +2486,9 @@ export function DocumentListPage<T extends AnyDoc>({
               try { idToken = await user?.getIdToken(); } catch {}
 
               const prev = await db().invoices.get(inv.id);
-              if (prev) await applyStockDelta(prev.items, 1);
-              await applyStockDelta(inv.items, -1);
+              const amendmentOriginal = inv.amendedFromId
+                ? await db().invoices.get(inv.amendedFromId)
+                : undefined;
 
               if (activeCompany?.id && activeFinancialYear?.id && user) {
                 const custLedger = await ensureCustomerLedger({
@@ -2308,17 +2498,17 @@ export function DocumentListPage<T extends AnyDoc>({
                 });
 
                 let finalSaved = inv;
-                if (prev && prev.postingStatus === "posted") {
+                if (amendmentOriginal) {
                   const res = await amendPostedInvoiceTransaction({
                     companyId: activeCompany.id,
                     financialYearId: activeFinancialYear.id,
-                    originalInvoice: prev,
+                    originalInvoice: amendmentOriginal,
                     correctedInvoice: inv,
                     company: activeCompany,
                     customerLedgerId: custLedger,
                     idToken,
                     uid: user.uid,
-                    amendmentReason: "Invoice reconciled and posted",
+                    amendmentReason: inv.correctionReason || "Controlled posted invoice correction",
                   });
                   if (!res.success) {
                     toast.error(mapFriendlyError(res.error));
@@ -2341,7 +2531,6 @@ export function DocumentListPage<T extends AnyDoc>({
                   }
                   finalSaved = res.invoice || inv;
                 }
-                await db().invoices.put(finalSaved);
                 setOptimisticOverrides(prevMap => new Map(prevMap).set(finalSaved.id, finalSaved as unknown as T));
                 reconcileDocumentPostSuccess({
                   entityType: "invoice",
@@ -2349,14 +2538,15 @@ export function DocumentListPage<T extends AnyDoc>({
                   document: finalSaved,
                   action: prev ? "update" : "create",
                 });
+                void db().invoices.put(finalSaved).catch((error) =>
+                  console.warn("Invoice Dexie projection update warning:", error));
               } else {
                 await db().invoices.put(inv);
                 setOptimisticOverrides(prevMap => new Map(prevMap).set(inv.id, inv as unknown as T));
               }
 
               toast.success("Invoice posted successfully with verified totals");
-              setOpen(false);
-              setEditing(null);
+              closeDocument();
             } catch (err: any) {
               toast.error(err?.message || "Failed to post reconciled invoice");
             } finally {
@@ -2400,7 +2590,7 @@ export function DocumentListPage<T extends AnyDoc>({
               onClick={() => {
                 const existingId = duplicatePurchaseWarning?.existingId;
                 setDuplicatePurchaseWarning(null);
-                setOpen(false);
+                closeDocument();
                 const target = (rows as Purchase[]).find(p => p.id === existingId);
                 if (target) setPreview(target as unknown as T);
               }}

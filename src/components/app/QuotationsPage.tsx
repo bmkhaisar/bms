@@ -10,9 +10,9 @@ import {
 } from "lucide-react";
 import {
   db, uid, nextNumber, getCompany,
-  type Quotation, type Customer, type CompanySettings, type QuotationTemplate,
+  type Quotation, type Customer, type CompanySettings, type QuotationTemplate, type Invoice,
 } from "@/lib/db";
-import { convertQuotationToInvoice } from "@/modules/documents/quotationConversion";
+import { convertQuotationToInvoice, updateLinkedDraftInvoiceFromQuotation, isInvoiceImmutable } from "@/modules/documents/quotationConversion";
 import { useLive } from "@/lib/useLive";
 import { formatDate, formatMoney } from "@/lib/format";
 import { downloadQuotationPDF, downloadQuotationDOCX, exportQuotationPDF } from "@/lib/quotationExport";
@@ -31,12 +31,15 @@ import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
 import { authoritativeDeleteDraft, authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
 import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYearFn";
 import { normalizeQuotationRecord } from "@/modules/documents/quotationNormalization";
+import { useDocumentDeepLink, documentDeepLink } from "@/lib/useDocumentDeepLink";
+import { useNavigate } from "@tanstack/react-router";
 
 export function QuotationsPage() {
   const rawRows = useLive<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
   const rows = useMemo(() => rawRows.map(normalizeQuotationRecord), [rawRows]);
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const templates = useLive<QuotationTemplate>(() => db().quotationTemplates.orderBy("name").toArray());
+  const invoices = useLive<Invoice>(() => db().invoices.orderBy("createdAt").reverse().toArray());
   const [optimisticOverrides, setOptimisticOverrides] = useState<Map<string, Quotation | null>>(new Map());
   const [company, setCompany] = useState<CompanySettings | null>(null);
   const [q, setQ] = useState("");
@@ -49,6 +52,13 @@ export function QuotationsPage() {
 
   const { user } = useAuth();
   const { activeCompany, activeFinancialYear } = useActiveCompany();
+  const navigate = useNavigate();
+
+  const { closeDocument: closeQuotationEditor } = useDocumentDeepLink({
+    documents: rows,
+    onOpen: (quotation) => setEditing({ ...quotation }),
+    onClose: () => setEditing(null),
+  });
 
   useEffect(() => { getCompany().then(setCompany); }, []);
 
@@ -57,13 +67,8 @@ export function QuotationsPage() {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const queryParam = params.get("q");
-    const idParam = params.get("id");
     if (queryParam) setQ(queryParam);
-    if (idParam && rows.length > 0) {
-      const match = rows.find((r) => r.id === idParam || r.number === idParam);
-      if (match) setEditing(match);
-    }
-  }, [rows]);
+  }, []);
 
   const cust = (id: string) => customers.find(c => c.id === id);
   const tpl = (id?: string) => templates.find(t => t.id === id) || templates.find(t => t.isDefault);
@@ -153,6 +158,7 @@ export function QuotationsPage() {
     const toSave: Quotation = freezeQuotationSnapshots({
       ...next,
       createdAt: next.createdAt || Date.now(),
+      updatedAt: Date.now(),
     }, comp);
 
     // Optimistic UI update
@@ -173,7 +179,7 @@ export function QuotationsPage() {
       }
 
       toast.success("Quotation saved");
-      setEditing(null);
+      closeQuotationEditor();
     } catch (err: any) {
       setOptimisticOverrides(prev => {
         const nextMap = new Map(prev);
@@ -242,6 +248,25 @@ export function QuotationsPage() {
       idToken,
       companySettings: company,
     });
+  }
+
+  const linkedInvoice = editing?.convertedInvoiceId
+    ? invoices.find((invoice) => invoice.id === editing.convertedInvoiceId)
+    : undefined;
+  const linkedInvoiceIsPosted = linkedInvoice ? isInvoiceImmutable(linkedInvoice) : false;
+  const quotationChangedSinceLink = Boolean(
+    editing && linkedInvoice &&
+    Number(editing.updatedAt || editing.createdAt) > Number(linkedInvoice.sourceQuotationUpdatedAt || linkedInvoice.createdAt),
+  );
+
+  async function updateLinkedDraft() {
+    if (!editing || !linkedInvoice) return;
+    try {
+      await updateLinkedDraftInvoiceFromQuotation(editing, linkedInvoice, { activeCompany, user });
+      toast.success(`Linked draft invoice ${linkedInvoice.number} updated`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update linked draft invoice");
+    }
   }
 
   function getEffectiveCompany(r: Quotation): CompanySettings | null {
@@ -390,14 +415,40 @@ export function QuotationsPage() {
         onConvert={(q) => handleConvert(q)}
       />
 
-      <Dialog open={!!editing} onOpenChange={o => !o && setEditing(null)}>
+      <Dialog open={!!editing} onOpenChange={o => !o && closeQuotationEditor()}>
         <DialogContent className="max-w-6xl w-[96vw] p-0 gap-0 h-[95vh] max-h-[95vh] overflow-hidden flex flex-col [&>button.absolute]:hidden">
+          {editing && linkedInvoice && (
+            <div className="shrink-0 border-b bg-muted/35 px-4 py-2.5 text-xs sm:flex sm:items-center sm:justify-between sm:gap-3">
+              <div>
+                <div className="font-semibold">
+                  {linkedInvoiceIsPosted
+                    ? `Invoice ${linkedInvoice.number} is already posted.`
+                    : `Linked Draft Invoice: ${linkedInvoice.number}`}
+                </div>
+                <div className="mt-0.5 text-muted-foreground">
+                  {linkedInvoiceIsPosted
+                    ? "Changes to this quotation will not modify the posted invoice."
+                    : quotationChangedSinceLink
+                      ? "This quotation has changed since the linked draft invoice was created."
+                      : "The linked draft invoice matches this quotation."}
+                </div>
+              </div>
+              <div className="mt-2 flex shrink-0 gap-2 sm:mt-0">
+                <Button size="sm" variant="outline" onClick={() => navigate({ to: documentDeepLink("/invoices", linkedInvoice.id) as never })}>
+                  View Invoice
+                </Button>
+                {!linkedInvoiceIsPosted && quotationChangedSinceLink && (
+                  <Button size="sm" onClick={updateLinkedDraft}>Update Linked Draft Invoice</Button>
+                )}
+              </div>
+            </div>
+          )}
           {editing && (
             <QuotationForm
               initial={editing}
               onSave={saveQuotation}
               onDraftSave={saveQuotationDraft}
-              onCancel={() => setEditing(null)}
+              onCancel={closeQuotationEditor}
             />
           )}
         </DialogContent>

@@ -402,9 +402,16 @@ export interface Invoice {
   sourceType?: "DIRECT" | "QUOTATION";
   sourceQuotationId?: ID;
   sourceQuotationNumber?: string;
+  /** Quotation revision last explicitly applied to this draft invoice. */
+  sourceQuotationUpdatedAt?: number;
   convertedFromQuotationId?: ID;
   version?: number;
   amendedFromId?: ID;
+  originalDocumentId?: ID;
+  correctedInvoiceId?: ID;
+  supersededByInvoiceId?: ID;
+  correctionReason?: string;
+  reversalVoucherId?: string;
   createdAt: number;
   updatedAt?: number;
 }
@@ -513,6 +520,11 @@ export interface Purchase {
   voucherId?: string;
   version?: number;
   amendedFromId?: ID;
+  originalDocumentId?: ID;
+  correctedPurchaseId?: ID;
+  supersededByPurchaseId?: ID;
+  correctionReason?: string;
+  reversalVoucherId?: string;
   createdAt: number;
   updatedAt?: number;
 }

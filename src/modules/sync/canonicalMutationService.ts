@@ -25,6 +25,7 @@ import { cacheEntity, removeCachedEntity } from "./dexieCache";
 import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
 import { reverseVoucherServerFn } from "@/functions/reverseVoucherFn";
 import { applyStockDelta } from "@/lib/calc";
+import { recordStockMovement } from "@/modules/inventory/stockMovementService";
 
 export type EntityKind =
   | "invoice"
@@ -159,7 +160,7 @@ export async function authoritativeVoidPosted(params: AuthoritativeVoidPostedPar
   const collection = getCollectionName(kind);
   const now = Date.now();
 
-  const voidedDoc = {
+  const voidedDoc: any = {
     ...doc,
     status: "cancelled",
     postingStatus: "reversed",
@@ -169,6 +170,7 @@ export async function authoritativeVoidPosted(params: AuthoritativeVoidPostedPar
   };
 
   // 1. If document has a posted voucher, reverse it on server
+  let reversalVoucherId: string | undefined;
   if (doc.voucherId && idToken && financialYearId) {
     try {
       const revRes = await reverseVoucherServerFn({
@@ -183,11 +185,14 @@ export async function authoritativeVoidPosted(params: AuthoritativeVoidPostedPar
       if (!revRes.success) {
         throw new Error(revRes.error || "Failed to reverse accounting voucher on server");
       }
+      reversalVoucherId = revRes.reversalVoucherId;
     } catch (vErr: any) {
       console.error("[authoritativeVoidPosted] Voucher reversal failed:", vErr);
       throw new Error(vErr.message || "Failed to reverse accounting voucher");
     }
   }
+
+  if (reversalVoucherId) voidedDoc.reversalVoucherId = reversalVoucherId;
 
   // 2. Write authoritative voided status to Firebase RTDB FIRST
   if (firebaseDb) {
@@ -195,13 +200,23 @@ export async function authoritativeVoidPosted(params: AuthoritativeVoidPostedPar
     await set(docRef, sanitizeForFirebase(voidedDoc));
   }
 
-  // 3. Revert physical inventory stock delta
+  // 3. Revert physical inventory through the authoritative movement ledger.
   if (doc.items && doc.items.length > 0) {
     try {
-      if (kind === "invoice") {
-        await applyStockDelta(doc.items, 1); // Sales void: restock
-      } else if (kind === "purchase") {
-        await applyStockDelta(doc.items, -1); // Purchase void: unstock
+      if (kind === "invoice" || kind === "purchase") {
+        await Promise.all(doc.items.map((item: any, index: number) => recordStockMovement({
+          movementId: `sm_reverse_${doc.id}_${reversalVoucherId || now}_${index}`,
+          companyId,
+          productId: item.productId,
+          movementType: kind === "invoice" ? "in" : "out",
+          documentKind: kind,
+          documentId: doc.id,
+          documentNumber: doc.number,
+          date: now,
+          enteredQuantity: Number(item.quantity || 0),
+          enteredUom: item.unit || "NOS",
+          ratePaise: Math.round(Number(item.rate || 0) * 100),
+        })));
       }
     } catch (stkErr) {
       console.warn("[authoritativeVoidPosted] Stock delta adjustment warning:", stkErr);

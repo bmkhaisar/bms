@@ -52,6 +52,37 @@ No existing ledger or balance was overwritten.
 - Full application suite: 364 passed; one untouched Archify validator failed on Windows `EPERM`
 - Production Vercel/Nitro build: PASS
 
+## Deep-link, linked-draft, and posted-document correction hardening
+
+Invoice and quotation deep links now share one URL/state controller. It opens
+only an exact immutable document ID, removes `id` with history replacement on
+Cancel/X/save, clears selection state, and synchronizes Back/Forward without
+reopening from a Dexie or realtime echo. Party Insight and source-document links
+use the same immutable-ID route contract.
+
+Quotation changes never overwrite a posted invoice. A linked draft is updated
+only through the explicit action and retains its existing invoice ID/number.
+Invoice posting closes and reconciles visible state after the authoritative
+voucher and invoice commits; Dexie and other non-critical projections continue
+without waiting for the originating device's realtime echo.
+
+Posted invoices and purchases can no longer enter the ordinary edit path under
+their original IDs. The correction gate requires a reason and creates a new
+numbered draft with original-document linkage. Invoice correction reverses the
+original voucher before posting the replacement and records the original ID,
+corrected ID, correction reason, and reversal voucher ID. Purchase correction
+uses the controlled reversal service before creating its linked correction
+draft. Reversal stock movements use deterministic IDs to remain idempotent.
+Receipt and Payment registers were audited and expose no direct edit action for
+posted financial fields.
+
+Verification:
+
+- Targeted deep-link, persistence, Firebase/realtime, voucher, and correction suite: 40 passed, 0 failed
+- TypeScript (`tsc --noEmit`): PASS
+- Production Vercel/Nitro build: PASS
+- Browser QA: intentionally not performed
+
 ## Voucher Party Master and Firebase payload invariant follow-up
 
 Invoice posting subsequently exposed an unsafe optional-field construction in the

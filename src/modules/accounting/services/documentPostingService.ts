@@ -281,20 +281,19 @@ export async function postInvoiceTransaction(params: {
       await set(invRef, sanitizeForFirebase(updatedInvoice));
     }
 
-    // 8. Save immediately to local Dexie database
-    await db().invoices.put(updatedInvoice);
-
-    await cacheEntity({
-      uid,
-      companyId,
-      financialYearId,
-      entityType: "invoices",
-      entityId: invoice.id,
-      data: updatedInvoice,
-    });
-
-    // Parallel stock movements and price history updates
-    try {
+    // The authoritative voucher + invoice commits are complete. Local cache,
+    // stock materialization and price history are non-critical projections and
+    // must not delay the server-authoritative response or modal close.
+    void (async () => {
+      await db().invoices.put(updatedInvoice);
+      await cacheEntity({
+        uid,
+        companyId,
+        financialYearId,
+        entityType: "invoices",
+        entityId: invoice.id,
+        data: updatedInvoice,
+      });
       await Promise.all(
         frozenLines
           .filter((it) => it.productId)
@@ -337,9 +336,7 @@ export async function postInvoiceTransaction(params: {
           }
         }
       }
-    } catch (bgErr) {
-      console.warn("Stock/price history update warning:", bgErr);
-    }
+    })().catch((bgErr) => console.warn("Invoice projection update warning:", bgErr));
 
     return { success: true, voucherId, documentId: invoice.id, invoice: updatedInvoice };
   } catch (err: unknown) {
@@ -929,12 +926,31 @@ export async function amendPostedInvoiceTransaction(params: {
   } = params;
 
   try {
+    const isRecoverableRetry =
+      originalInvoice.postingStatus === "reversed" &&
+      originalInvoice.supersededByInvoiceId === correctedInvoice.id &&
+      Boolean(originalInvoice.reversalVoucherId || correctedInvoice.reversalVoucherId);
+    if (!originalInvoice.voucherId || (originalInvoice.postingStatus !== "posted" && !isRecoverableRetry)) {
+      return { success: false, error: "Only a posted invoice with an accounting voucher can be corrected." };
+    }
+    if (originalInvoice.id === correctedInvoice.id) {
+      return { success: false, error: "A posted invoice is immutable. Correction requires a new invoice ID." };
+    }
+    if (correctedInvoice.amendedFromId !== originalInvoice.id) {
+      return { success: false, error: "The correction draft is not linked to the original posted invoice." };
+    }
+    if (!amendmentReason.trim()) {
+      return { success: false, error: "A correction reason is required." };
+    }
+
     const clientMutationId =
       params.clientMutationId?.trim() ||
       `mut-amend-${correctedInvoice.id}`;
 
     // 1. Reverse original voucher if present
-    if (originalInvoice.voucherId && idToken) {
+    let reversalVoucherId: string | undefined =
+      correctedInvoice.reversalVoucherId || originalInvoice.reversalVoucherId;
+    if (!isRecoverableRetry && idToken) {
       const revRes = await reverseVoucherServerFn({
         data: {
           idToken,
@@ -948,17 +964,62 @@ export async function amendPostedInvoiceTransaction(params: {
       if (!revRes.success) {
         return { success: false, error: revRes.error || "Failed to reverse original voucher." };
       }
+      reversalVoucherId = revRes.reversalVoucherId;
+    } else if (!isRecoverableRetry) {
+      return { success: false, error: "Authentication is required to correct a posted invoice." };
     }
 
-    // 2. Post new corrected voucher
+    // 2. Freeze the original as superseded and persist the replacement draft
+    // together. If reposting fails, accounting history remains truthful and the
+    // recoverable correction draft remains available instead of mutating the
+    // original invoice in place.
     const newVersion = (originalInvoice.version || 1) + 1;
     const amendedToPost: Invoice = {
       ...correctedInvoice,
       version: newVersion,
       amendedFromId: originalInvoice.id,
+      originalDocumentId: originalInvoice.id,
+      correctionReason: amendmentReason.trim(),
+      reversalVoucherId,
+      postingStatus: "draft",
+      status: "draft",
+      voucherId: undefined,
     };
 
-    return await postInvoiceTransaction({
+    const supersededOriginal: Invoice = {
+      ...originalInvoice,
+      status: "voided",
+      postingStatus: "reversed",
+      correctedInvoiceId: amendedToPost.id,
+      supersededByInvoiceId: amendedToPost.id,
+      correctionReason: amendmentReason.trim(),
+      reversalVoucherId,
+      updatedAt: Date.now(),
+    };
+
+    if (firebaseDb) {
+      await update(ref(firebaseDb), {
+        [`companyData/${companyId}/invoices/${originalInvoice.id}`]: sanitizeForFirebase(supersededOriginal),
+        [`companyData/${companyId}/invoices/${amendedToPost.id}`]: sanitizeForFirebase(amendedToPost),
+      });
+    }
+    await db().invoices.bulkPut([supersededOriginal, amendedToPost]);
+
+    await Promise.all((originalInvoice.items || []).map((item, index) => recordStockMovement({
+      movementId: `sm_reverse_${originalInvoice.id}_${reversalVoucherId}_${index}`,
+      companyId,
+      productId: item.productId || "",
+      movementType: "in",
+      documentKind: "invoice",
+      documentId: originalInvoice.id,
+      documentNumber: originalInvoice.number,
+      date: Date.now(),
+      enteredQuantity: Number(item.quantity || 0),
+      enteredUom: item.unit || "NOS",
+      ratePaise: Math.round(Number(item.rate || 0) * 100),
+    })));
+
+    const postingResult = await postInvoiceTransaction({
       companyId,
       financialYearId,
       invoice: amendedToPost,
@@ -968,6 +1029,14 @@ export async function amendPostedInvoiceTransaction(params: {
       uid,
       clientMutationId,
     });
+    if (!postingResult.success) return postingResult;
+
+    return {
+      ...postingResult,
+      invoice: postingResult.invoice
+        ? { ...postingResult.invoice, amendedFromId: originalInvoice.id, originalDocumentId: originalInvoice.id, correctionReason: amendmentReason.trim(), reversalVoucherId }
+        : amendedToPost,
+    };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Failed to amend posted invoice:", err);

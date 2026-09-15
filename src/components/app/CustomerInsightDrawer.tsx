@@ -21,6 +21,8 @@ import {
   Building2,
   ShoppingCart,
 } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { documentDeepLink } from "@/lib/useDocumentDeepLink";
 
 interface Props {
   customerId: string | null;
@@ -30,6 +32,7 @@ interface Props {
 }
 
 export function CustomerInsightDrawer({ customerId, open, onOpenChange, onSelectInvoice }: Props) {
+  const navigate = useNavigate();
   const [summary, setSummary] = useState<CustomerFinancialSummary | null>(null);
   const [dualPosition, setDualPosition] = useState<PartyDualFinancialPosition | null>(null);
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -271,7 +274,9 @@ export function CustomerInsightDrawer({ customerId, open, onOpenChange, onSelect
                     <div
                       key={inv.id}
                       onClick={() => {
+                        onOpenChange(false);
                         if (onSelectInvoice) onSelectInvoice(inv.id);
+                        else navigate({ to: documentDeepLink("/invoices", inv.id) as never });
                       }}
                       className="group flex items-center justify-between p-2.5 rounded-lg border border-border/50 bg-card hover:bg-accent/40 cursor-pointer transition-colors"
                     >

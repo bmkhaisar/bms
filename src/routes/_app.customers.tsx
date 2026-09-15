@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AppShell, PageHeader } from "@/components/app/AppShell";
 import { db, uid, type Customer } from "@/lib/db";
 import { useLive } from "@/lib/useLive";
@@ -25,6 +25,7 @@ import { createCustomerWithLedger } from "@/modules/accounting/services/partyLed
 import { CustomerInsightDrawer } from "@/components/app/CustomerInsightDrawer";
 import { performOptimisticMutation } from "@/lib/mutationPipeline";
 import { checkEntityHistoricalUsage, type HistoricalUsageResult } from "@/lib/historicalUsage";
+import { documentDeepLink } from "@/lib/useDocumentDeepLink";
 
 export const Route = createFileRoute("/_app/customers")({
   head: () => ({ meta: [{ title: "Customers — BMS NEXT" }] }),
@@ -52,6 +53,7 @@ const empty: Customer = {
 };
 
 function CustomersPage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
   const dexieRows = useLive<Customer>(() => db().customers.orderBy("name").toArray());
@@ -619,6 +621,10 @@ function CustomersPage() {
         customerId={selectedCustomerIdForDrawer}
         open={Boolean(selectedCustomerIdForDrawer)}
         onOpenChange={(o) => !o && setSelectedCustomerIdForDrawer(null)}
+        onSelectInvoice={(invoiceId) => {
+          setSelectedCustomerIdForDrawer(null);
+          navigate({ to: documentDeepLink("/invoices", invoiceId) as never });
+        }}
       />
     </AppShell>
   );

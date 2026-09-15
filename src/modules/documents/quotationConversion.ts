@@ -6,8 +6,10 @@ import { postInvoiceTransaction } from "@/modules/accounting/services/documentPo
 import { ensureCustomerLedger } from "@/modules/accounting/services/partyLedgerSyncService";
 import type { Company } from "@/modules/company/types";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
-import { ref, get, update } from "firebase/database";
+import { ref, get, update, runTransaction } from "firebase/database";
 import { cacheEntity } from "@/modules/sync/dexieCache";
+import { applyQuotationToLinkedDraft, isInvoiceImmutable } from "./linkedDraftInvoice";
+export { applyQuotationToLinkedDraft, isInvoiceImmutable } from "./linkedDraftInvoice";
 
 export interface ConvertQuotationOptions {
   activeCompany?: Partial<Company> | null;
@@ -23,6 +25,48 @@ export interface QuotationConversionResult {
   invoice?: Invoice;
   isExisting?: boolean;
   error?: string;
+}
+
+export async function updateLinkedDraftInvoiceFromQuotation(
+  quotation: Quotation,
+  invoice: Invoice,
+  options?: ConvertQuotationOptions,
+): Promise<Invoice> {
+  const now = Date.now();
+  let updated = applyQuotationToLinkedDraft(quotation, invoice, now);
+
+  if (options?.activeCompany?.id && firebaseDb) {
+    let rejection = "Linked invoice no longer exists.";
+    const transaction = await runTransaction(
+      ref(firebaseDb, `companyData/${options.activeCompany.id}/invoices/${invoice.id}`),
+      (current) => {
+        if (!current) return;
+        try {
+          return sanitizeForFirebase(applyQuotationToLinkedDraft(quotation, current as Invoice, now));
+        } catch (error) {
+          rejection = error instanceof Error ? error.message : rejection;
+          return;
+        }
+      },
+      { applyLocally: false },
+    );
+    if (!transaction.committed || !transaction.snapshot.exists()) throw new Error(rejection);
+    updated = transaction.snapshot.val() as Invoice;
+  }
+
+  await db().invoices.put(updated);
+  if (options?.activeCompany?.id) {
+    await cacheEntity({
+      uid: options.user?.uid || "",
+      companyId: options.activeCompany.id,
+      entityType: "invoice",
+      entityId: updated.id,
+      data: updated,
+      financialYearId: updated.financialYearId,
+      name: updated.number,
+    });
+  }
+  return updated;
 }
 
 /**
@@ -159,6 +203,7 @@ export async function convertQuotationToInvoice(
       sourceType: "QUOTATION",
       sourceQuotationId: quotation.id,
       sourceQuotationNumber: quotation.number,
+      sourceQuotationUpdatedAt: quotation.updatedAt || quotation.createdAt,
       convertedFromQuotationId: quotation.id,
       createdAt: now,
       version: 1,

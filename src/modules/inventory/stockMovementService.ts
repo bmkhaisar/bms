@@ -39,6 +39,7 @@ const MEMORY_STOCK_MOVEMENTS: StockMovement[] = [];
  * Records an authoritative stock movement and updates the materialized product stock cache.
  */
 export async function recordStockMovement(params: {
+  movementId?: string;
   companyId: string;
   productId: string;
   movementType: "in" | "out" | "adjustment";
@@ -87,7 +88,16 @@ export async function recordStockMovement(params: {
     }
   }
 
-  const movementId = `sm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const movementId = params.movementId || `sm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+  // Deterministic IDs make reversal/correction projections idempotent. Do not
+  // apply the materialized stock delta twice when a mutation is safely retried.
+  if (params.movementId && firebaseDb) {
+    try {
+      const existing = await get(ref(firebaseDb, `companyData/${companyId}/stockMovements/${movementId}`));
+      if (existing.exists()) return existing.val() as StockMovement;
+    } catch {}
+  }
   const movement: StockMovement = {
     id: movementId,
     companyId,
