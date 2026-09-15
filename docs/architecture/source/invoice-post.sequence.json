@@ -1,0 +1,310 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "BMS NEXT Invoice Posting Sequence",
+    "output": "docs/architecture/generated/invoice-post.sequence.html",
+    "viewBox": [1080, 720],
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "full-posting-lifecycle",
+        "label": "Full posting lifecycle",
+        "focus": ["user", "ui", "postingSvc", "taxEngine", "serverFn", "rtdb", "dexie", "realtime", "reports"],
+        "note": "Follow invoice posting from client button click through server voucher creation and cross-device realtime broadcast."
+      },
+      {
+        "id": "server-trust-gate",
+        "label": "Server trust gate",
+        "focus": ["postingSvc", "serverFn", "rtdb"],
+        "note": "Isolate the authoritative Firebase Admin posting engine enforcing double-entry balance and voucher allocation."
+      },
+      {
+        "id": "realtime-reconciliation",
+        "label": "Realtime reconciliation",
+        "focus": ["rtdb", "realtime", "dexie", "reports"],
+        "note": "Trace how cloud operational updates synchronize into Dexie and re-render reactive useLive components."
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "User",
+      "sublabel": "Billing Clerk"
+    },
+    {
+      "id": "ui",
+      "type": "frontend",
+      "label": "Invoice UI",
+      "sublabel": "Document List"
+    },
+    {
+      "id": "postingSvc",
+      "type": "backend",
+      "label": "Posting Svc",
+      "sublabel": "Orchestrator"
+    },
+    {
+      "id": "taxEngine",
+      "type": "backend",
+      "label": "Tax Engine",
+      "sublabel": "Canonical Calc"
+    },
+    {
+      "id": "serverFn",
+      "type": "security",
+      "label": "Server Admin",
+      "sublabel": "Posting Fn"
+    },
+    {
+      "id": "rtdb",
+      "type": "database",
+      "label": "Firebase RTDB",
+      "sublabel": "Cloud Truth"
+    },
+    {
+      "id": "dexie",
+      "type": "database",
+      "label": "Dexie DB",
+      "sublabel": "Local Cache"
+    },
+    {
+      "id": "realtime",
+      "type": "messagebus",
+      "label": "Sync Listener",
+      "sublabel": "Realtime"
+    },
+    {
+      "id": "reports",
+      "type": "frontend",
+      "label": "Reports UI",
+      "sublabel": "Dashboard"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 260,
+      "label": "Client Preflight & Tax Recalculation"
+    },
+    {
+      "from": 265,
+      "to": 375,
+      "label": "Authoritative Double-Entry Server Post"
+    },
+    {
+      "from": 380,
+      "to": 490,
+      "label": "Cloud Truth & Local Cache Reconciliation"
+    },
+    {
+      "from": 495,
+      "to": 620,
+      "label": "Cross-Device Realtime Propagation"
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg-post-click",
+      "from": "user",
+      "to": "ui",
+      "y": 160,
+      "label": "Click Post Invoice",
+      "variant": "emphasis"
+    },
+    {
+      "id": "msg-post-dispatch",
+      "from": "ui",
+      "to": "postingSvc",
+      "y": 190,
+      "label": "postInvoiceTransaction(invoice)",
+      "variant": "default"
+    },
+    {
+      "id": "msg-tax-validate",
+      "from": "postingSvc",
+      "to": "taxEngine",
+      "y": 220,
+      "label": "validateDocumentTotals(invoice)",
+      "variant": "default"
+    },
+    {
+      "id": "msg-tax-return",
+      "from": "taxEngine",
+      "to": "postingSvc",
+      "y": 250,
+      "label": "authoritative totals + Rule 46 ok",
+      "variant": "return"
+    },
+    {
+      "id": "msg-server-fn",
+      "from": "postingSvc",
+      "to": "serverFn",
+      "y": 285,
+      "label": "postVoucherServerFn({ idToken, lines, mutationId })",
+      "variant": "security"
+    },
+    {
+      "id": "msg-rtdb-write",
+      "from": "serverFn",
+      "to": "rtdb",
+      "y": 315,
+      "label": "atomic multi-path write (vouchers + ledgers)",
+      "variant": "security"
+    },
+    {
+      "id": "msg-rtdb-ack",
+      "from": "rtdb",
+      "to": "serverFn",
+      "y": 345,
+      "label": "transaction committed",
+      "variant": "return"
+    },
+    {
+      "id": "msg-voucher-return",
+      "from": "serverFn",
+      "to": "postingSvc",
+      "y": 372,
+      "label": "voucherId + allocated sequence number",
+      "variant": "return"
+    },
+    {
+      "id": "msg-save-invoice-rtdb",
+      "from": "postingSvc",
+      "to": "rtdb",
+      "y": 405,
+      "label": "set(companyData/invoices/id, frozenInvoice)",
+      "variant": "security"
+    },
+    {
+      "id": "msg-put-dexie",
+      "from": "postingSvc",
+      "to": "dexie",
+      "y": 435,
+      "label": "db().invoices.put(updatedInvoice)",
+      "variant": "default"
+    },
+    {
+      "id": "msg-svc-return",
+      "from": "postingSvc",
+      "to": "ui",
+      "y": 462,
+      "label": "{ success: true, voucherId, invoice }",
+      "variant": "return"
+    },
+    {
+      "id": "msg-ui-toast",
+      "from": "ui",
+      "to": "user",
+      "y": 488,
+      "label": "render posted invoice + toast success",
+      "variant": "return"
+    },
+    {
+      "id": "msg-realtime-trigger",
+      "from": "rtdb",
+      "to": "realtime",
+      "y": 520,
+      "label": "onValue(companyData/invoices) fires",
+      "variant": "dashed"
+    },
+    {
+      "id": "msg-realtime-put",
+      "from": "realtime",
+      "to": "dexie",
+      "y": 555,
+      "label": "bulkPut(records) across peer devices",
+      "variant": "default"
+    },
+    {
+      "id": "msg-dexie-react",
+      "from": "dexie",
+      "to": "reports",
+      "y": 590,
+      "label": "useLive invalidates & refreshes AR report",
+      "variant": "default"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "ui",
+      "from": 160,
+      "to": 492,
+      "type": "frontend"
+    },
+    {
+      "participant": "postingSvc",
+      "from": 190,
+      "to": 466,
+      "type": "backend"
+    },
+    {
+      "participant": "taxEngine",
+      "from": 220,
+      "to": 254,
+      "type": "backend"
+    },
+    {
+      "participant": "serverFn",
+      "from": 285,
+      "to": 376,
+      "type": "security"
+    },
+    {
+      "participant": "rtdb",
+      "from": 315,
+      "to": 349,
+      "type": "database"
+    },
+    {
+      "participant": "dexie",
+      "from": 435,
+      "to": 464,
+      "type": "database"
+    },
+    {
+      "participant": "realtime",
+      "from": 520,
+      "to": 559,
+      "type": "messagebus"
+    },
+    {
+      "participant": "reports",
+      "from": 590,
+      "to": 612,
+      "type": "frontend"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Posting Invariants",
+      "items": [
+        "Client and server execute identical canonical tax calculation (PRD §§ 44-55)",
+        "Tampered client totals are rejected if discrepancy exceeds floating roundoff tolerance",
+        "Rule 46 statutory GST invoice number validation is enforced prior to voucher allocation"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Idempotent Server Boundary",
+      "items": [
+        "Double-entry vouchers are allocated atomically by Firebase Admin server functions",
+        "clientMutationId eliminates duplicate postings during network retries or double clicks",
+        "RTDB security rules block direct client writes to vouchers and docCounters"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Fast Path & Multi-Device Sync",
+      "items": [
+        "Originating device updates local Dexie immediately upon server response for instant UX",
+        "Realtime listener propagates cloud changes to peer devices without manual page reloads",
+        "Frozen snapshots preserve company settings, signatory, and tax head configuration forever"
+      ]
+    }
+  ]
+}

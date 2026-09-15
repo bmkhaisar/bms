@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "BMS NEXT Realtime Sync & Offline Cache Map",
+    "output": "docs/architecture/generated/realtime-sync.sequence.html",
+    "viewBox": [1080, 760],
+    "column_fit": "spread",
+    "animation": "trace",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "origin-fast-path",
+        "label": "Originating Fast Path",
+        "focus": ["dev-a-ui", "dexie-a", "srv-admin"],
+        "note": "Originating client updates local cache and UI immediately upon server ack."
+      },
+      {
+        "id": "cloud-distribution",
+        "label": "Cloud Distribution",
+        "focus": ["srv-admin", "rtdb", "sync-b"],
+        "note": "Firebase RTDB pushes canonical delta over persistent WebSockets to remote peers."
+      },
+      {
+        "id": "peer-reactivity",
+        "label": "Peer Reactivity",
+        "focus": ["sync-b", "dexie-b", "dev-b-ui"],
+        "note": "Peer sync manager writes to Dexie bms_cache_v1 triggering TanStack live query re-renders."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "dev-a-ui", "type": "frontend", "label": "Device A UI", "sublabel": "Originating" },
+    { "id": "dexie-a", "type": "frontend", "label": "Device A Dexie", "sublabel": "Local Cache" },
+    { "id": "srv-admin", "type": "backend", "label": "Server Admin", "sublabel": "Canonical Post" },
+    { "id": "rtdb", "type": "database", "label": "Firebase RTDB", "sublabel": "Cloud Truth" },
+    { "id": "sync-b", "type": "backend", "label": "Device B Sync", "sublabel": "Realtime Worker" },
+    { "id": "dexie-b", "type": "frontend", "label": "Device B Dexie", "sublabel": "Local Cache" },
+    { "id": "dev-b-ui", "type": "frontend", "label": "Device B UI", "sublabel": "Reactive Peer" }
+  ],
+  "segments": [
+    {
+      "from": 145,
+      "to": 360,
+      "label": "Originating Fast Path (Device A)"
+    },
+    {
+      "from": 375,
+      "to": 540,
+      "label": "Peer Realtime Propagation (Device B)"
+    },
+    {
+      "from": 555,
+      "to": 630,
+      "label": "Originating Cloud Reconciliation"
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg-dev-a-mutate",
+      "from": "dev-a-ui",
+      "to": "srv-admin",
+      "y": 170,
+      "label": "POST /api/mutate",
+      "variant": "emphasis"
+    },
+    {
+      "id": "msg-srv-write",
+      "from": "srv-admin",
+      "to": "rtdb",
+      "y": 225,
+      "label": "Canonical Commit",
+      "variant": "emphasis"
+    },
+    {
+      "id": "msg-srv-ack",
+      "from": "srv-admin",
+      "to": "dev-a-ui",
+      "y": 280,
+      "label": "200 Success + Record",
+      "variant": "emphasis"
+    },
+    {
+      "id": "msg-dev-a-cache",
+      "from": "dev-a-ui",
+      "to": "dexie-a",
+      "y": 335,
+      "label": "Immediate Cache Put",
+      "variant": "default"
+    },
+    {
+      "id": "msg-rtdb-broadcast",
+      "from": "rtdb",
+      "to": "sync-b",
+      "y": 405,
+      "label": "onValue Delta Push",
+      "variant": "emphasis"
+    },
+    {
+      "id": "msg-sync-b-upsert",
+      "from": "sync-b",
+      "to": "dexie-b",
+      "y": 460,
+      "label": "Atomic Put / Invalidate",
+      "variant": "default"
+    },
+    {
+      "id": "msg-dev-b-render",
+      "from": "dexie-b",
+      "to": "dev-b-ui",
+      "y": 515,
+      "label": "LiveQuery Trigger",
+      "variant": "emphasis"
+    },
+    {
+      "id": "msg-dev-a-recon",
+      "from": "rtdb",
+      "to": "dexie-a",
+      "y": 585,
+      "label": "Reconciliation Ping",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Originating Fast Path",
+      "items": [
+        "Device A does not wait for websocket round-trip to feel instantaneous",
+        "Trusted server returns authoritative 200 payload directly to caller",
+        "Caller writes immediately to local Dexie bms_cache_v1 and updates React state"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Peer Realtime Propagation",
+      "items": [
+        "Firebase RTDB broadcasts delta event to all subscribed company listeners",
+        "Device B companyRealtimeSync receives snapshot and performs atomic Dexie upsert",
+        "TanStack useLiveQuery detects table version change and triggers UI re-render"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Reconciliation & Idempotency",
+      "items": [
+        "Originating Device A receives its own echo via websocket and compares timestamp",
+        "Existing local record matches cloud version; no destructive re-render occurs",
+        "Offline mutations queue in outbox and replay in strict monotonically increasing order"
+      ]
+    }
+  ]
+}

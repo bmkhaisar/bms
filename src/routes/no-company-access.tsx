@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertCircle, LogOut, Loader2, ShieldCheck } from "lucide-react";
 import { checkPlatformAdminSetupStatusFn } from "@/functions/platformAdminFns";
+import { startupState } from "@/modules/app/startupState";
 
 export const Route = createFileRoute("/no-company-access")({
   head: () => ({ meta: [{ title: "No Company Access — BMS NEXT" }] }),
@@ -71,6 +72,12 @@ export function NoCompanyAccessPage() {
       active = false;
     };
   }, [user, isPlatformAdmin, authInitializing, claimsLoading, resolutionState, companiesLoading, companies.length, nav]);
+
+  useEffect(() => {
+    if (!initializing && resolutionState === "ready" && !companiesLoading && !checkingPrivileges) {
+      startupState.markBackendReady();
+    }
+  }, [initializing, resolutionState, companiesLoading, checkingPrivileges]);
 
   if (initializing || resolutionState !== "ready" || companiesLoading || checkingPrivileges) {
     return (

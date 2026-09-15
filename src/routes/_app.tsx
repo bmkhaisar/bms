@@ -3,7 +3,9 @@ import { useEffect } from "react";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { startCompanyRealtimeSync } from "@/modules/sync/companyRealtimeSync";
-import { Loader2 } from "lucide-react";
+import { AppShell } from "@/components/app/AppShell";
+import { DashboardSkeleton } from "@/components/app/Skeletons";
+import { startupState } from "@/modules/app/startupState";
 
 export const Route = createFileRoute("/_app")({
   component: AppGuard,
@@ -30,6 +32,19 @@ function AppGuard() {
     });
     return () => stopSync();
   }, [activeCompany?.id, isAuthenticated, user?.uid, activeFinancialYear?.id]);
+
+  // Concurrently signal startup readiness as soon as auth & active company resolve
+  useEffect(() => {
+    if (!authInitializing && !claimsLoading) {
+      if (!isAuthenticated || !user) {
+        startupState.markBackendReady();
+      } else if (isPlatformAdmin) {
+        startupState.markBackendReady();
+      } else if (!companyLoading && (activeCompany || companies.length === 0)) {
+        startupState.markBackendReady();
+      }
+    }
+  }, [authInitializing, claimsLoading, isAuthenticated, user, isPlatformAdmin, companyLoading, activeCompany, companies.length]);
 
   useEffect(() => {
     if (authInitializing || claimsLoading) return;
@@ -75,20 +90,21 @@ function AppGuard() {
     nav,
   ]);
 
-  if (authInitializing || claimsLoading || (isAuthenticated && !isPlatformAdmin && companyLoading)) {
+  // If credentials or company memberships are actively resolving, mount AppShell with DashboardSkeleton
+  // underneath the startup overlay (or as extended fallback) to eliminate layout shift and jank
+  if (authInitializing || claimsLoading || (isAuthenticated && !isPlatformAdmin && (companyLoading || !activeCompany))) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-sky-50/40 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-7 w-7 animate-spin text-primary" />
-          <p className="text-xs font-medium text-muted-foreground">
-            {authInitializing
-              ? "Verifying authentication..."
-              : claimsLoading
-              ? "Resolving identity credentials..."
-              : "Loading company workspace..."}
-          </p>
+      <AppShell title="Dashboard">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground/80">
+              <span className="inline-block h-2 w-2 rounded-full bg-primary/60 animate-pulse" />
+              <span>Loading company workspace…</span>
+            </div>
+          </div>
+          <DashboardSkeleton />
         </div>
-      </div>
+      </AppShell>
     );
   }
 

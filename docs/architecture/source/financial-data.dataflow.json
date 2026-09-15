@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "BMS NEXT Financial Data Flow",
+    "output": "docs/architecture/generated/financial-data.dataflow.html",
+    "viewBox": [1080, 540],
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "financial-authority-rail",
+        "label": "Financial authority rail",
+        "focus": ["party-product-masters", "commercial-docs", "voucher-engine", "rtdb-store", "gst-register"],
+        "note": "Follow authoritative commercial posting from masters through double-entry vouchers to statutory tax registers."
+      },
+      {
+        "id": "operational-cache-rail",
+        "label": "Operational cache & KPI rail",
+        "focus": ["ui-capture", "stock-engine", "rtdb-store", "dexie-cache", "dashboard-kpi"],
+        "note": "Trace user inputs, inventory movements, cloud synchronization, and derived dashboard metrics."
+      },
+      {
+        "id": "document-pdf-output",
+        "label": "Document PDF output",
+        "focus": ["commercial-docs", "pdf-storage"],
+        "note": "Isolate vector PDF generation using immutable historical snapshots."
+      }
+    ]
+  },
+  "stages": [
+    { "label": "Masters & Input" },
+    { "label": "Document Engine" },
+    { "label": "Posting Engines" },
+    { "label": "Persistence Tier" },
+    { "label": "Reports & Analytics" }
+  ],
+  "nodes": [
+    {
+      "id": "party-product-masters",
+      "type": "database",
+      "label": "Party & Products",
+      "sublabel": "Masters & Snapshots",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "ui-capture",
+      "type": "frontend",
+      "label": "UI Capture",
+      "sublabel": "Invoices & Receipts",
+      "stage": 0,
+      "row": 2
+    },
+    {
+      "id": "commercial-docs",
+      "type": "backend",
+      "label": "Document Engine",
+      "sublabel": "Canonical Calc & GST",
+      "stage": 1,
+      "row": 0
+    },
+    {
+      "id": "pdf-storage",
+      "type": "cloud",
+      "label": "PDF Engine",
+      "sublabel": "Vector jsPDF & R2",
+      "stage": 1,
+      "row": 2
+    },
+    {
+      "id": "voucher-engine",
+      "type": "security",
+      "label": "Voucher Engine",
+      "sublabel": "Double-Entry Server",
+      "stage": 2,
+      "row": 0
+    },
+    {
+      "id": "stock-engine",
+      "type": "backend",
+      "label": "Stock Movement",
+      "sublabel": "Inventory Engine",
+      "stage": 2,
+      "row": 2
+    },
+    {
+      "id": "rtdb-store",
+      "type": "database",
+      "label": "Firebase RTDB",
+      "sublabel": "Cloud Truth Store",
+      "stage": 3,
+      "row": 0
+    },
+    {
+      "id": "dexie-cache",
+      "type": "database",
+      "label": "Dexie Cache",
+      "sublabel": "bms_db_v1 Local",
+      "stage": 3,
+      "row": 2
+    },
+    {
+      "id": "gst-register",
+      "type": "backend",
+      "label": "GST Register",
+      "sublabel": "GSTR-1 & Reports",
+      "stage": 4,
+      "row": 0
+    },
+    {
+      "id": "dashboard-kpi",
+      "type": "frontend",
+      "label": "Dashboard KPIs",
+      "sublabel": "AR/AP & Metrics",
+      "stage": 4,
+      "row": 2
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-master-docs",
+      "from": "party-product-masters",
+      "to": "commercial-docs",
+      "label": "master snapshot",
+      "classification": "rates & gstin",
+      "variant": "default",
+      "route": "straight",
+      "labelDy": -20
+    },
+    {
+      "id": "flow-ui-docs",
+      "from": "ui-capture",
+      "to": "commercial-docs",
+      "label": "user entries",
+      "classification": "lines & disc",
+      "variant": "emphasis"
+    },
+    {
+      "id": "flow-docs-pdf",
+      "from": "commercial-docs",
+      "to": "pdf-storage",
+      "label": "frozen model",
+      "classification": "vector layout",
+      "variant": "dashed",
+      "labelAt": [315, 230]
+    },
+    {
+      "id": "flow-docs-voucher",
+      "from": "commercial-docs",
+      "to": "voucher-engine",
+      "label": "posting payload",
+      "classification": "balanced lines",
+      "variant": "security",
+      "route": "straight",
+      "labelDy": -20
+    },
+    {
+      "id": "flow-docs-stock",
+      "from": "commercial-docs",
+      "to": "stock-engine",
+      "label": "item delta",
+      "classification": "base uom qty",
+      "variant": "default"
+    },
+    {
+      "id": "flow-voucher-rtdb",
+      "from": "voucher-engine",
+      "to": "rtdb-store",
+      "label": "atomic commit",
+      "classification": "vouchers & ledgers",
+      "variant": "security",
+      "route": "straight"
+    },
+    {
+      "id": "flow-stock-dexie",
+      "from": "stock-engine",
+      "to": "dexie-cache",
+      "label": "stock records",
+      "classification": "movement ledger",
+      "variant": "default",
+      "route": "straight"
+    },
+    {
+      "id": "flow-rtdb-dexie",
+      "from": "rtdb-store",
+      "to": "dexie-cache",
+      "label": "realtime sync",
+      "classification": "cloud replication",
+      "variant": "emphasis",
+      "labelAt": [745, 230]
+    },
+    {
+      "id": "flow-rtdb-gst",
+      "from": "rtdb-store",
+      "to": "gst-register",
+      "label": "tax ledger",
+      "classification": "statutory returns",
+      "variant": "default",
+      "route": "straight"
+    },
+    {
+      "id": "flow-dexie-dash",
+      "from": "dexie-cache",
+      "to": "dashboard-kpi",
+      "label": "cached balances",
+      "classification": "reactive queries",
+      "variant": "emphasis",
+      "route": "straight"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Authoritative vs Derived Data",
+      "items": [
+        "Authoritative: Firebase RTDB vouchers, ledger closing balances, and stock movements",
+        "Derived: Dexie local caches, GSTR reports, Trial Balance, and Dashboard KPI rollups",
+        "Derived tables can be rebuilt deterministically from authoritative ledger transactions"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Trust and Storage Boundaries",
+      "items": [
+        "Voucher Engine enforces integer paise double-entry balance and active FY checks",
+        "Frozen Master Snapshots insulate historical documents from subsequent setting edits",
+        "Binary PDF assets and signatures are stored in Cloudflare R2 object storage"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Realtime Propagation",
+      "items": [
+        "Firebase onValue listeners replicate cloud mutations into client Dexie tables",
+        "Reactive useLive hooks update UI tables and charts without requiring full page reloads",
+        "Deletions in RTDB are authoritatively reconciled by deleting matching local Dexie records"
+      ]
+    }
+  ]
+}

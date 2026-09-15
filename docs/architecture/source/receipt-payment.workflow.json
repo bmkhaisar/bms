@@ -1,0 +1,207 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "BMS NEXT Receipt & Payment Settlement Workflow",
+    "output": "docs/architecture/generated/receipt-payment.workflow.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "customer-ar-flow",
+        "label": "Customer receivable flow",
+        "focus": ["sales-invoice", "alloc-router", "receipt-voucher", "liquidity-ledger", "ar-ledger", "doc-reconcile"],
+        "note": "Follow sales invoice creation through receipt allocation, double-entry ledger impact, and balance liquidation."
+      },
+      {
+        "id": "advance-tax-path",
+        "label": "Advance tax accounting",
+        "focus": ["alloc-router", "receipt-voucher", "advance-tax-gate", "doc-reconcile"],
+        "note": "Trace unlinked advance receipts triggering statutory GST tax head splits before invoice matching."
+      },
+      {
+        "id": "audit-reversal",
+        "label": "Reconciliation and reversal",
+        "focus": ["doc-reconcile", "reversal-gate"],
+        "note": "View post-settlement reconciliation and immutable counter-voucher reversal mechanics."
+      }
+    ]
+  },
+  "lanes": [
+    { "id": "origination", "label": "Document Origination" },
+    { "id": "settlement", "label": "Settlement & Allocation" },
+    { "id": "ledgers", "label": "Double-Entry Ledgers" },
+    { "id": "reconciliation", "label": "Reconciliation & Audit" }
+  ],
+  "phases": [
+    { "id": "phase-originate", "label": "Document Creation", "fromCol": 0, "toCol": 1 },
+    { "id": "phase-settle", "label": "Settlement & Split", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "phase-reconcile", "label": "Reconcile & Audit", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["sales-invoice", "alloc-router", "receipt-voucher", "liquidity-ledger", "doc-reconcile"],
+  "nodes": [
+    {
+      "id": "sales-invoice",
+      "lane": "origination",
+      "col": 0,
+      "type": "frontend",
+      "label": "Sales Invoice",
+      "sublabel": "Customer AR Debited",
+      "width": 136
+    },
+    {
+      "id": "alloc-router",
+      "lane": "settlement",
+      "col": 1,
+      "type": "backend",
+      "label": "Allocation Policy",
+      "sublabel": "Advance / Ref / On-Acct",
+      "tag": "Settlement Gate",
+      "width": 140
+    },
+    {
+      "id": "receipt-voucher",
+      "lane": "settlement",
+      "col": 2,
+      "type": "backend",
+      "label": "Receipt Voucher",
+      "sublabel": "Cash/Bank Settlement",
+      "tag": "Double-Entry",
+      "width": 136
+    },
+    {
+      "id": "advance-tax-gate",
+      "lane": "reconciliation",
+      "col": 2,
+      "type": "security",
+      "label": "Advance GST",
+      "sublabel": "Statutory Rule 46",
+      "tag": "CGST/SGST Split",
+      "width": 136
+    },
+    {
+      "id": "liquidity-ledger",
+      "lane": "ledgers",
+      "col": 3,
+      "type": "database",
+      "label": "Cash / Bank Ledger",
+      "sublabel": "Debit Liquidity",
+      "width": 136
+    },
+    {
+      "id": "ar-ledger",
+      "lane": "origination",
+      "col": 3,
+      "type": "database",
+      "label": "Customer AR",
+      "sublabel": "Credit Receivable",
+      "width": 136
+    },
+    {
+      "id": "doc-reconcile",
+      "lane": "reconciliation",
+      "col": 4,
+      "type": "backend",
+      "label": "Doc Reconciliation",
+      "sublabel": "Unpaid/Partial/Paid",
+      "tag": "Balance Recalc",
+      "width": 140
+    },
+    {
+      "id": "reversal-gate",
+      "lane": "reconciliation",
+      "col": 5,
+      "type": "security",
+      "label": "Reversal Engine",
+      "sublabel": "Counter-Voucher",
+      "tag": "Immutable History",
+      "width": 136
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-inv-alloc",
+      "from": "sales-invoice",
+      "to": "alloc-router",
+      "label": "ALLOCATES",
+      "variant": "emphasis"
+    },
+    {
+      "id": "edge-alloc-receipt",
+      "from": "alloc-router",
+      "to": "receipt-voucher",
+      "label": "POSTS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "edge-receipt-advance",
+      "from": "receipt-voucher",
+      "to": "advance-tax-gate",
+      "label": "TAX_LIABILITY",
+      "variant": "security"
+    },
+    {
+      "id": "edge-receipt-liquidity",
+      "from": "receipt-voucher",
+      "to": "liquidity-ledger",
+      "label": "DEBITS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "edge-receipt-ar",
+      "from": "receipt-voucher",
+      "to": "ar-ledger",
+      "label": "CREDITS",
+      "variant": "default"
+    },
+    {
+      "id": "edge-liquidity-reconcile",
+      "from": "liquidity-ledger",
+      "to": "doc-reconcile",
+      "label": "SETTLES",
+      "variant": "emphasis"
+    },
+    {
+      "id": "edge-ar-reconcile",
+      "from": "ar-ledger",
+      "to": "doc-reconcile",
+      "label": "BALANCES",
+      "variant": "default"
+    },
+    {
+      "id": "edge-reconcile-reverse",
+      "from": "doc-reconcile",
+      "to": "reversal-gate",
+      "label": "VOIDS",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Double-Entry Invariants",
+      "items": [
+        "Invoices debit Customer Receivable; Receipts debit Cash/Bank and credit Customer Receivable",
+        "Purchases credit Supplier Payable; Payments debit Supplier Payable and credit Cash/Bank",
+        "Document balance dues recompute deterministically: Grand Total minus Allocated Receipts/Payments"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Advance Allocation Modes",
+      "items": [
+        "ADVANCE: receipt unlinked to existing bill; triggers statutory Advance GST calculation",
+        "AGAINST_REF: explicit FIFO or selected invoice match; liquidates outstanding balance",
+        "ON_ACCOUNT: general party credit reducing overall debtor ledger exposure"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Strict Reversal Principle",
+      "items": [
+        "Posted financial vouchers and entries are NEVER deleted or rewritten",
+        "Cancellation creates an exact balanced opposite counter-voucher",
+        "Linked document statuses transition from Posted to Cancelled/Reversed"
+      ]
+    }
+  ]
+}

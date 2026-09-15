@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "compare",
+  "type": "architecture",
+  "comparatorVersion": 1,
+  "canonicalVersion": 1,
+  "completeness": "complete",
+  "proofLevel": "authored",
+  "base": {
+    "title": "BMS NEXT Runtime Architecture",
+    "rawSha256": "6eb57750e497a929e0959a88aeefe18be205e795e1e0a571876069ea17f5d7c2",
+    "semanticSha256": "d443d9a0cf34e2109089977559949fd0b3aeceb98c3e35f8e284a39f15a00c70",
+    "bytes": 7867
+  },
+  "head": {
+    "title": "BMS NEXT Runtime Architecture (Proposed e-Invoice Head)",
+    "rawSha256": "1c7a6557647120e7acbffec9d077b4aa2b4d5e9ca833d06fb35089e67b961471",
+    "semanticSha256": "c75f285df5a2340574466c1c0cc7842e0cad1ffe8589b50b02484181e5c65c23",
+    "bytes": 9840
+  },
+  "summary": {
+    "components": {
+      "added": 1,
+      "changed": 0,
+      "evidenceChanged": 0,
+      "removed": 0,
+      "moved": 0
+    },
+    "connections": {
+      "added": 1,
+      "changed": 0,
+      "removed": 0,
+      "rerouted": 0
+    },
+    "boundaries": {
+      "added": 0,
+      "changed": 0,
+      "removed": 0,
+      "geometryChanged": 0
+    },
+    "presentationChanged": true,
+    "provenanceChanged": false
+  },
+  "changes": {
+    "components": [
+      {
+        "id": "gstn-portal",
+        "headLabel": "GSTN e-Invoice",
+        "status": "added",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": []
+      }
+    ],
+    "connections": [
+      {
+        "id": "server-to-gstn",
+        "head": {
+          "from": "trusted-server",
+          "to": "gstn-portal",
+          "label": "TRANSMITS"
+        },
+        "status": "added",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      }
+    ],
+    "boundaries": []
+  },
+  "identity": {
+    "components": "components[].id",
+    "connections": "connections[].id (required)",
+    "boundaries": "boundaries[].kind + boundaries[].label (derived)"
+  },
+  "view": {
+    "visualPreset": "classic"
+  },
+  "limitations": [
+    "Authored Architecture IR only; no runtime impact, causality, risk, or mergeability is inferred.",
+    "Boundary identity is conservatively derived from kind + label."
+  ],
+  "artifact": {
+    "sha256": "eb3a7eb54846bc28350674f3bbfb6b3dcfcbc67aef40c1db8bc21d186c242246",
+    "bytes": 2253550
+  },
+  "validation": {
+    "checksPassed": 28,
+    "checkCount": 28,
+    "baseComposition": "pass",
+    "headComposition": "pass"
+  }
+}

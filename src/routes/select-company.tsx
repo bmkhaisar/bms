@@ -5,6 +5,7 @@ import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Building2, ArrowRight, Loader2, LogOut } from "lucide-react";
+import { startupState } from "@/modules/app/startupState";
 
 export const Route = createFileRoute("/select-company")({
   head: () => ({ meta: [{ title: "Select Company — BMS NEXT" }] }),
@@ -15,6 +16,12 @@ function SelectCompanyPage() {
   const { user, isPlatformAdmin, signOutAndSwitchAccount, authInitializing, claimsLoading } = useAuth();
   const { companies, switchCompany, loading: companiesLoading } = useActiveCompany();
   const nav = useNavigate();
+
+  useEffect(() => {
+    if (!authInitializing && !claimsLoading && !companiesLoading) {
+      startupState.markBackendReady();
+    }
+  }, [authInitializing, claimsLoading, companiesLoading]);
 
   useEffect(() => {
     if (authInitializing || claimsLoading) return;

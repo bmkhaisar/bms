@@ -25,6 +25,7 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
+import { startupState } from "@/modules/app/startupState";
 import {
   checkPlatformAdminServerFn,
   checkPlatformAdminSetupStatusFn,
@@ -152,6 +153,7 @@ export function SystemAdminPage() {
         setAccessDeniedMessage(msg);
       } finally {
         setCheckingAuth(false);
+        startupState.markBackendReady();
       }
     },
     [user, isPlatformAdmin, nav, loadPlatformData]

@@ -15,6 +15,7 @@ import { Toaster } from "sonner";
 import { AuthProvider } from "@/modules/auth/context/AuthContext";
 import { ActiveCompanyProvider } from "@/modules/company/context/ActiveCompanyContext";
 import { outboxManager } from "@/modules/sync/outboxManager";
+import { BmsStartupController } from "@/components/app/BmsStartupController";
 
 function NotFoundComponent() {
   return (
@@ -170,7 +171,9 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ActiveCompanyProvider>
-          <Outlet />
+          <BmsStartupController>
+            <Outlet />
+          </BmsStartupController>
           <Toaster richColors position="top-right" />
         </ActiveCompanyProvider>
       </AuthProvider>

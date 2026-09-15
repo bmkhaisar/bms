@@ -7,10 +7,18 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { toast } from "sonner";
-import { KeyRound, Loader2, ShieldCheck } from "lucide-react";
+import { KeyRound, Loader2, ShieldCheck, ShieldAlert, Lock } from "lucide-react";
 import logo from "@/assets/bms-logo.png.asset.json";
 import { BRAND_ATTRIBUTION, BRAND_TAGLINE } from "@/config/publicConfig";
 import { checkPlatformAdminSetupStatusFn } from "@/functions/platformAdminFns";
+import { startupState } from "@/modules/app/startupState";
+import {
+  checkLoginLockout,
+  recordFailedLogin,
+  resetLoginLockout,
+  MAX_LOGIN_ATTEMPTS,
+  type LockoutStatus,
+} from "@/modules/auth/loginLockout";
 
 export const Route = createFileRoute("/login")({
   head: () => ({ meta: [{ title: "Sign In — BMS NEXT" }] }),
@@ -19,16 +27,33 @@ export const Route = createFileRoute("/login")({
 
 export function LoginPage() {
   const nav = useNavigate();
-  const { signIn, resetPassword, isAuthenticated, isPlatformAdmin, authInitializing, claimsLoading, user, setResolutionState } = useAuth();
+  const { signIn, isAuthenticated, isPlatformAdmin, authInitializing, claimsLoading, user, setResolutionState } = useAuth();
   const { companies, loading: companiesLoading } = useActiveCompany();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [resetting, setResetting] = useState(false);
   const [entering, setEntering] = useState(false);
   const [routingResolved, setRoutingResolved] = useState(false);
   const [resolvingDestination, setResolvingDestination] = useState(false);
+  const [lockoutStatus, setLockoutStatus] = useState<LockoutStatus>(() => checkLoginLockout());
+
+  // Keep lockout status synchronized with current email
+  useEffect(() => {
+    setLockoutStatus(checkLoginLockout(email));
+  }, [email]);
+
+  // Live countdown tick every second when locked out
+  useEffect(() => {
+    if (!lockoutStatus.isLocked) return;
+
+    const interval = setInterval(() => {
+      const nextStatus = checkLoginLockout(email);
+      setLockoutStatus(nextStatus);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [lockoutStatus.isLocked, email]);
 
   const resolveDestination = useCallback(async () => {
     if (!user || authInitializing || claimsLoading || routingResolved) return;
@@ -114,45 +139,55 @@ export function LoginPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (loading || entering || resetting) return;
+    if (loading || entering) return;
+
+    // Strict security check: prevent login attempts if locked out
+    const currentStatus = checkLoginLockout(email);
+    if (currentStatus.isLocked) {
+      setLockoutStatus(currentStatus);
+      toast.error(
+        `Sign In is locked due to ${MAX_LOGIN_ATTEMPTS} failed attempts. Try again in ${currentStatus.remainingTimeFormatted}.`
+      );
+      return;
+    }
+
     setLoading(true);
 
     const result = await signIn(email, password);
     setLoading(false);
 
     if (result.success) {
+      resetLoginLockout(email);
+      setLockoutStatus(checkLoginLockout(email));
       setEntering(true);
       toast.success("Welcome back");
       // resolveDestination will automatically trigger via auth state effect
     } else {
-      toast.error(result.error || "Failed to sign in. Please verify your credentials.");
+      const updatedStatus = recordFailedLogin(email);
+      setLockoutStatus(updatedStatus);
+
+      if (updatedStatus.isLocked) {
+        toast.error(
+          `Security Alert: 5 incorrect password attempts. Sign In has been disabled for the next 5 hours.`
+        );
+      } else {
+        toast.error(
+          `${result.error || "Failed to sign in. Please verify your credentials."} (${updatedStatus.failedAttempts}/${MAX_LOGIN_ATTEMPTS} attempts — ${updatedStatus.attemptsRemaining} remaining before 5-hour lockout)`
+        );
+      }
     }
   }
 
-  async function handleResetPassword() {
-    if (!email.trim()) {
-      toast.error("Please enter your email address first.");
-      return;
+  // Concurrently signal startup readiness when unauthenticated visitor reaches login screen
+  useEffect(() => {
+    if (!authInitializing && !claimsLoading && !isAuthenticated) {
+      startupState.markBackendReady();
     }
-    setResetting(true);
-    const result = await resetPassword(email);
-    setResetting(false);
-
-    if (result.success) {
-      toast.success("Password reset link sent to your email.");
-    } else {
-      toast.error(result.error || "Could not send password reset email.");
-    }
-  }
+  }, [authInitializing, claimsLoading, isAuthenticated]);
 
   if (authInitializing) {
     return (
-      <div className="grid min-h-screen place-items-center bg-gradient-to-br from-slate-50 via-sky-50/50 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-          <p className="text-xs text-muted-foreground font-medium">Verifying session...</p>
-        </div>
-      </div>
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-sky-50/40 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4" />
     );
   }
 
@@ -198,21 +233,12 @@ export function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="h-9 text-sm"
+                  disabled={lockoutStatus.isLocked || loading || entering}
                   required
                 />
               </div>
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password" className="text-xs font-medium">Password</Label>
-                  <button
-                    type="button"
-                    onClick={handleResetPassword}
-                    disabled={resetting}
-                    className="text-[11px] font-medium text-primary hover:underline"
-                  >
-                    {resetting ? "Sending..." : "Forgot password?"}
-                  </button>
-                </div>
+                <Label htmlFor="password" className="text-xs font-medium">Password</Label>
                 <Input
                   id="password"
                   type="password"
@@ -221,14 +247,49 @@ export function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="h-9 text-sm"
+                  disabled={lockoutStatus.isLocked || loading || entering}
                   required
                 />
               </div>
-              <Button type="submit" className="w-full gap-2 font-medium" disabled={loading || entering}>
+
+              {lockoutStatus.isLocked && (
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  className="rounded-xl border border-destructive/40 bg-destructive/10 p-3.5 text-xs text-destructive backdrop-blur-sm"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <ShieldAlert className="h-5 w-5 mt-0.5 shrink-0 text-destructive" />
+                    <div className="space-y-1">
+                      <p className="font-semibold text-destructive">
+                        Sign In Disabled — Security Lockout
+                      </p>
+                      <p className="text-[11px] leading-relaxed text-destructive/90">
+                        Wrong password was entered 5 times. To protect your account, sign in has been disabled for 5 hours.
+                      </p>
+                      <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-destructive/15 px-2.5 py-1 font-mono text-[11px] font-semibold text-destructive">
+                        <Lock className="h-3.5 w-3.5" />
+                        <span>Remaining: {lockoutStatus.remainingTimeFormatted}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <Button
+                type="submit"
+                className="w-full gap-2 font-medium"
+                disabled={loading || entering || lockoutStatus.isLocked}
+              >
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
                     <span>Signing in...</span>
+                  </>
+                ) : lockoutStatus.isLocked ? (
+                  <>
+                    <Lock className="h-4 w-4" />
+                    <span>Sign In Disabled ({lockoutStatus.remainingTimeFormatted})</span>
                   </>
                 ) : (
                   <>

@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "system": "BMS NEXT",
+  "generatedAt": "2026-09-14T21:26:30+05:30",
+  "description": "Authoritative mapping of BMS NEXT source repository modules to stable Archify architecture nodes for change impact review and dependency analysis.",
+  "nodes": {
+    "frontend-ui": {
+      "name": "Frontend UI & Client State",
+      "paths": [
+        "src/components/app",
+        "src/components/ui",
+        "src/routes",
+        "src/hooks"
+      ],
+      "directDependencies": ["posting-service", "dexie-cache", "firebase-auth", "reports-engine", "pdf-engine"],
+      "verifiedTests": ["test/client-workflow-acceptance.test.mjs", "test/auth-routing-matrix.test.mjs"]
+    },
+    "tax-engine": {
+      "name": "Canonical Tax Engine",
+      "paths": [
+        "src/modules/tax/canonicalCalculation.ts",
+        "src/modules/tax/taxEngine.ts",
+        "src/modules/tax/types.ts"
+      ],
+      "directDependencies": ["party-master"],
+      "downstreamDependents": ["posting-service", "accounting-engine", "pdf-engine"],
+      "verifiedTests": [
+        "test/calculation-parity-regression.test.mjs",
+        "test/advance-gst-treatment.test.mjs"
+      ]
+    },
+    "accounting-engine": {
+      "name": "Double-Entry Accounting & Ledger Engine",
+      "paths": [
+        "src/server/accounting/postingEngine.ts",
+        "src/server/accounting/reversalEngine.ts",
+        "src/modules/accounting/domain/voucher.ts",
+        "src/modules/accounting/domain/schemas.ts",
+        "src/modules/accounting/types.ts",
+        "src/modules/accounting/services/partyAdvanceService.ts",
+        "src/modules/accounting/services/partyLedgerSyncService.ts"
+      ],
+      "directDependencies": ["tax-engine", "trusted-server", "firebase-rtdb"],
+      "downstreamDependents": ["reports-engine", "dexie-cache", "firebase-rtdb"],
+      "verifiedTests": [
+        "test/accounting-engine.test.mjs",
+        "test/financial-stabilization-invariants.test.mjs"
+      ]
+    },
+    "posting-service": {
+      "name": "Trusted Posting Service & Mutation Gateway",
+      "paths": [
+        "src/modules/accounting/services/documentPostingService.ts",
+        "src/modules/documents/quotationConversion.ts",
+        "src/modules/documents/quotationSnapshot.ts",
+        "src/server/platform-admin/companyService.ts",
+        "src/modules/sync/canonicalMutationService.ts"
+      ],
+      "directDependencies": ["tax-engine", "accounting-engine", "trusted-server", "firebase-auth"],
+      "downstreamDependents": ["firebase-rtdb", "inventory-stock", "dexie-cache"],
+      "verifiedTests": [
+        "test/security-suite.test.mjs",
+        "test/smart-billing-addendum.test.mjs"
+      ]
+    },
+    "firebase-rtdb": {
+      "name": "Firebase Realtime Database (Operational Truth)",
+      "paths": [
+        "database.rules.json",
+        "src/config/firebase.ts",
+        "src/server/firebaseAdmin.ts"
+      ],
+      "directDependencies": ["trusted-server", "firebase-auth"],
+      "downstreamDependents": ["realtime-sync", "dexie-cache"],
+      "verifiedTests": [
+        "test/security-rules.test.mjs",
+        "test/firebase-mutation-sync.test.mjs"
+      ]
+    },
+    "dexie-cache": {
+      "name": "Dexie bms_cache_v1 Local IndexedDB",
+      "paths": [
+        "src/lib/db.ts",
+        "src/modules/sync/dexieCache.ts",
+        "src/modules/sync/outboxManager.ts"
+      ],
+      "directDependencies": ["realtime-sync"],
+      "downstreamDependents": ["frontend-ui", "reports-engine"],
+      "verifiedTests": [
+        "test/dexie-state-consistency.test.mjs",
+        "test/optimistic-mutations.test.mjs"
+      ]
+    },
+    "realtime-sync": {
+      "name": "Cross-Device Realtime Sync Engine",
+      "paths": [
+        "src/modules/sync/companyRealtimeSync.ts",
+        "src/modules/sync/types.ts"
+      ],
+      "directDependencies": ["firebase-rtdb", "dexie-cache"],
+      "downstreamDependents": ["dexie-cache", "frontend-ui"],
+      "verifiedTests": [
+        "test/instant-mutation-pipeline.test.mjs",
+        "test/firebase-mutation-sync.test.mjs"
+      ]
+    },
+    "party-master": {
+      "name": "Party Master & Ledger Hierarchy",
+      "paths": [
+        "src/components/app/PartySearchSelect.tsx",
+        "src/components/app/PartyAddressSelect.tsx",
+        "src/components/app/InvoicePartyStatusPanel.tsx",
+        "src/modules/accounting/domain/partyResolver.ts",
+        "src/routes/_app.parties.tsx"
+      ],
+      "directDependencies": ["dexie-cache", "firebase-rtdb"],
+      "downstreamDependents": ["tax-engine", "posting-service", "accounting-engine"],
+      "verifiedTests": [
+        "test/client-workflow-acceptance.test.mjs"
+      ]
+    },
+    "inventory-stock": {
+      "name": "Inventory & Stock Journal Engine",
+      "paths": [
+        "src/modules/inventory/productService.ts",
+        "src/modules/inventory/stockMovementService.ts",
+        "src/modules/inventory/uomMaster.ts",
+        "src/routes/_app.products.tsx"
+      ],
+      "directDependencies": ["posting-service", "firebase-rtdb"],
+      "downstreamDependents": ["reports-engine", "dexie-cache"],
+      "verifiedTests": [
+        "test/client-workflow-acceptance.test.mjs"
+      ]
+    },
+    "reports-engine": {
+      "name": "Statutory Reports & Analytics Engine",
+      "paths": [
+        "src/modules/summary/summaryService.ts",
+        "src/modules/accounting/services/dashboardReportService.ts",
+        "src/modules/accounting/services/reportEngine.ts",
+        "src/routes/_app.reports.tsx",
+        "src/routes/_app.index.tsx"
+      ],
+      "directDependencies": ["accounting-engine", "dexie-cache"],
+      "downstreamDependents": ["frontend-ui"],
+      "verifiedTests": [
+        "test/financial-stabilization-invariants.test.mjs"
+      ]
+    },
+    "pdf-engine": {
+      "name": "Immutable Vector PDF Engine",
+      "paths": [
+        "src/components/app/DocumentPrint.tsx",
+        "src/lib/pdf.ts"
+      ],
+      "directDependencies": ["accounting-engine", "party-master"],
+      "downstreamDependents": ["r2-storage", "frontend-ui"],
+      "verifiedTests": [
+        "test/pdf-quotation-production-corrections.test.mjs",
+        "test/signatory-hardening.test.mjs"
+      ]
+    },
+    "r2-storage": {
+      "name": "Cloudflare R2 Object Storage",
+      "paths": [
+        "src/modules/storage/fileStorage.ts"
+      ],
+      "directDependencies": ["trusted-server"],
+      "downstreamDependents": ["frontend-ui"],
+      "verifiedTests": [
+        "test/server-config-status.test.mjs"
+      ]
+    }
+  },
+  "reviewGuidelines": {
+    "workflow": [
+      "1. Identify modified files in pull request or working tree.",
+      "2. Map each file to the corresponding architecture node ID using this manifest.",
+      "3. Inspect direct code dependencies (imports/calls).",
+      "4. Inspect Archify upstream and downstream relationships in docs/architecture/source/.",
+      "5. Classify findings into: CONFIRMED DIRECTLY AFFECTED, CONFIRMED DEPENDENCIES, POSSIBLE DOWNSTREAM AREAS, TESTS REQUIRED, NOT ANALYZED / UNKNOWN.",
+      "6. Run verified tests corresponding to all affected nodes.",
+      "7. Compare architecture snapshots using 'npm run arch:compare' if topology changed."
+    ],
+    "disclaimer": "Archify represents validated AUTHORED architecture relationships. Archify is NOT an automatic runtime blast-radius oracle. Actual change impact requires code analysis + topology + import/data dependencies + automated tests."
+  }
+}

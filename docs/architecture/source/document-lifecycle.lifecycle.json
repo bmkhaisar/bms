@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "BMS NEXT Document Lifecycle",
+    "output": "docs/architecture/generated/document-lifecycle.lifecycle.html",
+    "viewBox": [980, 660],
+    "animation": "trace",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "settlement-progression",
+        "label": "Settlement progression",
+        "focus": ["draft", "posted", "partial", "paid"],
+        "note": "Follow standard commercial lifecycle from draft creation through posting and settlement."
+      },
+      {
+        "id": "pre-posting-void",
+        "label": "Pre-posting void",
+        "focus": ["draft", "cancelled"],
+        "note": "Unposted draft cancellation exits cleanly without posting general ledger vouchers."
+      },
+      {
+        "id": "statutory-reversal",
+        "label": "Statutory reversal",
+        "focus": ["posted", "partial", "reversed"],
+        "note": "Authoritative reversal generates offsetting general ledger audit vouchers."
+      }
+    ]
+  },
+  "lanes": [
+    { "id": "main", "label": "Commercial Lifecycle Phases" },
+    { "id": "exceptions", "label": "Settlement Adjustments" },
+    { "id": "terminal", "label": "Terminal Audit States" }
+  ],
+  "states": [
+    {
+      "id": "draft",
+      "type": "start",
+      "label": "Draft",
+      "sublabel": "Mutable document",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "mutable"
+    },
+    {
+      "id": "posted",
+      "type": "active",
+      "label": "Posted",
+      "sublabel": "Authoritative GL",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "immutable"
+    },
+    {
+      "id": "partial",
+      "type": "waiting",
+      "label": "Partial",
+      "sublabel": "Open AR balance",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "tag": "part paid"
+    },
+    {
+      "id": "paid",
+      "type": "success",
+      "label": "Paid",
+      "sublabel": "Fully settled",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "settled"
+    },
+    {
+      "id": "cancelled",
+      "type": "failure",
+      "label": "Cancelled / Void",
+      "sublabel": "Pre-GL exit",
+      "lane": "terminal",
+      "col": 0,
+      "tag": "no GL effect"
+    },
+    {
+      "id": "reversed",
+      "type": "failure",
+      "label": "Reversed",
+      "sublabel": "Audit counter-voucher",
+      "lane": "terminal",
+      "col": 1,
+      "tag": "GL reversed"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "post-transition",
+      "from": "draft",
+      "to": "posted",
+      "label": "Post Document",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": -32
+    },
+    {
+      "id": "part-settle",
+      "from": "posted",
+      "to": "partial",
+      "label": "Partial Receipt",
+      "variant": "default",
+      "route": "straight",
+      "labelDy": -32
+    },
+    {
+      "id": "full-settle",
+      "from": "partial",
+      "to": "paid",
+      "label": "Final Settlement",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": -32
+    },
+    {
+      "id": "direct-full-settle",
+      "from": "posted",
+      "to": "paid",
+      "label": "Full Payment",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [[248, 70], [556, 70]],
+      "labelAt": [402, 58]
+    },
+    {
+      "id": "cancel-draft",
+      "from": "draft",
+      "to": "cancelled",
+      "label": "Cancel Draft",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [[94, 479], [343, 479]],
+      "labelAt": [200, 467]
+    },
+    {
+      "id": "reverse-posted",
+      "from": "posted",
+      "to": "reversed",
+      "label": "Reversal Engine",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [[248, 380], [556, 380]],
+      "labelAt": [360, 368]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Allowed Lifecycle Transitions",
+      "items": [
+        "Draft -> Posted: Authorized posting via postingService, creates double-entry GL vouchers + inventory journal",
+        "Posted -> Partial / Paid: Customer receipts allocate against document invoiceId, updating AR balance",
+        "Partial -> Paid: Subsequent receipts clear the remaining balance to zero",
+        "Draft -> Cancelled / Void: Pre-commitment termination before any financial voucher is created",
+        "Posted / Partial -> Reversed: Formal reversal via reversalEngine producing audited reversing GL vouchers"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Strictly Forbidden Transitions",
+      "items": [
+        "Posted -> Draft: FORBIDDEN. Financial vouchers are immutable and cannot be rolled back to draft",
+        "Cancelled -> Posted: FORBIDDEN. Cancelled drafts are terminated and cannot enter the GL",
+        "Reversed -> Active / Draft: FORBIDDEN. Reversal is permanent and audit-sealed",
+        "Draft -> Paid / Partial: FORBIDDEN. Unposted documents cannot receive ledger payments"
+      ]
+    }
+  ]
+}

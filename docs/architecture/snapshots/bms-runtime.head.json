@@ -1,0 +1,451 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "BMS NEXT Runtime Architecture (Proposed e-Invoice Head)",
+    "output": "docs/architecture/generated/bms-runtime.architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1260,
+      620
+    ],
+    "views": [
+      {
+        "id": "financial-posting-path",
+        "label": "Authoritative financial posting path",
+        "focus": [
+          "users-pwa",
+          "frontend-ui",
+          "app-services",
+          "tax-engine",
+          "posting-service",
+          "trusted-server",
+          "firebase-rtdb",
+          "sync-dexie"
+        ],
+        "note": "Trace how financial documents travel from user action through server posting into cloud truth and local reconciliation."
+      },
+      {
+        "id": "trust-boundaries",
+        "label": "Security and trust boundaries",
+        "focus": [
+          "firebase-auth",
+          "trusted-server",
+          "firebase-rtdb"
+        ],
+        "note": "Highlight the server-isolated financial engine where vouchers and stock updates are strictly protected by database rules."
+      },
+      {
+        "id": "offline-and-realtime",
+        "label": "Offline cache and realtime sync",
+        "focus": [
+          "sync-dexie",
+          "firebase-rtdb",
+          "frontend-ui",
+          "reports-engine"
+        ],
+        "note": "View bidirectional data reconciliation between Dexie bms_db_v1/bms_cache_v1 and Firebase Realtime Database."
+      },
+      {
+        "id": "statutory-e-invoicing",
+        "label": "Statutory e-Invoice & GSTN bridge",
+        "focus": [
+          "trusted-server",
+          "gstn-portal",
+          "firebase-rtdb"
+        ],
+        "note": "Proposed outbound statutory integration transmitting signed e-invoices directly from trusted server."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "users-pwa",
+      "type": "external",
+      "label": "Users / PWA",
+      "sublabel": "Browser / ServiceWorker",
+      "pos": [
+        50,
+        230
+      ],
+      "size": [
+        130,
+        60
+      ]
+    },
+    {
+      "id": "frontend-ui",
+      "type": "frontend",
+      "label": "Frontend UI",
+      "sublabel": "TanStack + React 19",
+      "pos": [
+        240,
+        230
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "firebase-auth",
+      "type": "security",
+      "label": "Firebase Auth",
+      "sublabel": "ID Tokens & Sessions",
+      "pos": [
+        240,
+        60
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "tag": "JWT + RBAC"
+    },
+    {
+      "id": "sync-dexie",
+      "type": "database",
+      "label": "Realtime Sync & Dexie",
+      "sublabel": "bms_db_v1 + bms_cache_v1",
+      "pos": [
+        240,
+        400
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "tag": "Local Cache"
+    },
+    {
+      "id": "app-services",
+      "type": "backend",
+      "label": "Application Services",
+      "sublabel": "Mutations & State",
+      "pos": [
+        470,
+        230
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "tax-engine",
+      "type": "backend",
+      "label": "Tax Engine",
+      "sublabel": "Canonical Calc & GST",
+      "pos": [
+        470,
+        60
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "tag": "Statutory Rule 46"
+    },
+    {
+      "id": "reports-engine",
+      "type": "backend",
+      "label": "Reports Engine",
+      "sublabel": "GSTR & Financial Stmts",
+      "pos": [
+        470,
+        400
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "posting-service",
+      "type": "backend",
+      "label": "Posting Service",
+      "sublabel": "Document Posting Orchestrator",
+      "pos": [
+        700,
+        230
+      ],
+      "size": [
+        160,
+        60
+      ],
+      "tag": "Preflight Validation"
+    },
+    {
+      "id": "accounting-engine",
+      "type": "backend",
+      "label": "Accounting Engine",
+      "sublabel": "Ledgers & AR/AP Balances",
+      "pos": [
+        700,
+        60
+      ],
+      "size": [
+        160,
+        60
+      ]
+    },
+    {
+      "id": "pdf-storage",
+      "type": "cloud",
+      "label": "PDF & R2 Storage",
+      "sublabel": "Vector jsPDF + Cloudflare R2",
+      "pos": [
+        700,
+        400
+      ],
+      "size": [
+        160,
+        60
+      ]
+    },
+    {
+      "id": "trusted-server",
+      "type": "security",
+      "label": "Trusted Server",
+      "sublabel": "Firebase Admin SDK",
+      "pos": [
+        940,
+        230
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "tag": "Authoritative Boundary"
+    },
+    {
+      "id": "firebase-rtdb",
+      "type": "database",
+      "label": "Firebase RTDB",
+      "sublabel": "Cloud Source of Truth",
+      "pos": [
+        940,
+        400
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "tag": "Write Rules Protected"
+    },
+    {
+      "id": "gstn-portal",
+      "type": "external",
+      "label": "GSTN e-Invoice",
+      "sublabel": "NIC / IRP Portal",
+      "pos": [
+        1130,
+        230
+      ],
+      "size": [
+        110,
+        60
+      ],
+      "tag": "Statutory API"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Financial Trust Boundary (Firebase Admin)",
+      "wraps": [
+        "trusted-server"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Cloud Persistence & Authentication Authority",
+      "wraps": [
+        "firebase-auth",
+        "trusted-server",
+        "firebase-rtdb",
+        "pdf-storage"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "users-to-ui",
+      "from": "users-pwa",
+      "to": "frontend-ui",
+      "label": "INTERACTS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "ui-to-auth",
+      "from": "frontend-ui",
+      "to": "firebase-auth",
+      "label": "AUTH",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        315,
+        170
+      ]
+    },
+    {
+      "id": "ui-to-dexie",
+      "from": "frontend-ui",
+      "to": "sync-dexie",
+      "label": "READS",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        315,
+        345
+      ]
+    },
+    {
+      "id": "ui-to-app",
+      "from": "frontend-ui",
+      "to": "app-services",
+      "label": "DISPATCHES",
+      "variant": "emphasis"
+    },
+    {
+      "id": "app-to-tax",
+      "from": "app-services",
+      "to": "tax-engine",
+      "label": "CALCULATES",
+      "variant": "default",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        545,
+        170
+      ]
+    },
+    {
+      "id": "app-to-posting",
+      "from": "app-services",
+      "to": "posting-service",
+      "label": "POSTS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "posting-to-acct",
+      "from": "posting-service",
+      "to": "accounting-engine",
+      "label": "ALLOCATES",
+      "variant": "default",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        780,
+        170
+      ]
+    },
+    {
+      "id": "posting-to-server",
+      "from": "posting-service",
+      "to": "trusted-server",
+      "label": "VOUCHER",
+      "variant": "security"
+    },
+    {
+      "id": "server-to-rtdb",
+      "from": "trusted-server",
+      "to": "firebase-rtdb",
+      "label": "WRITES",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        1015,
+        345
+      ]
+    },
+    {
+      "id": "rtdb-to-sync",
+      "from": "firebase-rtdb",
+      "to": "sync-dexie",
+      "label": "SYNCS",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          1015,
+          510
+        ],
+        [
+          315,
+          510
+        ]
+      ],
+      "labelAt": [
+        665,
+        495
+      ]
+    },
+    {
+      "id": "dexie-to-reports",
+      "from": "sync-dexie",
+      "to": "reports-engine",
+      "label": "FEEDS",
+      "variant": "default"
+    },
+    {
+      "id": "posting-to-pdf",
+      "from": "posting-service",
+      "to": "pdf-storage",
+      "label": "RENDERS",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        780,
+        345
+      ]
+    },
+    {
+      "id": "server-to-gstn",
+      "from": "trusted-server",
+      "to": "gstn-portal",
+      "label": "TRANSMITS",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        1110,
+        305
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Authoritative Flow",
+      "items": [
+        "UI triggers document posting through preflight validation in Posting Service",
+        "Double-entry journal vouchers and stock ledger movements execute exclusively on Trusted Server",
+        "Firebase RTDB is the single cloud authority; database rules strictly deny client writes to vouchers and audit logs"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Financial Trust Boundary",
+      "items": [
+        "Financial vouchers cannot be fabricated directly by the frontend or Dexie cache",
+        "Idempotency is enforced on the server using stable clientMutationId keys",
+        "Reversals create exact balanced counter-vouchers; history is never deleted"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Local-First Realtime Sync",
+      "items": [
+        "Dexie bms_db_v1 provides instant zero-latency UI reads via useLive reactive hooks",
+        "companyRealtimeSync reconciles cloud deletions and updates across all devices without page reloads",
+        "Immutable snapshots freeze company settings, signatories, and tax profiles upon issuance"
+      ]
+    }
+  ]
+}

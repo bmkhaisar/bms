@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "BMS NEXT Quotation to Invoice Conversion Flow",
+    "output": "docs/architecture/generated/quotation-conversion.sequence.html",
+    "viewBox": [1080, 760],
+    "column_fit": "spread",
+    "animation": "trace",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "snapshot-freeze",
+        "label": "Snapshot Freeze",
+        "focus": ["sales-rep", "quote-ui", "conversion-svc"],
+        "note": "Quotation prices, terms, and line items freeze into an immutable historical snapshot."
+      },
+      {
+        "id": "canonical-tax-check",
+        "label": "Canonical Tax Recalculation",
+        "focus": ["conversion-svc", "tax-engine"],
+        "note": "Tax engine recomputes GST rates and validates current fiscal rules before draft generation."
+      },
+      {
+        "id": "draft-to-posting",
+        "label": "Draft Persistence & Posting Gate",
+        "focus": ["conversion-svc", "dexie-store", "rtdb", "posting-svc"],
+        "note": "Draft is saved locally and mirrored before the trusted posting engine books GL vouchers."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "sales-rep", "type": "frontend", "label": "Sales Rep", "sublabel": "User" },
+    { "id": "quote-ui", "type": "frontend", "label": "Quote UI", "sublabel": "Quotation View" },
+    { "id": "conversion-svc", "type": "backend", "label": "Conversion Svc", "sublabel": "Document Bridge" },
+    { "id": "tax-engine", "type": "backend", "label": "Tax Engine", "sublabel": "Canonical Calc" },
+    { "id": "dexie-store", "type": "database", "label": "Dexie DB", "sublabel": "Local Cache" },
+    { "id": "rtdb", "type": "database", "label": "Firebase RTDB", "sublabel": "Cloud Truth" },
+    { "id": "posting-svc", "type": "security", "label": "Posting Svc", "sublabel": "GL Gateway" }
+  ],
+  "segments": [
+    {
+      "from": 145,
+      "to": 290,
+      "label": "Quotation Validation & Snapshot Freeze"
+    },
+    {
+      "from": 300,
+      "to": 440,
+      "label": "Draft Generation & Canonical Tax Check"
+    },
+    {
+      "from": 450,
+      "to": 590,
+      "label": "Draft Persistence & Posting Gate"
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg-convert-click",
+      "from": "sales-rep",
+      "to": "quote-ui",
+      "y": 165,
+      "label": "Convert to Invoice Click",
+      "variant": "emphasis"
+    },
+    {
+      "id": "msg-freeze-snapshot",
+      "from": "quote-ui",
+      "to": "conversion-svc",
+      "y": 220,
+      "label": "Freeze Quotation Snapshot",
+      "variant": "emphasis"
+    },
+    {
+      "id": "msg-snapshot-ack",
+      "from": "conversion-svc",
+      "to": "quote-ui",
+      "y": 275,
+      "label": "Snapshot Locked (Immutable)",
+      "variant": "default"
+    },
+    {
+      "id": "msg-tax-recalc",
+      "from": "conversion-svc",
+      "to": "tax-engine",
+      "y": 325,
+      "label": "Recalculate Canonical GST",
+      "variant": "emphasis"
+    },
+    {
+      "id": "msg-tax-verified",
+      "from": "tax-engine",
+      "to": "conversion-svc",
+      "y": 380,
+      "label": "Tax & Totals Verified",
+      "variant": "default"
+    },
+    {
+      "id": "msg-dexie-draft",
+      "from": "conversion-svc",
+      "to": "dexie-store",
+      "y": 465,
+      "label": "Save Local Draft (IndexedDB)",
+      "variant": "default"
+    },
+    {
+      "id": "msg-rtdb-mirror",
+      "from": "conversion-svc",
+      "to": "rtdb",
+      "y": 515,
+      "label": "Mirror Cloud Draft (/invoices)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "msg-post-gate",
+      "from": "quote-ui",
+      "to": "posting-svc",
+      "y": 565,
+      "label": "Trigger Authoritative Post",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Immutable Snapshot Rules",
+      "items": [
+        "Quotation line items, descriptions, and negotiated prices freeze upon conversion",
+        "Original quotation ID is linked in invoice metadata for full traceability",
+        "Future product master price changes do not mutate the agreed commercial snapshot"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Mandatory Tax Recalculation",
+      "items": [
+        "Conversion triggers calculateCanonicalDocument to ensure HSN and tax slabs remain statutory",
+        "Place of supply vs company state re-determines CGST+SGST vs IGST applicability",
+        "Round-off differences are resolved deterministically before draft persistence"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Trust Boundary Transition",
+      "items": [
+        "Draft invoice exists safely in Dexie and RTDB without altering general ledger books",
+        "No financial vouchers or stock deductions are committed in draft state",
+        "Final promotion to posted ledger requires explicit employee execution through postingService"
+      ]
+    }
+  ]
+}
