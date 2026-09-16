@@ -57,18 +57,60 @@ export const savePartyWithLedgerServerFn = createServerFn({ method: "POST" })
       const updates: Record<string, any> = {
         [`companyData/${data.companyId}/parties/${party.id}`]: party,
       };
-      if (arId) updates[`companyData/${data.companyId}/ledgers/${arId}`] = clean({
-        id: arId, companyId: data.companyId, name: ledgerName, groupId: "grp_sundry_debtors", groupNature: "asset",
-        openingBalance: Math.abs(openingPaise), openingBalanceType: openingPaise < 0 ? "cr" : "dr", currentBalance: openingPaise,
-        currency: "INR", gstin: party.gstin, partyType: "customer", partyId: party.id, active: true,
-        createdAt: party.createdAt, updatedAt: now,
-      });
-      if (apId) updates[`companyData/${data.companyId}/ledgers/${apId}`] = clean({
-        id: apId, companyId: data.companyId, name: ledgerName, groupId: "grp_sundry_creditors", groupNature: "liability",
-        openingBalance: Math.abs(openingPaise), openingBalanceType: openingPaise < 0 ? "dr" : "cr", currentBalance: -Math.abs(openingPaise),
-        currency: "INR", gstin: party.gstin, partyType: "supplier", partyId: party.id, active: true,
-        createdAt: party.createdAt, updatedAt: now,
-      });
+
+      // Query posted vouchers for company to rebuild derived currentBalance cache canonically
+      // Permanent Rule: POSTED VOUCHER LINES + OPENING BALANCE = financial source of truth.
+      // currentBalance is strictly a derived cache and never trusts previous stored values.
+      let arPostedDr = 0;
+      let arPostedCr = 0;
+      let apPostedDr = 0;
+      let apPostedCr = 0;
+
+      if (arId || apId) {
+        const vouchersSnap = await db.ref(`companyData/${data.companyId}/vouchers`).once("value");
+        const allVouchers = vouchersSnap.val() || {};
+        for (const v of Object.values(allVouchers) as any[]) {
+          if (v.status !== "posted") continue;
+          for (const line of v.lines || []) {
+            if (arId && line.ledgerId === arId) {
+              arPostedDr += Number(line.debit || 0);
+              arPostedCr += Number(line.credit || 0);
+            }
+            if (apId && line.ledgerId === apId) {
+              apPostedDr += Number(line.debit || 0);
+              apPostedCr += Number(line.credit || 0);
+            }
+          }
+        }
+      }
+
+      if (arId) {
+        const arSnap = await db.ref(`companyData/${data.companyId}/ledgers/${arId}`).once("value");
+        const existingAr = arSnap.exists() ? arSnap.val() : null;
+        const newOpeningSigned = openingPaise < 0 ? -Math.abs(openingPaise) : Math.abs(openingPaise);
+        const arBalance = newOpeningSigned + arPostedDr - arPostedCr;
+
+        updates[`companyData/${data.companyId}/ledgers/${arId}`] = clean({
+          id: arId, companyId: data.companyId, name: ledgerName, groupId: "grp_sundry_debtors", groupNature: "asset",
+          openingBalance: Math.abs(openingPaise), openingBalanceType: openingPaise < 0 ? "cr" : "dr", currentBalance: arBalance,
+          currency: "INR", gstin: party.gstin, partyType: "customer", partyId: party.id, active: true,
+          createdAt: existingAr?.createdAt || party.createdAt, updatedAt: now,
+        });
+      }
+
+      if (apId) {
+        const apSnap = await db.ref(`companyData/${data.companyId}/ledgers/${apId}`).once("value");
+        const existingAp = apSnap.exists() ? apSnap.val() : null;
+        const newApOpeningSigned = openingPaise < 0 ? Math.abs(openingPaise) : -Math.abs(openingPaise);
+        const apBalance = newApOpeningSigned + apPostedDr - apPostedCr;
+
+        updates[`companyData/${data.companyId}/ledgers/${apId}`] = clean({
+          id: apId, companyId: data.companyId, name: ledgerName, groupId: "grp_sundry_creditors", groupNature: "liability",
+          openingBalance: Math.abs(openingPaise), openingBalanceType: openingPaise < 0 ? "dr" : "cr", currentBalance: apBalance,
+          currency: "INR", gstin: party.gstin, partyType: "supplier", partyId: party.id, active: true,
+          createdAt: existingAp?.createdAt || party.createdAt, updatedAt: now,
+        });
+      }
       const auditId = `audit_${now}_${party.id}`;
       updates[`companyData/${data.companyId}/auditLogs/${auditId}`] = clean({
         id: auditId, entityType: "party", entityId: party.id, action: "save_party_with_ledger",

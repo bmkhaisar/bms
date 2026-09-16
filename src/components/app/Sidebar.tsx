@@ -2,7 +2,7 @@ import { Link, useLocation } from "@tanstack/react-router";
 import {
   LayoutDashboard, Users, Truck, Package, Tags, FileText, Receipt, HandCoins,
   ShoppingCart, BookOpen, BarChart3, Settings, HardDriveDownload, Info, Building2, Layers,
-  Wifi, WifiOff, RefreshCw,
+  Wifi, WifiOff, RefreshCw, ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import logo from "@/assets/bms-logo.png.asset.json";
@@ -50,6 +50,7 @@ const navGroups: NavGroup[] = [
     title: "FINANCIALS",
     items: [
       { to: "/reports", label: "Reports & GST", icon: BarChart3 },
+      { to: "/ca-review", label: "CA Review", icon: ShieldCheck },
     ],
   },
   {

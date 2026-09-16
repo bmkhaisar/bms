@@ -1,4 +1,4 @@
-import { db, uid, nextNumber, type Quotation, type Invoice, type LineItem, type ExtraCharge, type CompanySettings, type Customer } from "@/lib/db";
+import { db, uid, nextNumber, type Quotation, type Invoice, type LineItem, type ExtraCharge, type CompanySettings, type Customer, type Party } from "@/lib/db";
 import { toast } from "sonner";
 import { applyStockDelta } from "@/lib/calc";
 import { getNextDocumentNumber } from "@/lib/numberingClient";
@@ -9,6 +9,7 @@ import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, get, update, runTransaction } from "firebase/database";
 import { cacheEntity } from "@/modules/sync/dexieCache";
 import { applyQuotationToLinkedDraft, isInvoiceImmutable } from "./linkedDraftInvoice";
+import { resolveCreditDays, computeInvoiceDueDate } from "@/modules/documents/sharing/paymentInsightService";
 export { applyQuotationToLinkedDraft, isInvoiceImmutable } from "./linkedDraftInvoice";
 
 export interface ConvertQuotationOptions {
@@ -131,23 +132,29 @@ export async function convertQuotationToInvoice(
       ...it,
     }));
 
-    // Resolve customer snapshot
+    // Resolve customer snapshot & credit terms
     let customerSnapshot = quotation.customerSnapshot ? { ...quotation.customerSnapshot } : undefined;
     let customer: Customer | undefined;
+    let canonicalParty: Party | undefined;
     if (quotation.customerId) {
+      canonicalParty = await db().parties.get(quotation.customerId);
       customer = await db().customers.get(quotation.customerId);
-      if (!customerSnapshot && customer) {
+      if (!customerSnapshot && (canonicalParty || customer)) {
+        const partyData = canonicalParty || customer!;
         customerSnapshot = {
-          name: customer.name,
-          phone: customer.phone,
-          email: customer.email,
-          gstin: customer.gstin,
-          address: customer.billingAddress || customer.address,
-          state: customer.state,
-          pan: customer.pan,
+          name: partyData.name,
+          phone: (partyData as any).phone || (partyData as any).mobile,
+          email: partyData.email,
+          gstin: partyData.gstin,
+          address: partyData.billingAddress || (partyData as any).address,
+          state: partyData.state,
+          pan: partyData.pan,
         };
       }
     }
+
+    const creditDays = resolveCreditDays(canonicalParty || customer, options?.activeCompany || options?.companySettings);
+    const dueDate = computeInvoiceDueDate({ date: now }, creditDays);
 
     // 5. Construct independent DRAFT invoice (PRD § 35: Preserve party, address snapshot, signatory, items)
     // Stable ID closes the duplicate window if two devices convert the same quotation concurrently.
@@ -170,7 +177,8 @@ export async function convertQuotationToInvoice(
       shippingAddressId: quotation.shippingAddressId,
       shippingAddressSnapshot: quotation.shippingAddressSnapshot || quotation.shipToPartySnapshot,
       shippingAddress: quotation.shippingAddress || (quotation as any).shippingAddressSnapshot?.addressLine1,
-      dueDate: typeof customer?.creditDays === "number" ? now + customer.creditDays * 24 * 60 * 60 * 1000 : undefined,
+      creditDaysSnapshot: creditDays,
+      dueDate,
       items,
       subtotal: quotation.subtotal,
       discountTotal: quotation.discountTotal,

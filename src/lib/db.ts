@@ -56,6 +56,7 @@ export interface CompanySettings {
   creditLimitPolicy?: "WARN" | "BLOCK" | "MANAGER_APPROVAL";
   sessionPolicy?: "persistent" | "idle" | "strict";
   supplierInvoiceNumberPolicy?: "OPTIONAL" | "REQUIRED";
+  defaultShareCcEmail?: string;
 }
 
 export type PartyType =
@@ -338,7 +339,7 @@ export interface Quotation {
 }
 
 export interface Invoice {
-  id: ID; number: string; date: number; dueDate?: number;
+  id: ID; number: string; date: number; dueDate?: number; creditDaysSnapshot?: number;
   financialYearId?: ID;
   customerId: ID; customerSnapshot?: Partial<Customer>;
   companySnapshot?: any;

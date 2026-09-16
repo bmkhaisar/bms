@@ -19,10 +19,11 @@ import { toDateInput, fromDateInput, formatDate, formatMoney } from "@/lib/forma
 import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { Copy, Download, FileText, Pencil, Plus, Printer, Trash2, UserPlus, Truck, HandCoins, Loader2, AlertTriangle } from "lucide-react";
+import { Copy, Download, FileText, Pencil, Plus, Printer, Trash2, UserPlus, Truck, HandCoins, Loader2, AlertTriangle, Share2, Bell, Calendar } from "lucide-react";
 import { ListToolbar, EmptyState, usePagination, Pager } from "./ListHelpers";
 import { cn } from "@/lib/utils";
-import { downloadDocumentPDF, generateDocumentPDFBlobUrl, type NormalizedDocument } from "@/lib/documentRenderer";
+import { downloadDocumentPDF, generateDocumentPDFBlobUrl, buildDocumentPDF, type NormalizedDocument } from "@/lib/documentRenderer";
+import { BmsShareDialog, InvoicePaymentStatusPanel, type ShareDocumentData, resolveCreditDays, computeInvoiceDueDate } from "./share";
 import { ListSkeleton } from "./Skeletons";
 import { useInitialLoading } from "@/lib/useInitialLoading";
 import { convertQuotationToInvoice as doConvertQuotation } from "@/modules/documents/quotationConversion";
@@ -153,6 +154,8 @@ export function DocumentListPage<T extends AnyDoc>({
   const [optimisticOverrides, setOptimisticOverrides] = useState<Map<string, T | null>>(new Map());
   // Active document list filter (PRD § 4: Active (default), Draft, Voided / Deleted, All)
   const [statusFilter, setStatusFilter] = useState<"active" | "draft" | "voided" | "all">("active");
+  // Optional month grouping (PRD Section V)
+  const [groupByMonth, setGroupByMonth] = useState<boolean>(false);
 
   // Document copy export modal
   const [copyModalDoc, setCopyModalDoc] = useState<T | null>(null);
@@ -217,6 +220,10 @@ export function DocumentListPage<T extends AnyDoc>({
 
   // Posting button progression (PRD § 55)
   const [postingPhase, setPostingPhase] = useState<"idle" | "validating" | "calculating" | "posting" | "posted">("idle");
+
+  // Reusable BMS Share Center modal state (PRD § 1, 2, 24)
+  const [shareTargetDoc, setShareTargetDoc] = useState<{ doc: Invoice; mode: "share" | "reminder" } | null>(null);
+  const allReceipts = useLive<Receipt>(() => (kind === "invoice" ? db().receipts.toArray() : Promise.resolve([])));
 
   useEffect(() => { getCompany().then(setCompany); }, []);
   const initialLoading = useInitialLoading();
@@ -327,6 +334,47 @@ export function DocumentListPage<T extends AnyDoc>({
       includeBankDetails: (doc as any).includeBankDetails,
       enableGst: isTaxDoc,
       watermarkMode: (docCompany as any).watermarkSetting || "off",
+    };
+  }
+
+  function buildInvoiceShareData(inv: Invoice): ShareDocumentData {
+    const normDoc = getNormalizedDoc(inv as unknown as T);
+    const party = partyById(inv.customerId) || (inv.customerSnapshot as any);
+    const effComp = inv.companySnapshot || activeCompany || company || {};
+    const activeCc = (activeCompany as any)?.defaultShareCcEmail || (company as any)?.defaultShareCcEmail;
+
+    return {
+      kind: "invoice",
+      documentId: inv.id,
+      documentNumber: inv.number,
+      date: inv.date,
+      dueDate: inv.dueDate,
+      totalAmount: inv.grandTotal,
+      amountReceived: inv.amountPaid ?? Math.max(0, inv.grandTotal - (inv.balance ?? 0)),
+      balanceOutstanding: inv.balance ?? 0,
+      currencySymbol: "₹",
+      company: {
+        id: effComp.companyId || effComp.id,
+        name: effComp.name || "Company",
+        legalName: effComp.legalName || effComp.name,
+        email: effComp.email,
+        phone: effComp.phone || effComp.mobile,
+        logo: effComp.logoUrl || effComp.logo,
+        defaultShareCcEmail: activeCc,
+      },
+      party: {
+        partyId: inv.customerId,
+        partyCode: (party as any)?.partyCode,
+        name: (party as any)?.name || "Customer",
+        companyName: (party as any)?.company || (party as any)?.tradingName,
+        email: (party as any)?.email,
+        phone: (party as any)?.mobile || (party as any)?.phone,
+        country: (party as any)?.country,
+      },
+      generatePdfBlob: async () => {
+        const d = buildDocumentPDF(normDoc);
+        return d.output("blob");
+      },
     };
   }
 
@@ -644,9 +692,9 @@ export function DocumentListPage<T extends AnyDoc>({
     });
 
     if (kind === "invoice") {
-      const creditDays = typeof (selectedParty as any)?.creditDays === "number" ? (selectedParty as any).creditDays : 0;
+      const creditDays = resolveCreditDays(selectedParty, activeCompany || company);
       const baseDate = editing.date || Date.now();
-      const dueDate = baseDate + creditDays * 24 * 60 * 60 * 1000;
+      const dueDate = computeInvoiceDueDate({ date: baseDate }, creditDays);
       setEditing({
         ...editing,
         customerId: selectedPartyId,
@@ -657,6 +705,7 @@ export function DocumentListPage<T extends AnyDoc>({
         shippingAddress: selectedParty?.address || "",
         sameAsBilling: true,
         dueDate,
+        creditDaysSnapshot: creditDays,
       } as T);
     } else if (kind === "quotation") {
       setEditing({
@@ -793,6 +842,11 @@ export function DocumentListPage<T extends AnyDoc>({
       if (inv.includeTerms !== false && !inv.termsSnapshot && inv.structuredTerms?.length) {
         inv.termsSnapshot = inv.structuredTerms.map(t => t.text);
         inv.structuredTermsSnapshot = inv.structuredTerms;
+      }
+      const creditDays = inv.creditDaysSnapshot ?? resolveCreditDays(cust, activeCompany || company);
+      inv.creditDaysSnapshot = creditDays;
+      if (!inv.dueDate) {
+        inv.dueDate = computeInvoiceDueDate(inv, creditDays);
       }
       const billToSnapshot: AddressSnapshot = inv.billToSnapshot || (inv as any).billingAddressSnapshot || {
         partyName: cust?.name || "",
@@ -1498,7 +1552,18 @@ export function DocumentListPage<T extends AnyDoc>({
                           <TableCell className="text-right font-mono font-semibold tabular-nums">{formatMoney(r.grandTotal)}</TableCell>
                           {kind !== "quotation" && (
                             <TableCell className={`text-right font-mono tabular-nums ${invBalance > 0 ? "text-amber-600 dark:text-amber-400 font-semibold" : ""}`}>
-                              {formatMoney(invBalance)}
+                              <div>{formatMoney(invBalance)}</div>
+                              {isInv && isPostedFinancialDocument(r as Invoice) && (
+                                <div className="mt-1 flex justify-end">
+                                  <InvoicePaymentStatusPanel
+                                    invoice={r as unknown as Invoice}
+                                    party={p}
+                                    company={activeCompany || company}
+                                    receipts={allReceipts}
+                                    compact={true}
+                                  />
+                                </div>
+                              )}
                             </TableCell>
                           )}
                           <TableCell>
@@ -1551,6 +1616,41 @@ export function DocumentListPage<T extends AnyDoc>({
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
+                              {/* 1. Preview */}
+                              <Button size="icon" variant="ghost" title="Preview" onClick={() => setPreview(r)}>
+                                <Printer className="h-3.5 w-3.5" />
+                              </Button>
+
+                              {/* 2. Download */}
+                              <Button size="icon" variant="ghost" title="Download Copies (Original / Driver / Transport)" onClick={() => setCopyModalDoc(r)}>
+                                <Download className="h-3.5 w-3.5 text-blue-600" />
+                              </Button>
+
+                              {/* 3. Share (PRD § 2 & Correction 2: Posted invoices only) */}
+                              {isInv && isPostedFinancialDocument(r as Invoice) && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  title="Share Invoice"
+                                  onClick={() => setShareTargetDoc({ doc: r as unknown as Invoice, mode: "share" })}
+                                >
+                                  <Share2 className="h-3.5 w-3.5 text-primary" />
+                                </Button>
+                              )}
+
+                              {/* Manual Send Reminder (PRD § 24: Posted with balance > 0) */}
+                              {isInv && isPostedFinancialDocument(r as Invoice) && invBalance > 0 && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  title="Send Payment Reminder"
+                                  onClick={() => setShareTargetDoc({ doc: r as unknown as Invoice, mode: "reminder" })}
+                                >
+                                  <Bell className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                                </Button>
+                              )}
+
+                              {/* Record Receipt */}
                               {isInv && invBalance > 0 && (
                                 <Button
                                   size="icon"
@@ -1565,12 +1665,7 @@ export function DocumentListPage<T extends AnyDoc>({
                                   <HandCoins className="h-3.5 w-3.5 text-emerald-600" />
                                 </Button>
                               )}
-                              <Button size="icon" variant="ghost" title="Download Copies (Original / Driver / Transport)" onClick={() => setCopyModalDoc(r)}>
-                                <Download className="h-3.5 w-3.5 text-blue-600" />
-                              </Button>
-                              <Button size="icon" variant="ghost" title="View / Print" onClick={() => setPreview(r)}>
-                                <Printer className="h-3.5 w-3.5" />
-                              </Button>
+
                               <Button
                                 size="icon"
                                 variant="ghost"
@@ -1845,11 +1940,12 @@ export function DocumentListPage<T extends AnyDoc>({
                         onChange={e => {
                           const newDate = fromDateInput(e.target.value);
                           const cust = partyById((editing as any).customerId);
-                          const creditDays = typeof (cust as any)?.creditDays === "number" ? (cust as any).creditDays : 0;
+                          const creditDays = (editing as unknown as Invoice).creditDaysSnapshot ?? resolveCreditDays(cust, activeCompany || company);
                           setEditing({
                             ...editing,
                             date: newDate,
-                            dueDate: newDate + creditDays * 24 * 60 * 60 * 1000,
+                            dueDate: computeInvoiceDueDate({ date: newDate }, creditDays),
+                            creditDaysSnapshot: creditDays,
                           } as T);
                         }}
                       />
@@ -1859,7 +1955,7 @@ export function DocumentListPage<T extends AnyDoc>({
                         <Label className="text-xs">Due Date</Label>
                         {partyById((editing as any).customerId) && (
                           <span className="text-[10px] text-muted-foreground">
-                            {((partyById((editing as any).customerId) as any)?.creditDays === 0) ? "Immediate (0d)" : `${(partyById((editing as any).customerId) as any)?.creditDays || 0}d terms`}
+                            {((editing as unknown as Invoice).creditDaysSnapshot ?? resolveCreditDays(partyById((editing as any).customerId), activeCompany || company))}d terms
                           </span>
                         )}
                       </div>
@@ -2329,7 +2425,27 @@ export function DocumentListPage<T extends AnyDoc>({
           <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center justify-between gap-2 pr-8 sm:pr-10">
               <span>{preview?.number} · Document Preview</span>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {kind === "invoice" && preview && isPostedFinancialDocument(preview as unknown as Invoice) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 text-primary border-primary/30 hover:bg-primary/5"
+                    onClick={() => setShareTargetDoc({ doc: preview as unknown as Invoice, mode: "share" })}
+                  >
+                    <Share2 className="h-4 w-4" /> Share
+                  </Button>
+                )}
+                {kind === "invoice" && preview && isPostedFinancialDocument(preview as unknown as Invoice) && ((preview as unknown as Invoice).balance ?? 0) > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                    onClick={() => setShareTargetDoc({ doc: preview as unknown as Invoice, mode: "reminder" })}
+                  >
+                    <Bell className="h-4 w-4" /> Send Reminder
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -2359,8 +2475,19 @@ export function DocumentListPage<T extends AnyDoc>({
               </div>
             </DialogTitle>
           </DialogHeader>
+          {preview && kind === "invoice" && isPostedFinancialDocument(preview as unknown as Invoice) && (
+            <div className="px-6 pt-2 pb-1 shrink-0">
+              <InvoicePaymentStatusPanel
+                invoice={preview as unknown as Invoice}
+                party={partyById((preview as any).customerId)}
+                company={activeCompany || company}
+                receipts={allReceipts}
+                onSendReminder={() => setShareTargetDoc({ doc: preview as unknown as Invoice, mode: "reminder" })}
+              />
+            </div>
+          )}
           {preview && previewPdfUrl && (
-            <iframe id="canonical-pdf-preview" title={`${preview.number} PDF preview`} src={previewPdfUrl} className="min-h-[70vh] w-full flex-1 rounded-xl border bg-muted/40" />
+            <iframe id="canonical-pdf-preview" title={`${preview.number} PDF preview`} src={previewPdfUrl} className="min-h-[65vh] w-full flex-1 rounded-xl border bg-muted/40" />
           )}
         </DialogContent>
       </Dialog>
@@ -2724,6 +2851,14 @@ export function DocumentListPage<T extends AnyDoc>({
         cancelText="Keep Editing"
         destructive={true}
         onConfirm={forceCloseEditor}
+      />
+
+      {/* Unified BMS Share Center Dialog (PRD § 1, 2, 24) */}
+      <BmsShareDialog
+        open={Boolean(shareTargetDoc)}
+        onOpenChange={(open) => !open && setShareTargetDoc(null)}
+        document={shareTargetDoc ? buildInvoiceShareData(shareTargetDoc.doc) : null}
+        mode={shareTargetDoc?.mode || "share"}
       />
     </>
   );

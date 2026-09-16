@@ -123,6 +123,7 @@ function AccountingPage() {
             <ChartOfAccountsView
               ledgers={ledgers}
               accountGroups={accountGroups}
+              vouchers={vouchers}
               onCreateLedger={manageLedger}
               onCreateGroup={manageGroup}
               onInitChart={initChart}

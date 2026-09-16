@@ -26,7 +26,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { toast } from "sonner";
 import { formatMoney, formatDate, toDateInput, fromDateInput } from "@/lib/format";
-import { HandCoins, ArrowDownLeft, ArrowUpRight, Plus, Trash2, BookOpen, Loader2, Printer, RotateCcw, AlertTriangle, ShieldCheck } from "lucide-react";
+import { HandCoins, ArrowDownLeft, ArrowUpRight, Plus, Trash2, BookOpen, Loader2, Printer, RotateCcw, AlertTriangle, ShieldCheck, Share2 } from "lucide-react";
 import { ListToolbar, usePagination, Pager, EmptyState } from "@/components/app/ListHelpers";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
@@ -35,7 +35,8 @@ import { getNextDocumentNumber } from "@/lib/numberingClient";
 import { postReceiptTransaction, postPaymentTransaction } from "@/modules/accounting/services/documentPostingService";
 import { processAdvanceRefund } from "@/modules/accounting/services/partyAdvanceService";
 import { calculateAdvanceTax } from "@/modules/tax/taxEngine";
-import { downloadDocumentPDF, type NormalizedDocument } from "@/lib/documentRenderer";
+import { downloadDocumentPDF, buildDocumentPDF, type NormalizedDocument } from "@/lib/documentRenderer";
+import { BmsShareDialog, type ShareDocumentData } from "@/components/app/share";
 import { createCompanySnapshot } from "@/modules/company/types";
 import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
@@ -73,6 +74,7 @@ function ReceiptsAndPaymentsPage() {
   const [editingReceipt, setEditingReceipt] = useState<Receipt | null>(null);
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [deleteReceiptId, setDeleteReceiptId] = useState<string | null>(null);
+  const [shareReceipt, setShareReceipt] = useState<Receipt | null>(null);
   const [deletePaymentId, setDeletePaymentId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -122,12 +124,12 @@ function ReceiptsAndPaymentsPage() {
     });
   }, [editingReceipt, customers, activeCompany]);
 
-  function printReceiptVoucher(r: Receipt) {
+  function getReceiptNormalizedDoc(r: Receipt): NormalizedDocument {
     const customer = customers.find((c) => c.id === r.customerId);
     const comp = activeCompany || r.companySnapshot;
     const isAdvance = r.allocationType === "ADVANCE" || !r.invoiceId;
     const inv = invoices.find((i) => i.id === r.invoiceId) || (r.allocatedInvoices && r.allocatedInvoices[0] ? invoices.find(i => i.id === r.allocatedInvoices![0].invoiceId) : undefined);
-    
+
     const allocPaise = r.allocatedInvoices && r.allocatedInvoices[0]
       ? r.allocatedInvoices[0].amountPaise
       : (r.invoiceId && inv ? Math.min(Math.round(r.amount * 100), Math.round(inv.grandTotal * 100)) : 0);
@@ -136,7 +138,7 @@ function ReceiptsAndPaymentsPage() {
     const balanceBefore = inv ? (inv.balance !== undefined ? inv.balance + amountAllocated : inv.grandTotal) : undefined;
     const balanceAfter = inv ? (inv.balance !== undefined ? inv.balance : Math.max(0, (balanceBefore || 0) - amountAllocated)) : undefined;
 
-    const docData: NormalizedDocument = {
+    return {
       kind: "receipt",
       title: isAdvance ? "ADVANCE RECEIPT VOUCHER" : "RECEIPT VOUCHER",
       number: r.number,
@@ -193,7 +195,58 @@ function ReceiptsAndPaymentsPage() {
         narration: r.narration || (isAdvance ? `Customer Advance Received (${r.supplyType || "GOODS"})` : undefined),
       },
     };
+  }
+
+  function printReceiptVoucher(r: Receipt) {
+    const docData = getReceiptNormalizedDoc(r);
     downloadDocumentPDF(docData, `Receipt-Voucher-${r.number}.pdf`);
+  }
+
+  function buildReceiptShareData(r: Receipt): ShareDocumentData {
+    const normDoc = getReceiptNormalizedDoc(r);
+    const customer = customers.find((c) => c.id === r.customerId);
+    const comp = activeCompany || r.companySnapshot;
+    const inv = invoices.find((i) => i.id === r.invoiceId) || (r.allocatedInvoices && r.allocatedInvoices[0] ? invoices.find(i => i.id === r.allocatedInvoices![0].invoiceId) : undefined);
+    const activeCc = (activeCompany as any)?.defaultShareCcEmail || (comp as any)?.defaultShareCcEmail;
+
+    return {
+      kind: "receipt",
+      documentId: r.id,
+      documentNumber: r.number,
+      date: r.date,
+      totalAmount: r.amount,
+      currencySymbol: "₹",
+      company: {
+        id: comp?.id,
+        name: comp?.name || "Company",
+        legalName: comp?.legalName || comp?.name,
+        email: comp?.email,
+        phone: comp?.phone || comp?.mobile,
+        logo: comp?.logoUrl || comp?.logo,
+        defaultShareCcEmail: activeCc,
+      },
+      party: {
+        partyId: r.customerId,
+        partyCode: customer?.partyCode,
+        name: customer?.name || "Customer",
+        companyName: customer?.company || (customer as any)?.tradingName,
+        email: customer?.email,
+        phone: customer?.mobile || customer?.phone,
+        country: customer?.country,
+      },
+      receiptDetails: {
+        receiptVoucherNumber: r.receiptVoucherId || r.number,
+        allocationType: r.allocationType || (r.invoiceId ? "AGAINST_REF" : "ADVANCE"),
+        invoiceNumber: (r as any).invoiceNumber || inv?.number,
+        invoiceDate: inv?.date,
+        amountAllocated: normDoc.receiptDetails?.amountAllocated,
+        customerCreditCreated: normDoc.receiptDetails?.customerCreditCreated,
+      },
+      generatePdfBlob: async () => {
+        const doc = buildDocumentPDF(normDoc);
+        return doc.output("blob");
+      },
+    };
   }
 
   function openRefundDialog(r: Receipt) {
@@ -693,6 +746,7 @@ function ReceiptsAndPaymentsPage() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
+                              {/* 1. Print / Download */}
                               <Button
                                 size="icon"
                                 variant="ghost"
@@ -701,6 +755,17 @@ function ReceiptsAndPaymentsPage() {
                               >
                                 <Printer className="h-4 w-4 text-primary" />
                               </Button>
+
+                              {/* 2. Share Receipt (PRD § 1, 2 & Correction 2: Posted receipts only) */}
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                title="Share Receipt Voucher"
+                                onClick={() => setShareReceipt(r)}
+                              >
+                                <Share2 className="h-4 w-4 text-primary" />
+                              </Button>
+
                               {isAdvance && !isRefunded && (
                                 <Button
                                   size="icon"
@@ -1649,6 +1714,13 @@ function ReceiptsAndPaymentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Unified BMS Share Center Dialog for Receipt Vouchers (PRD § 1, 2) */}
+      <BmsShareDialog
+        open={Boolean(shareReceipt)}
+        onOpenChange={(o) => !o && setShareReceipt(null)}
+        document={shareReceipt ? buildReceiptShareData(shareReceipt) : null}
+      />
     </AppShell>
   );
 }

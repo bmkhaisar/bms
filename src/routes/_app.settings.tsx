@@ -148,6 +148,7 @@ function SettingsPage() {
       phone: form.phone?.trim() || "",
       altPhone: form.altPhone?.trim() || "",
       email: form.email?.trim() || "",
+      defaultShareCcEmail: form.defaultShareCcEmail?.trim() || "",
       website: form.website?.trim() || "",
       gstin: form.gstin?.trim().toUpperCase() || "",
       pan: form.pan?.trim().toUpperCase() || "",
@@ -380,6 +381,15 @@ function SettingsPage() {
                 value={form.email ?? ""}
                 disabled={!canEdit}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
+                placeholder="accounts@company.com"
+              />
+            </Field>
+            <Field label="Default Share CC Email (Optional)">
+              <Input
+                type="email"
+                value={form.defaultShareCcEmail ?? ""}
+                disabled={!canEdit}
+                onChange={(e) => setForm({ ...form, defaultShareCcEmail: e.target.value })}
                 placeholder="accounts@company.com"
               />
             </Field>

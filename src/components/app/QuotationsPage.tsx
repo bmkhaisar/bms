@@ -21,6 +21,7 @@ import { QuotationQuickPreviewModal } from "./QuotationQuickPreviewModal";
 import { ListToolbar, EmptyState, usePagination, Pager } from "./ListHelpers";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ListSkeleton } from "./Skeletons";
+import { BmsShareDialog, type ShareDocumentData } from "./share";
 import { useInitialLoading } from "@/lib/useInitialLoading";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
@@ -47,6 +48,7 @@ export function QuotationsPage() {
   const [sort, setSort] = useState<"new" | "old" | "amount" | "number">("new");
   const [editing, setEditing] = useState<Quotation | null>(null);
   const [previewQuotation, setPreviewQuotation] = useState<Quotation | null>(null);
+  const [shareQuotation, setShareQuotation] = useState<Quotation | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const initialLoading = useInitialLoading();
 
@@ -299,17 +301,44 @@ export function QuotationsPage() {
     const w = window.open(url);
     if (w) setTimeout(() => w.print(), 800);
   }
-  async function share(r: Quotation) {
-    const effComp = getEffectiveCompany(r);
-    if (!effComp) return;
-    const blob = await exportQuotationPDF(r, effComp, cust(r.customerId), tpl(r.templateId));
-    const file = new File([blob], `${r.number}.pdf`, { type: "application/pdf" });
-    const nav = navigator as any;
-    if (nav.canShare?.({ files: [file] })) {
-      try { await nav.share({ files: [file], title: r.number, text: `Quotation ${r.number}` }); return; } catch { /* ignore */ }
-    }
-    exportPDF(r);
-    toast.info("Web Share unavailable — downloaded PDF instead");
+
+  function buildQuotationShareData(quotation: Quotation): ShareDocumentData {
+    const isDraft = !quotation.status || quotation.status === "draft";
+    const effComp = isDraft
+      ? (activeCompany || quotation.companySnapshot || company)
+      : (quotation.companySnapshot || activeCompany || company);
+    const customer = cust(quotation.customerId) || (quotation.customerSnapshot as any);
+    const activeCc = (activeCompany as any)?.defaultShareCcEmail || (company as any)?.defaultShareCcEmail;
+
+    return {
+      kind: "quotation",
+      documentId: quotation.id,
+      documentNumber: quotation.number,
+      date: quotation.date,
+      totalAmount: quotation.grandTotal,
+      currencySymbol: "₹",
+      company: {
+        id: (effComp as any)?.companyId || (effComp as any)?.id,
+        name: (effComp as any)?.name || "Company",
+        legalName: (effComp as any)?.legalName || (effComp as any)?.name,
+        email: (effComp as any)?.email,
+        phone: (effComp as any)?.phone || (effComp as any)?.mobile,
+        logo: (effComp as any)?.logoUrl || (effComp as any)?.logo,
+        defaultShareCcEmail: activeCc,
+      },
+      party: {
+        partyId: quotation.customerId,
+        partyCode: customer?.partyCode,
+        name: customer?.name || "Customer",
+        companyName: customer?.company || (customer as any)?.tradingName,
+        email: customer?.email,
+        phone: customer?.mobile || customer?.phone,
+        country: customer?.country,
+      },
+      generatePdfBlob: async () => {
+        return exportQuotationPDF(quotation, effComp as any, customer as any, tpl(quotation.templateId));
+      },
+    };
   }
 
   return (
@@ -385,15 +414,26 @@ export function QuotationsPage() {
                         <TableCell className="text-right font-mono font-semibold">{formatMoney(r.grandTotal)}</TableCell>
                         <TableCell><span className="rounded-md bg-muted px-2 py-0.5 text-xs uppercase font-semibold">{r.status}</span></TableCell>
                         <TableCell className="text-right">
-                          <Button size="icon" variant="ghost" title="Quick Preview (PRD § 32)" onClick={() => setPreviewQuotation(r)} className="text-primary hover:bg-primary/10">
+                          {/* 1. Preview */}
+                          <Button size="icon" variant="ghost" title="Quick Preview" onClick={() => setPreviewQuotation(r)} className="text-primary hover:bg-primary/10">
                             <Eye className="h-4 w-4" />
                           </Button>
-                          <Button size="icon" variant="ghost" title="Download PDF" onClick={() => exportPDF(r)}><Download className="h-4 w-4" /></Button>
+                          {/* 2. Download PDF */}
+                          <Button size="icon" variant="ghost" title="Download PDF" onClick={() => exportPDF(r)}>
+                            <Download className="h-4 w-4 text-blue-600" />
+                          </Button>
+                          {/* 3. Share (PRD § 2 & Correction 2: Saved quotation) */}
+                          <Button size="icon" variant="ghost" title="Share Quotation" onClick={() => setShareQuotation(r)}>
+                            <Share2 className="h-4 w-4 text-primary" />
+                          </Button>
+                          {/* 4. Print */}
+                          <Button size="icon" variant="ghost" title="Print" onClick={() => printQuote(r)}>
+                            <Printer className="h-4 w-4" />
+                          </Button>
                           <Button size="icon" variant="ghost" title="Convert to Invoice" onClick={() => handleConvert(r)} className="text-emerald-600 hover:bg-emerald-500/10">
                             <FileCheck className="h-4 w-4" />
                           </Button>
                           <Button size="icon" variant="ghost" title="Edit" onClick={() => { markManualOpen(); setEditing({ ...r }); }}><Pencil className="h-4 w-4" /></Button>
-                          <Button size="icon" variant="ghost" title="Print" onClick={() => printQuote(r)}><Printer className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Duplicate" onClick={() => duplicate(r)}><Copy className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Delete" onClick={() => setDeleteId(r.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                         </TableCell>
@@ -415,6 +455,7 @@ export function QuotationsPage() {
         quotation={previewQuotation}
         onEdit={(q) => { markManualOpen(); setEditing({ ...q }); }}
         onConvert={(q) => handleConvert(q)}
+        onShare={(q) => setShareQuotation(q)}
       />
 
       <Dialog open={!!editing} onOpenChange={o => !o && closeQuotationEditor()}>
@@ -463,6 +504,13 @@ export function QuotationsPage() {
         description="This cannot be undone."
         destructive confirmText="Delete"
         onConfirm={async () => { if (deleteId) await remove(deleteId); }}
+      />
+
+      {/* Unified BMS Share Center Dialog (PRD § 1, 2) */}
+      <BmsShareDialog
+        open={Boolean(shareQuotation)}
+        onOpenChange={(o) => !o && setShareQuotation(null)}
+        document={shareQuotation ? buildQuotationShareData(shareQuotation) : null}
       />
     </>
   );

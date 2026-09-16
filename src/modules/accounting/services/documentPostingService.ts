@@ -120,47 +120,86 @@ export async function postInvoiceTransaction(params: {
     // 4. Double-Entry Accounting from Authoritative Numbers
     const totalPaise = Math.round(recomputed.grandTotal * 100);
     const taxPaise = Math.round(recomputed.gstTotal * 100);
-    const taxablePaise = totalPaise - taxPaise; // Exact balance: taxable + tax === total
+    const trueTaxablePaise = Math.round((recomputed.taxableAmount ?? (recomputed.subtotal - (invoice.discountTotal || 0))) * 100);
+    const roundOffLedgerId = `led_${companyId}_round_off`;
+    const roundOffPaise = totalPaise - (trueTaxablePaise + taxPaise);
+
+    // Check if company has the dedicated Round-Off ledger provisioned
+    let hasRoundOffLedger = false;
+    try {
+      if (typeof window !== "undefined") {
+        hasRoundOffLedger = Boolean(await (db() as any).ledgers?.get(roundOffLedgerId));
+      }
+    } catch {
+      hasRoundOffLedger = false;
+    }
 
     const salesLedgerId = `led_${companyId}_sales`;
     const gstLedgerId = `led_${companyId}_output_gst`;
+    const advanceAdjLedgerId = `led_${companyId}_advance_gst_adjustment`;
 
     // Check for prior advance tax already accounted for (PRD Addendum § 9: Avoid double GST)
     const advanceTaxAdjustedPaise = invoice.advanceGstAdjustedPaise || Math.round((invoice.advanceTaxPreviouslyAccounted || 0) * 100);
     const netTaxPaise = Math.max(0, taxPaise - advanceTaxAdjustedPaise);
-    const advanceAdjLedgerId = `led_${companyId}_advance_gst_adjustment`;
 
-    const lines = [
+    const lines: Array<{ ledgerId: string; debit: number; credit: number; partyId?: string; description?: string }> = [
       {
         ledgerId: customerLedgerId,
         debit: totalPaise,
         credit: 0,
         partyId: invoice.customerId,
       },
-      {
+    ];
+
+    if (hasRoundOffLedger && roundOffPaise !== 0) {
+      // Tally-grade accounting: Sales Revenue remains true taxable turnover
+      lines.push({
+        ledgerId: salesLedgerId,
+        debit: 0,
+        credit: trueTaxablePaise,
+      });
+      if (roundOffPaise < 0) {
+        // Negative round-off: Expense / deduction
+        lines.push({
+          ledgerId: roundOffLedgerId,
+          debit: Math.abs(roundOffPaise),
+          credit: 0,
+          description: "Invoice round-off expense",
+        });
+      } else {
+        // Positive round-off: Income
+        lines.push({
+          ledgerId: roundOffLedgerId,
+          debit: 0,
+          credit: roundOffPaise,
+          description: "Invoice round-off income",
+        });
+      }
+    } else {
+      // Legacy balanced bridge: taxablePaise balances totalPaise - taxPaise
+      const taxablePaise = totalPaise - taxPaise;
+      lines.push({
         ledgerId: salesLedgerId,
         debit: 0,
         credit: taxablePaise,
-      },
-      ...(netTaxPaise > 0
-        ? [
-            {
-              ledgerId: gstLedgerId,
-              debit: 0,
-              credit: netTaxPaise,
-            },
-          ]
-        : []),
-      ...(advanceTaxAdjustedPaise > 0
-        ? [
-            {
-              ledgerId: advanceAdjLedgerId,
-              debit: 0,
-              credit: advanceTaxAdjustedPaise,
-            },
-          ]
-        : []),
-    ];
+      });
+    }
+
+    if (netTaxPaise > 0) {
+      lines.push({
+        ledgerId: gstLedgerId,
+        debit: 0,
+        credit: netTaxPaise,
+      });
+    }
+
+    if (advanceTaxAdjustedPaise > 0) {
+      lines.push({
+        ledgerId: advanceAdjLedgerId,
+        debit: 0,
+        credit: advanceTaxAdjustedPaise,
+      });
+    }
 
     // 5. Post voucher through authoritative server engine with stable clientMutationId (idempotent)
     let voucherId: string | undefined = undefined;

@@ -151,9 +151,9 @@ export async function executeManageLedger(
     };
   }
 
-  // Calculate new currentBalance
-  // If new ledger: currentBalance = opening Dr - Cr
-  // If existing ledger: adjust currentBalance by the delta of opening balance changes
+  // Calculate new currentBalance cache
+  // Permanent Rule: POSTED VOUCHER LINES + OPENING BALANCE = financial source of truth.
+  // currentBalance is strictly a derived cache and never trusts previous stored values.
   let currentBalancePaise = 0;
   let openingDelta = 0;
 
@@ -165,7 +165,22 @@ export async function executeManageLedger(
         ? existingLedger.openingBalance || 0
         : -(existingLedger.openingBalance || 0);
     openingDelta = newOpeningSigned - oldOpeningSigned;
-    currentBalancePaise = (existingLedger.currentBalance || 0) + openingDelta;
+
+    // Accumulate posted movements directly from vouchers
+    let postedDr = 0;
+    let postedCr = 0;
+    const vouchersSnap = await db.ref(`companyData/${input.companyId}/vouchers`).once("value");
+    const vouchersObj = (vouchersSnap.val() || {}) as Record<string, any>;
+    for (const v of Object.values(vouchersObj)) {
+      if (v.status !== "posted") continue;
+      for (const line of v.lines || []) {
+        if (line.ledgerId === ledgerId) {
+          postedDr += Number(line.debit || 0);
+          postedCr += Number(line.credit || 0);
+        }
+      }
+    }
+    currentBalancePaise = newOpeningSigned + postedDr - postedCr;
   } else {
     currentBalancePaise = newOpeningSigned;
     openingDelta = newOpeningSigned;

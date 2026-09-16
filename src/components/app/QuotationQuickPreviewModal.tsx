@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Eye, Download, Printer, Pencil, FileCheck, ExternalLink, Loader2 } from "lucide-react";
+import { Eye, Download, Printer, Pencil, FileCheck, ExternalLink, Loader2, Share2 } from "lucide-react";
 import { db, type Quotation, type Customer, type CompanySettings, type QuotationTemplate } from "@/lib/db";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useLive } from "@/lib/useLive";
@@ -15,6 +15,7 @@ interface QuotationQuickPreviewModalProps {
   quotation: Quotation | null;
   onEdit?: (q: Quotation) => void;
   onConvert?: (q: Quotation) => void;
+  onShare?: (q: Quotation) => void;
 }
 
 /**
@@ -35,6 +36,7 @@ export function QuotationQuickPreviewModal({
   quotation,
   onEdit,
   onConvert,
+  onShare,
 }: QuotationQuickPreviewModalProps) {
   const { activeCompany } = useActiveCompany();
   const customers = useLive<Customer>(() => db().customers.toArray());
@@ -216,6 +218,20 @@ export function QuotationQuickPreviewModal({
                 }}
               >
                 <FileCheck className="h-3.5 w-3.5" /> Convert to Invoice
+              </Button>
+            )}
+
+            {onShare && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-primary border-primary/30 hover:bg-primary/5"
+                onClick={() => {
+                  onOpenChange(false);
+                  onShare(quotation);
+                }}
+              >
+                <Share2 className="h-3.5 w-3.5" /> Share
               </Button>
             )}
 

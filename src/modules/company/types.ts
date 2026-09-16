@@ -65,6 +65,7 @@ export const companySchema = z.object({
   paymentPrefix: z.string().optional(),
   taxRegistrationMode: z.enum(["NORMAL_GST", "COMPOSITION", "UNREGISTERED"]).optional(),
   currentFinancialYearId: z.string().optional(),
+  defaultShareCcEmail: z.string().email().optional().or(z.literal("")),
   createdAt: z.number(),
   createdBy: z.string(),
   updatedAt: z.number().optional(),

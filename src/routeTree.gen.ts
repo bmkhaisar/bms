@@ -19,6 +19,7 @@ import { Route as SelectCompanyRouteImport } from './routes/select-company'
 import { Route as SystemAdminRouteImport } from './routes/system-admin'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppBackupRouteImport } from './routes/_app.backup'
+import { Route as AppCaReviewRouteImport } from './routes/_app.ca-review'
 import { Route as AppCategoriesRouteImport } from './routes/_app.categories'
 import { Route as AppCustomersRouteImport } from './routes/_app.customers'
 import { Route as AppInvoicesRouteImport } from './routes/_app.invoices'
@@ -81,6 +82,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppBackupRoute = AppBackupRouteImport.update({
   id: '/backup',
   path: '/backup',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCaReviewRoute = AppCaReviewRouteImport.update({
+  id: '/ca-review',
+  path: '/ca-review',
   getParentRoute: () => AppRoute,
 } as any)
 const AppCategoriesRoute = AppCategoriesRouteImport.update({
@@ -159,6 +165,7 @@ export interface FileRoutesByFullPath {
   '/select-company': typeof SelectCompanyRoute
   '/system-admin': typeof SystemAdminRoute
   '/backup': typeof AppBackupRoute
+  '/ca-review': typeof AppCaReviewRoute
   '/categories': typeof AppCategoriesRoute
   '/customers': typeof AppCustomersRoute
   '/invoices': typeof AppInvoicesRoute
@@ -182,6 +189,7 @@ export interface FileRoutesByTo {
   '/select-company': typeof SelectCompanyRoute
   '/system-admin': typeof SystemAdminRoute
   '/backup': typeof AppBackupRoute
+  '/ca-review': typeof AppCaReviewRoute
   '/categories': typeof AppCategoriesRoute
   '/customers': typeof AppCustomersRoute
   '/invoices': typeof AppInvoicesRoute
@@ -208,6 +216,7 @@ export interface FileRoutesById {
   '/select-company': typeof SelectCompanyRoute
   '/system-admin': typeof SystemAdminRoute
   '/_app/backup': typeof AppBackupRoute
+  '/_app/ca-review': typeof AppCaReviewRoute
   '/_app/categories': typeof AppCategoriesRoute
   '/_app/customers': typeof AppCustomersRoute
   '/_app/invoices': typeof AppInvoicesRoute
@@ -235,6 +244,7 @@ export interface FileRouteTypes {
     | '/select-company'
     | '/system-admin'
     | '/backup'
+    | '/ca-review'
     | '/categories'
     | '/customers'
     | '/invoices'
@@ -258,6 +268,7 @@ export interface FileRouteTypes {
     | '/select-company'
     | '/system-admin'
     | '/backup'
+    | '/ca-review'
     | '/categories'
     | '/customers'
     | '/invoices'
@@ -283,6 +294,7 @@ export interface FileRouteTypes {
     | '/select-company'
     | '/system-admin'
     | '/_app/backup'
+    | '/_app/ca-review'
     | '/_app/categories'
     | '/_app/customers'
     | '/_app/invoices'
@@ -382,6 +394,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppBackupRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/ca-review': {
+      id: '/_app/ca-review'
+      path: '/ca-review'
+      fullPath: '/ca-review'
+      preLoaderRoute: typeof AppCaReviewRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/categories': {
       id: '/_app/categories'
       path: '/categories'
@@ -478,6 +497,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppBackupRoute: typeof AppBackupRoute
+  AppCaReviewRoute: typeof AppCaReviewRoute
   AppCategoriesRoute: typeof AppCategoriesRoute
   AppCustomersRoute: typeof AppCustomersRoute
   AppInvoicesRoute: typeof AppInvoicesRoute
@@ -496,6 +516,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppBackupRoute: AppBackupRoute,
+  AppCaReviewRoute: AppCaReviewRoute,
   AppCategoriesRoute: AppCategoriesRoute,
   AppCustomersRoute: AppCustomersRoute,
   AppInvoicesRoute: AppInvoicesRoute,

@@ -5,6 +5,7 @@ export interface DashboardMetrics {
   totalSales: number;
   totalPurchases: number;
   totalReceivables: number;
+  totalCustomerCredits?: number;
   totalPayables: number;
   totalAmountReceived: number;
   receivedByPaymentMode: {
@@ -160,7 +161,7 @@ export function computeDashboardMetrics(params: {
   const cashPaise = cashLedgers.reduce((sum, l) => sum + (l.currentBalance || 0), 0);
   const bankPaise = bankLedgers.reduce((sum, l) => sum + (l.currentBalance || 0), 0);
 
-  // Receivables & Payables
+  // Receivables & Payables & Customer Credits separation (PRD Section F)
   const receivableLedgers = ledgers.filter(
     (l) => l.partyType === "customer" || l.groupId === "grp_sundry_debtors"
   );
@@ -168,11 +169,23 @@ export function computeDashboardMetrics(params: {
     (l) => l.partyType === "supplier" || l.groupId === "grp_sundry_creditors"
   );
 
-  // Debits are positive, credits are negative for assets/liabilities
-  const totalReceivables =
-    receivableLedgers.length > 0
-      ? receivableLedgers.reduce((sum, l) => sum + Math.max(0, (l.currentBalance || 0) / 100), 0)
-      : fyInvoices.reduce((sum, inv) => sum + Math.max(0, inv.balance || 0), 0);
+  // Debits are positive (+), credits are negative (-)
+  // Customer Credit is tracked separately from Accounts Receivable (never netted)
+  let totalReceivables = 0;
+  let totalCustomerCredits = 0;
+
+  if (receivableLedgers.length > 0) {
+    for (const l of receivableLedgers) {
+      const bal = (l.currentBalance || 0) / 100;
+      if (bal > 0) {
+        totalReceivables += bal;
+      } else if (bal < 0) {
+        totalCustomerCredits += Math.abs(bal);
+      }
+    }
+  } else {
+    totalReceivables = fyInvoices.reduce((sum, inv) => sum + Math.max(0, inv.balance || 0), 0);
+  }
 
   const totalPayables =
     payableLedgers.length > 0
@@ -298,6 +311,7 @@ export function computeDashboardMetrics(params: {
     totalSales,
     totalPurchases,
     totalReceivables,
+    totalCustomerCredits,
     totalPayables,
     totalAmountReceived,
     receivedByPaymentMode,

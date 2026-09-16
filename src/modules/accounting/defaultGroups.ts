@@ -170,5 +170,22 @@ export function getDefaultSystemLedgers(companyId: string, now: number): Omit<Le
       active: true,
       createdAt: now,
     },
+    {
+      id: `led_${companyId}_round_off`,
+      companyId,
+      name: "Round Off Account",
+      code: "ROUND-OFF",
+      groupId: "grp_indirect_expenses",
+      groupNature: "expense",
+      openingBalance: 0,
+      openingBalanceType: "dr",
+      currentBalance: 0,
+      currency: "INR",
+      partyType: "general",
+      isSystem: true,
+      normalBalance: "debit",
+      active: true,
+      createdAt: now,
+    },
   ];
 }

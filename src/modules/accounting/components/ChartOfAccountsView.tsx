@@ -27,13 +27,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatPaise } from "../constants";
-import type { Ledger, AccountGroup, AccountNature } from "../types";
+import type { Ledger, AccountGroup, AccountNature, Voucher } from "../types";
+import { calculateCanonicalLedgerBalances } from "../services/reportEngine";
 import { Plus, FolderTree, Landmark, Tag, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 interface ChartOfAccountsViewProps {
   ledgers: Ledger[];
   accountGroups: AccountGroup[];
+  vouchers?: Voucher[];
   onCreateLedger: (data: {
     name: string;
     code?: string;
@@ -51,12 +53,18 @@ interface ChartOfAccountsViewProps {
 export function ChartOfAccountsView({
   ledgers,
   accountGroups,
+  vouchers = [],
   onCreateLedger,
   onCreateGroup,
   onInitChart,
 }: ChartOfAccountsViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedNature, setSelectedNature] = useState<string>("all");
+
+  // Canonical signed ledger balances derived strictly from posted vouchers + opening
+  const canonicalBalances = useMemo(() => {
+    return calculateCanonicalLedgerBalances(ledgers, vouchers, {}, accountGroups);
+  }, [ledgers, vouchers, accountGroups]);
 
   // New Group Dialog State
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -312,10 +320,23 @@ export function ChartOfAccountsView({
                         : "—"}
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold">
-                      {formatPaise(Math.abs(l.currentBalance || 0))}{" "}
-                      <span className="text-[10px] text-muted-foreground font-normal">
-                        {(l.currentBalance || 0) >= 0 ? "Dr" : "Cr"}
-                      </span>
+                      {(() => {
+                        const canonical = canonicalBalances.get(l.id);
+                        const displayPaise = canonical
+                          ? (canonical.closingDrPaise > 0 ? canonical.closingDrPaise : canonical.closingCrPaise)
+                          : Math.abs(l.currentBalance || 0);
+                        const displayType = canonical
+                          ? (canonical.closingBalanceType === "cr" ? "Cr" : "Dr")
+                          : ((l.currentBalance || 0) >= 0 ? "Dr" : "Cr");
+                        return (
+                          <>
+                            {formatPaise(displayPaise)}{" "}
+                            <span className={`text-[10px] font-semibold ${displayType === "Cr" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                              {displayType}
+                            </span>
+                          </>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="text-center">
                       {l.active !== false ? (
