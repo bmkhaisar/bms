@@ -20,7 +20,7 @@ function ContactPage() {
   return (
     <PublicShell>
       <div className="mx-auto max-w-3xl">
-        <Card className="rounded-2xl border border-border/60 bg-card/75 backdrop-blur shadow-sm">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
           <CardContent className="p-8">
             <div className="flex items-center gap-4">
               <div className="grid h-12 w-12 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/20">

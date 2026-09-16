@@ -61,7 +61,7 @@ export function TheBalancedLedger({
 
   return (
     <div
-      className="fixed inset-0 z-[9999] flex flex-col items-center justify-center select-none overflow-hidden bg-gradient-to-b from-[#FFFFFF] to-[#EFF7FF] p-4 transition-opacity duration-350"
+      className="fixed inset-0 z-[9999] flex flex-col items-center justify-center select-none overflow-hidden bg-background p-4 transition-opacity duration-300"
       style={{
         height: "100dvh",
         minHeight: "100vh",
@@ -87,22 +87,22 @@ export function TheBalancedLedger({
               scale: 1,
             }}
             transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-            className="w-[230px] h-[142px] rounded-2xl border border-[#006BCB]/20 bg-white/90 shadow-xs relative flex flex-col overflow-hidden p-3"
+            className="w-[230px] h-[142px] rounded-2xl border border-border bg-card shadow-soft relative flex flex-col overflow-hidden p-3"
           >
             {/* Ledger Header Rule with Debit/Credit Column Marks */}
-            <div className="h-[24px] border-b border-[#006BCB]/15 flex items-center justify-between px-3">
-              <span className="font-mono text-[9px] font-semibold text-[#006BCB]/60 tracking-wider">
+            <div className="h-[24px] border-b border-border/80 flex items-center justify-between px-3">
+              <span className="font-mono text-[9px] font-semibold text-mint tracking-wider">
                 DR
               </span>
-              <span className="font-mono text-[9px] font-semibold text-[#006BCB]/60 tracking-wider">
+              <span className="font-mono text-[9px] font-semibold text-mint tracking-wider">
                 CR
               </span>
             </div>
 
             {/* Symmetrical Double-Entry Center Vertical Rule */}
-            <div className="absolute top-[36px] bottom-3 left-1/2 w-px -translate-x-1/2 bg-[#006BCB]/15" />
+            <div className="absolute top-[36px] bottom-3 left-1/2 w-px -translate-x-1/2 bg-border" />
 
-            {/* Three Paired Rows of Pale-Blue Ledger Strokes (0.5s - 1.5s) */}
+            {/* Three Paired Rows of Mint Ledger Strokes (0.5s - 1.5s) */}
             <div className="flex-1 flex flex-col justify-center space-y-3 px-1 pt-1">
               {/* Row 1 */}
               <div className="flex items-center justify-between">
@@ -110,13 +110,13 @@ export function TheBalancedLedger({
                   initial={{ x: -10, opacity: 0 }}
                   animate={stage >= 2 ? { x: 0, opacity: 1 } : { x: -10, opacity: 0 }}
                   transition={{ duration: 0.55, delay: 0.05, ease: [0.16, 1, 0.3, 1] }}
-                  className="h-[3px] w-[56px] rounded-full bg-[#006BCB]/25"
+                  className="h-[3px] w-[56px] rounded-full bg-mint/30"
                 />
                 <motion.div
                   initial={{ x: 10, opacity: 0 }}
                   animate={stage >= 2 ? { x: 0, opacity: 1 } : { x: 10, opacity: 0 }}
                   transition={{ duration: 0.55, delay: 0.05, ease: [0.16, 1, 0.3, 1] }}
-                  className="h-[3px] w-[50px] rounded-full bg-[#006BCB]/25"
+                  className="h-[3px] w-[50px] rounded-full bg-mint/30"
                 />
               </div>
 
@@ -126,13 +126,13 @@ export function TheBalancedLedger({
                   initial={{ x: -10, opacity: 0 }}
                   animate={stage >= 2 ? { x: 0, opacity: 1 } : { x: -10, opacity: 0 }}
                   transition={{ duration: 0.55, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                  className="h-[3px] w-[46px] rounded-full bg-[#006BCB]/25"
+                  className="h-[3px] w-[46px] rounded-full bg-mint/30"
                 />
                 <motion.div
                   initial={{ x: 10, opacity: 0 }}
                   animate={stage >= 2 ? { x: 0, opacity: 1 } : { x: 10, opacity: 0 }}
                   transition={{ duration: 0.55, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                  className="h-[3px] w-[54px] rounded-full bg-[#006BCB]/25"
+                  className="h-[3px] w-[54px] rounded-full bg-mint/30"
                 />
               </div>
 
@@ -142,13 +142,13 @@ export function TheBalancedLedger({
                   initial={{ x: -10, opacity: 0 }}
                   animate={stage >= 2 ? { x: 0, opacity: 1 } : { x: -10, opacity: 0 }}
                   transition={{ duration: 0.55, delay: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                  className="h-[3px] w-[52px] rounded-full bg-[#006BCB]/25"
+                  className="h-[3px] w-[52px] rounded-full bg-mint/30"
                 />
                 <motion.div
                   initial={{ x: 10, opacity: 0 }}
                   animate={stage >= 2 ? { x: 0, opacity: 1 } : { x: 10, opacity: 0 }}
                   transition={{ duration: 0.55, delay: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                  className="h-[3px] w-[48px] rounded-full bg-[#006BCB]/25"
+                  className="h-[3px] w-[48px] rounded-full bg-mint/30"
                 />
               </div>
             </div>
@@ -162,8 +162,8 @@ export function TheBalancedLedger({
                 style={{ transformOrigin: "center" }}
                 className="w-full space-y-[2px]"
               >
-                <div className="h-[1px] w-full bg-[#006BCB]/35" />
-                <div className="h-[1.5px] w-full bg-[#006BCB]/70" />
+                <div className="h-[1px] w-full bg-mint/40" />
+                <div className="h-[1.5px] w-full bg-mint/80" />
               </motion.div>
             </div>
           </motion.div>
@@ -181,7 +181,7 @@ export function TheBalancedLedger({
             className="flex flex-col items-center text-center"
           >
             {/* Existing BMS Logo Mark */}
-            <div className="h-16 w-16 rounded-2xl bg-white p-2.5 shadow-xs border border-[#E1EFFF] flex items-center justify-center">
+            <div className="h-16 w-16 rounded-2xl bg-card p-2.5 shadow-soft border border-border flex items-center justify-center">
               <img
                 src={logo.url}
                 alt="BMS NEXT Logo"
@@ -189,13 +189,13 @@ export function TheBalancedLedger({
               />
             </div>
 
-            {/* Wordmark: Deep Navy #102A43 */}
-            <h1 className="mt-3.5 text-2xl font-bold tracking-tight text-[#102A43]">
+            {/* Wordmark */}
+            <h1 className="mt-3.5 text-2xl font-bold tracking-tight text-foreground">
               BMS NEXT
             </h1>
 
-            {/* Supporting Line: Slate #486581 */}
-            <p className="mt-1 text-xs font-medium text-[#486581] tracking-wide">
+            {/* Supporting Line */}
+            <p className="mt-1 text-xs font-medium text-muted-foreground tracking-wide">
               Clarity for every transaction.
             </p>
 
@@ -205,7 +205,7 @@ export function TheBalancedLedger({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.3 }}
-                className="mt-4 text-xs font-medium text-[#627D98]"
+                className="mt-4 text-xs font-medium text-muted-foreground"
               >
                 Preparing your workspace…
               </motion.p>
@@ -219,13 +219,13 @@ export function TheBalancedLedger({
                 transition={{ duration: 0.3 }}
                 className="mt-4 flex flex-col items-center space-y-2.5"
               >
-                <p className="text-xs text-[#627D98] max-w-[260px] leading-relaxed">
+                <p className="text-xs text-muted-foreground max-w-[260px] leading-relaxed">
                   Connecting to your workspace is taking longer than usual.
                 </p>
                 <button
                   type="button"
                   onClick={onRetry || (() => window.location.reload())}
-                  className="inline-flex items-center justify-center rounded-lg bg-[#006BCB] px-4 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-[#0058A8] focus:outline-none focus:ring-2 focus:ring-[#006BCB]/30 active:scale-[0.98]"
+                  className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground shadow-xs transition-colors hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring/30 active:scale-[0.98]"
                 >
                   Retry
                 </button>

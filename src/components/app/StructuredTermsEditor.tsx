@@ -72,21 +72,21 @@ export function StructuredTermsEditor({
   }
 
   return (
-    <Card className="p-4 space-y-4 border-slate-200">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3">
+    <Card className="p-4 space-y-4 border-border/80 bg-card shadow-soft">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/60 pb-3">
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-sm text-slate-900">Terms & Conditions</span>
-            <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded border font-medium">
+            <span className="font-semibold text-sm text-foreground">Terms & Conditions</span>
+            <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full border border-border/60 font-medium">
               Structured Alignment
             </span>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="text-xs text-muted-foreground mt-0.5">
             Commercial payment schedules, delivery conditions, and validity. Renders with hanging indents and page-break protection.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Label htmlFor="include-terms" className="text-xs font-medium text-slate-700">
+          <Label htmlFor="include-terms" className="text-xs font-medium text-foreground">
             Include in {documentType === "quotation" ? "Quotation" : "Invoice"}
           </Label>
           <Switch
@@ -102,7 +102,7 @@ export function StructuredTermsEditor({
           <div className="flex flex-wrap items-center justify-between gap-2">
             {templates.length > 0 && onApplyTemplate && (
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-600">Template:</span>
+                <span className="text-xs text-muted-foreground">Template:</span>
                 <Select onValueChange={onApplyTemplate}>
                   <SelectTrigger className="w-56 h-8 text-xs">
                     <SelectValue placeholder={`Load ${documentType === "quotation" ? "Quotation" : "Invoice"} Terms`} />
@@ -123,14 +123,14 @@ export function StructuredTermsEditor({
               variant="outline"
               size="sm"
               onClick={addTerm}
-              className="h-8 text-xs gap-1.5 border-primary text-primary hover:bg-primary/10"
+              className="h-8 text-xs gap-1.5"
             >
               <Plus className="h-3.5 w-3.5" /> Add Term
             </Button>
           </div>
 
           {terms.length === 0 ? (
-            <div className="text-center py-6 border border-dashed rounded-lg bg-slate-50 text-xs text-slate-500">
+            <div className="text-center py-6 border border-dashed border-border/80 rounded-xl bg-secondary/20 text-xs text-muted-foreground">
               No terms added. Click <strong>+ Add Term</strong> or select a template above.
             </div>
           ) : (
@@ -138,9 +138,9 @@ export function StructuredTermsEditor({
               {terms.map((term, idx) => (
                 <div
                   key={term.id || idx}
-                  className="flex items-start gap-2 p-2.5 rounded-lg border bg-slate-50/50 text-xs"
+                  className="flex items-start gap-2 p-2.5 rounded-xl border border-border/70 bg-secondary/25 text-xs"
                 >
-                  <div className="w-8 pt-1 text-center font-bold text-slate-700 font-mono shrink-0">
+                  <div className="w-8 pt-1 text-center font-bold text-foreground font-mono shrink-0">
                     {term.format === "BULLET" ? "•" : term.format === "PARAGRAPH" ? "§" : `${idx + 1}.`}
                   </div>
 
@@ -149,7 +149,7 @@ export function StructuredTermsEditor({
                     value={term.text}
                     onChange={(e) => updateTerm(idx, { text: e.target.value })}
                     placeholder="Enter condition (e.g. Delivery within 3 weeks from receipt of advance PO...)"
-                    className="text-xs flex-1 min-h-[52px]"
+                    className="text-xs flex-1 min-h-[52px] bg-card"
                   />
 
                   <div className="flex flex-col gap-1 shrink-0">
@@ -182,7 +182,7 @@ export function StructuredTermsEditor({
                         disabled={idx === 0}
                         onClick={() => moveTerm(idx, "up")}
                       >
-                        <ArrowUp className="h-3 w-3 text-slate-500" />
+                        <ArrowUp className="h-3 w-3 text-muted-foreground" />
                       </Button>
                       <Button
                         type="button"
@@ -192,7 +192,7 @@ export function StructuredTermsEditor({
                         disabled={idx === terms.length - 1}
                         onClick={() => moveTerm(idx, "down")}
                       >
-                        <ArrowDown className="h-3 w-3 text-slate-500" />
+                        <ArrowDown className="h-3 w-3 text-muted-foreground" />
                       </Button>
                     </div>
 
@@ -205,13 +205,13 @@ export function StructuredTermsEditor({
                         onClick={() => duplicateTerm(idx)}
                         title="Duplicate Term"
                       >
-                        <Copy className="h-3 w-3 text-slate-500" />
+                        <Copy className="h-3 w-3 text-muted-foreground" />
                       </Button>
                       <Button
                         type="button"
                         size="icon"
                         variant="ghost"
-                        className="h-6 w-6 text-red-500 hover:text-red-700"
+                        className="h-6 w-6 text-destructive hover:text-destructive/80"
                         onClick={() => deleteTerm(idx)}
                         title="Delete Term"
                       >

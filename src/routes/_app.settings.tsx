@@ -302,7 +302,7 @@ function SettingsPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Business Details */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm lg:col-span-2">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft lg:col-span-2">
           <CardHeader>
             <CardTitle className="text-base font-semibold">Business Profile</CardTitle>
             <CardDescription className="text-xs">
@@ -438,7 +438,7 @@ function SettingsPage() {
 
         {/* Branding & Document Series */}
         <div className="space-y-6">
-          <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
+          <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
             <CardHeader>
               <CardTitle className="text-base font-semibold">Company Logo</CardTitle>
               <CardDescription className="text-xs">
@@ -486,7 +486,7 @@ function SettingsPage() {
           </Card>
 
           {/* Document Prefixes */}
-          <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
+          <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
             <CardHeader>
               <CardTitle className="text-base font-semibold">Document Series</CardTitle>
               <CardDescription className="text-xs">
@@ -527,7 +527,7 @@ function SettingsPage() {
         </div>
 
         {/* Authorized Signatory, Stamp & Document Appearance */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm lg:col-span-3">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft lg:col-span-3">
           <CardHeader className="border-b border-border/40 pb-4">
             <div className="flex items-center gap-2.5">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -901,7 +901,7 @@ function SettingsPage() {
         </Card>
 
         {/* Universal Document Settings & Visibility Toggles */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm lg:col-span-3">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft lg:col-span-3">
           <CardHeader className="border-b border-border/40 pb-4">
             <div className="flex items-center gap-2.5">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -1162,7 +1162,7 @@ function SettingsPage() {
         </Card>
 
         {/* Banking & Settlement Information */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm lg:col-span-3">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft lg:col-span-3">
           <CardHeader>
             <CardTitle className="text-base font-semibold">Banking & Settlement Information</CardTitle>
             <CardDescription className="text-xs">

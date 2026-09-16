@@ -81,7 +81,7 @@ function NoCompanyAccessPage() {
 
   if (initializing || resolutionState !== "ready" || companiesLoading || checkingPrivileges) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-sky-50/40 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4">
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-7 w-7 animate-spin text-primary" />
           <p className="text-xs font-medium text-muted-foreground">Checking company assignments...</p>
@@ -91,11 +91,11 @@ function NoCompanyAccessPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-slate-50 via-sky-50/40 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4 sm:p-6">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4 sm:p-6">
       <div className="w-full max-w-md">
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white font-bold text-sm shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground font-bold text-sm shadow-soft">
               BMS
             </div>
             <div>
@@ -114,7 +114,7 @@ function NoCompanyAccessPage() {
           </Button>
         </div>
 
-        <Card className="rounded-2xl border border-border/60 bg-card/90 backdrop-blur shadow-md text-center">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft text-center">
           <CardHeader className="pb-3">
             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
               <AlertCircle className="h-6 w-6" />

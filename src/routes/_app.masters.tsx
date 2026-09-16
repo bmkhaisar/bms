@@ -73,7 +73,7 @@ function SizesMaster() {
     setLabel(""); toast.success("Size added");
   }
   return (
-    <Card className="p-4">
+    <Card className="p-4 card-soft">
       <div className="mb-3 flex gap-2">
         <Input placeholder="e.g. 10 x 20 ft" value={label} onChange={e => setLabel(e.target.value)} onKeyDown={e => e.key === "Enter" && add()} className="max-w-sm" />
         <Button onClick={add} className="gap-2"><Plus className="h-4 w-4" /> Add size</Button>
@@ -132,14 +132,14 @@ function TermsMaster() {
   }
 
   return (
-    <Card className="p-4">
+    <Card className="p-4 card-soft">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-sm text-muted-foreground">Create multiple templates and apply different ones per quotation.</div>
         <Button onClick={() => setEditing(newTemplate())} className="gap-2"><Plus className="h-4 w-4" /> New template</Button>
       </div>
       {items.length === 0 ? <Empty text="No terms templates yet" /> : (
         <Table>
-          <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Terms</TableHead><TableHead className="w-40 text-right">Actions</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase border-b border-border/70"><TableHead>Name</TableHead><TableHead>Terms</TableHead><TableHead className="w-40 text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>
             {items.map(t => (
               <TableRow key={t.id}>
@@ -235,14 +235,14 @@ function GeneralInfoMaster() {
     return { id: uid(), name: "New template", fields: DEFAULT_KEYS.map(k => ({ key: k, label: k, value: "" })), createdAt: Date.now() };
   }
   return (
-    <Card className="p-4">
+    <Card className="p-4 card-soft">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-sm text-muted-foreground">Preset general information sections (configuration, transportation, foundation, etc.)</div>
         <Button onClick={() => setEditing(newTemplate())} className="gap-2"><Plus className="h-4 w-4" /> New template</Button>
       </div>
       {items.length === 0 ? <Empty text="No general info templates yet" /> : (
         <Table>
-          <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Fields</TableHead><TableHead className="w-40 text-right">Actions</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase border-b border-border/70"><TableHead>Name</TableHead><TableHead>Fields</TableHead><TableHead className="w-40 text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>
             {items.map(t => (
               <TableRow key={t.id}>
@@ -341,7 +341,7 @@ function TechSpecMaster() {
   }
 
   return (
-    <Card className="p-4">
+    <Card className="p-4 card-soft">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="text-sm text-muted-foreground">Technical & electrical specification templates (frame, panels, wiring, etc.)</div>
         <div className="flex gap-2">
@@ -471,14 +471,14 @@ function BanksMaster() {
     toast.success("Default set");
   }
   return (
-    <Card className="p-4">
+    <Card className="p-4 card-soft">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-sm text-muted-foreground">Store multiple bank accounts; select one per quotation.</div>
         <Button onClick={() => setEditing(fresh())} className="gap-2"><Plus className="h-4 w-4" /> New bank</Button>
       </div>
       {items.length === 0 ? <Empty text="No bank accounts yet" /> : (
         <Table>
-          <TableHeader><TableRow><TableHead>Bank</TableHead><TableHead>Account Holder</TableHead><TableHead>A/C No.</TableHead><TableHead>IFSC Code</TableHead><TableHead className="w-40 text-right">Actions</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase border-b border-border/70"><TableHead>Bank</TableHead><TableHead>Account Holder</TableHead><TableHead>A/C No.</TableHead><TableHead>IFSC Code</TableHead><TableHead className="w-40 text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>
             {items.map(b => (
               <TableRow key={b.id}>
@@ -572,7 +572,7 @@ function TemplatesMaster() {
     toast.success("Default set");
   }
   return (
-    <Card className="p-4">
+    <Card className="p-4 card-soft">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-sm text-muted-foreground">Customize accent colour, font, table style, header/footer per quotation template.</div>
         <div className="flex gap-2">
@@ -581,7 +581,7 @@ function TemplatesMaster() {
       </div>
       {items.length === 0 ? <Empty text="No quotation templates yet — default styling will be used" /> : (
         <Table>
-          <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Accent</TableHead><TableHead>Font</TableHead><TableHead>Table</TableHead><TableHead className="w-40 text-right">Actions</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase border-b border-border/70"><TableHead>Name</TableHead><TableHead>Accent</TableHead><TableHead>Font</TableHead><TableHead>Table</TableHead><TableHead className="w-40 text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>
             {items.map(t => (
               <TableRow key={t.id}>

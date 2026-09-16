@@ -13,6 +13,7 @@ export function Topbar({ title }: { title: string }) {
   const [dark, setDark] = useState(false);
   const [openLogout, setOpenLogout] = useState(false);
   const [openSearch, setOpenSearch] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     const t = localStorage.getItem("bms_theme") === "dark";
@@ -46,18 +47,18 @@ export function Topbar({ title }: { title: string }) {
   }
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/80 px-3 backdrop-blur sm:px-6 no-print">
-      <Sheet>
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-2.5 border-b border-border/70 bg-card/85 px-3.5 backdrop-blur-md sm:px-6 no-print">
+      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetTrigger asChild>
-          <Button variant="ghost" size="icon" className="md:hidden">
+          <Button variant="ghost" size="icon" className="md:hidden h-8 w-8 text-muted-foreground hover:text-foreground">
             <Menu className="h-5 w-5" />
           </Button>
         </SheetTrigger>
-        <SheetContent side="left" className="w-60 p-0">
-          <Sidebar />
+        <SheetContent side="left" className="w-60 p-0 border-r border-border/70">
+          <Sidebar onNavigate={() => setMobileOpen(false)} />
         </SheetContent>
       </Sheet>
-      <h1 className="text-base font-semibold sm:text-lg">{title}</h1>
+      <h1 className="text-sm font-semibold tracking-tight text-foreground sm:text-base">{title}</h1>
       <div className="ml-auto flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => setOpenSearch(true)} className="gap-2">
           <Search className="h-4 w-4" />
@@ -69,10 +70,10 @@ export function Topbar({ title }: { title: string }) {
             variant="outline"
             size="sm"
             onClick={() => nav({ to: "/system-admin" as any })}
-            className="gap-1.5 text-xs border-slate-300 text-slate-700 hover:bg-slate-100"
+            className="gap-1.5 text-xs border-border/80 text-foreground hover:bg-secondary/60"
             title="Platform System Administration"
           >
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+            <ShieldCheck className="h-3.5 w-3.5 text-mint" />
             <span className="hidden sm:inline">System Admin</span>
           </Button>
         )}

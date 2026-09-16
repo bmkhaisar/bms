@@ -474,10 +474,10 @@ function PartiesPage() {
         </div>
 
         {/* Parties Table */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm overflow-hidden">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
           <Table>
             <TableHeader>
-              <TableRow className="bg-muted/40">
+              <TableRow className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase border-b border-border/70">
                 <TableHead className="font-semibold text-xs">Party Name</TableHead>
                 <TableHead className="font-semibold text-xs">Type</TableHead>
                 <TableHead className="font-semibold text-xs">Policy</TableHead>
@@ -539,10 +539,10 @@ function PartiesPage() {
                           variant="outline"
                           className={`text-[10px] font-semibold ${
                             isSundryCreditor(party.partyType) && !isSundryDebtor(party.partyType)
-                              ? "border-sky-500 text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30"
+                              ? "border-sky-500/30 text-sky-700 dark:text-sky-300 bg-sky-500/15"
                               : party.partyType === "BOTH"
-                              ? "border-purple-500 text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/30"
-                              : "border-emerald-500 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/30"
+                              ? "border-purple-500/30 text-purple-700 dark:text-purple-300 bg-purple-500/15"
+                              : "border-mint/30 text-mint bg-mint/15"
                           }`}
                         >
                           {getPartyTypeLabel(party.partyType)}
@@ -551,7 +551,7 @@ function PartiesPage() {
 
                       <TableCell className="py-2.5 text-xs">
                         {party.paymentPolicy === "ADVANCE" ? (
-                          <Badge className="bg-emerald-600 hover:bg-emerald-700 text-[10px] gap-1 shadow-xs">
+                          <Badge className="bg-mint text-mint-foreground text-[10px] gap-1 shadow-xs">
                             <Wallet className="h-3 w-3" />
                             Advance Only
                           </Badge>

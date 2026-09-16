@@ -76,7 +76,7 @@ function ReportsPage() {
   return (
     <AppShell title="Reports">
       <PageHeader title="Business & Financial Reports" description="Canonical accounting reports, GST statutory positions, and reconciliation center." />
-      <Card className="card-soft mb-4 flex flex-wrap items-end gap-3 p-4">
+      <Card className="rounded-2xl border border-border/80 bg-card shadow-soft mb-4 flex flex-wrap items-end gap-3 p-4">
         <div className="space-y-1.5">
           <Label className="text-xs">From</Label>
           <Input type="date" value={from ? toDateInput(from) : ""} onChange={(e) => setFrom(e.target.value ? fromDateInput(e.target.value) : undefined)} />
@@ -91,7 +91,7 @@ function ReportsPage() {
       <Tabs value={tab} onValueChange={handleTabChange} className="space-y-3">
         {/* Row 1: Primary Report Navigation (Horizontal scroll, whitespace-nowrap, no wrap collisions) */}
         <div className="w-full overflow-x-auto scrollbar-thin pb-1">
-          <TabsList className="inline-flex w-auto min-w-full sm:min-w-0 h-10 items-center justify-start gap-1 p-1 bg-muted/60 rounded-lg whitespace-nowrap">
+          <TabsList className="inline-flex w-auto min-w-full sm:min-w-0 h-10 items-center justify-start gap-1 p-1 bg-secondary/50 rounded-xl whitespace-nowrap">
             <TabsTrigger value="sales" className="shrink-0 px-3 py-1.5 text-xs font-medium">Sales & Revenue</TabsTrigger>
             <TabsTrigger value="purchases" className="shrink-0 px-3 py-1.5 text-xs font-medium">Purchases</TabsTrigger>
             <TabsTrigger value="outstanding" className="shrink-0 px-3 py-1.5 text-xs font-medium">Credit Outstanding & Aging</TabsTrigger>
@@ -103,15 +103,15 @@ function ReportsPage() {
           </TabsList>
         </div>
 
-        {/* Row 2: Secondary Toolbar Row (Distinct Container, Centered, Clean Spacing, Responsive at <=390px, No Absolute Positioning) */}
-        <div className="w-full overflow-x-auto scrollbar-thin flex items-center justify-start sm:justify-center gap-3 sm:gap-6 min-h-[44px] mt-2 mb-3 px-3 py-1.5 bg-muted/25 border border-border/50 rounded-lg">
+        {/* Row 2: Secondary Toolbar Row */}
+        <div className="w-full overflow-x-auto scrollbar-thin flex items-center justify-start sm:justify-center gap-3 sm:gap-6 min-h-[44px] mt-2 mb-3 px-3 py-1.5 bg-secondary/30 border border-border/70 rounded-xl">
           <Button
             type="button"
             variant={tab === "financial-reconciliation" ? "secondary" : "ghost"}
             size="sm"
             onClick={() => handleTabChange("financial-reconciliation")}
             className={`shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 sm:px-4 py-2 h-8 whitespace-nowrap transition-all ${
-              tab === "financial-reconciliation" ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm" : "text-muted-foreground hover:text-foreground"
+              tab === "financial-reconciliation" ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-soft" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             <Scale className="h-3.5 w-3.5" /> Financial Reconciliation
@@ -123,10 +123,10 @@ function ReportsPage() {
             size="sm"
             onClick={() => handleTabChange("gst-audit")}
             className={`shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 sm:px-4 py-2 h-8 whitespace-nowrap transition-all ${
-              tab === "gst-audit" ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm" : "text-muted-foreground hover:text-foreground"
+              tab === "gst-audit" ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-soft" : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            <ShieldCheck className={`h-3.5 w-3.5 ${tab === "gst-audit" ? "text-primary-foreground" : "text-emerald-500"}`} /> GST Data Audit
+            <ShieldCheck className={`h-3.5 w-3.5 ${tab === "gst-audit" ? "text-primary-foreground" : "text-mint"}`} /> GST Data Audit
           </Button>
         </div>
 
@@ -1719,9 +1719,13 @@ function GstDataIntegrityAuditReport() {
 
 function Stat({ label, v, accent }: { label: string; v: string; accent?: boolean }) {
   return (
-    <div className={`rounded-md border p-3 ${accent ? "bg-primary/10" : "bg-muted/30"}`}>
-      <div className="text-xs uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className="mt-1 text-lg font-semibold font-mono">{v}</div>
+    <div className={`rounded-2xl border p-4 transition-all shadow-soft ${
+      accent 
+        ? "border-mint/30 bg-mint/5 text-foreground" 
+        : "border-border/80 bg-card text-foreground"
+    }`}>
+      <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className={`mt-1.5 text-xl sm:text-2xl font-bold font-mono tabular-nums ${accent ? "text-mint" : "text-foreground"}`}>{v}</div>
     </div>
   );
 }

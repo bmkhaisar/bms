@@ -1429,10 +1429,10 @@ export function DocumentListPage<T extends AnyDoc>({
               action={<Button className="mt-2 gap-2" onClick={openNew}><Plus className="h-4 w-4" /> {addLabel}</Button>}
             />
           ) : (
-            <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm overflow-hidden">
+            <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
               <div className="overflow-x-auto scrollbar-hidden">
                 <Table className="text-xs">
-                  <TableHeader className="bg-muted/50">
+                  <TableHeader className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                     <TableRow>
                       <TableHead>{kind === "purchase" ? "BMS Purchase #" : "Number"}</TableHead>
                       {kind === "purchase" && <TableHead>Supplier Invoice #</TableHead>}
@@ -1450,11 +1450,11 @@ export function DocumentListPage<T extends AnyDoc>({
                       const isInv = kind === "invoice";
                       const invBalance = (r as unknown as Invoice).balance ?? 0;
                       return (
-                        <TableRow key={r.id}>
+                        <TableRow key={r.id} className="hover:bg-secondary/30 transition-colors">
                           <TableCell className="font-mono font-medium">
-                            <div>{r.number}</div>
+                            <div className="tabular-nums">{r.number}</div>
                             {kind === "invoice" && (r as Invoice).amendedFromId && (
-                              <div className="mt-1 text-[9px] font-sans font-medium text-amber-700">
+                              <div className="mt-1 text-[9px] font-sans font-medium text-amber-700 dark:text-amber-400">
                                 Corrected from {(rows as Invoice[]).find((item) => item.id === (r as Invoice).amendedFromId)?.number || (r as Invoice).amendedFromId}
                               </div>
                             )}
@@ -1464,7 +1464,7 @@ export function DocumentListPage<T extends AnyDoc>({
                               </div>
                             )}
                             {kind === "purchase" && (r as Purchase).amendedFromId && (
-                              <div className="mt-1 text-[9px] font-sans font-medium text-amber-700">
+                              <div className="mt-1 text-[9px] font-sans font-medium text-amber-700 dark:text-amber-400">
                                 Corrected from {(rows as Purchase[]).find((item) => item.id === (r as Purchase).amendedFromId)?.number || (r as Purchase).amendedFromId}
                               </div>
                             )}
@@ -1475,18 +1475,18 @@ export function DocumentListPage<T extends AnyDoc>({
                             )}
                             {kind === "invoice" && (
                               (r as unknown as Invoice).sourceType === "QUOTATION" || (r as unknown as Invoice).convertedFromQuotationId
-                                ? <button type="button" className="mt-1 rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-blue-700 hover:underline" onClick={() => {
+                                ? <button type="button" className="mt-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-[9px] font-sans font-semibold text-sky-700 dark:text-sky-400 hover:underline" onClick={() => {
                                   const sourceId = (r as unknown as Invoice).sourceQuotationId || (r as unknown as Invoice).convertedFromQuotationId;
                                   if (sourceId) navigate({ to: documentDeepLink("/quotations", sourceId) as never });
                                   }}>From {(r as unknown as Invoice).sourceQuotationNumber || "Quotation"}</button>
-                                : <span className="mt-1 inline-block rounded bg-slate-500/10 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-slate-600">Direct Invoice</span>
+                                : <span className="mt-1 inline-block rounded-full bg-secondary px-2 py-0.5 text-[9px] font-sans font-semibold text-muted-foreground">Direct Invoice</span>
                             )}
                             {kind === "quotation" && (r as unknown as Quotation).convertedInvoiceId && (
-                              <span className="mt-1 inline-block rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-sans font-semibold text-emerald-700">Invoice Created</span>
+                              <span className="mt-1 inline-block rounded-full bg-mint/15 px-2 py-0.5 text-[9px] font-sans font-semibold text-mint">Invoice Created</span>
                             )}
                           </TableCell>
                           {kind === "purchase" && (
-                            <TableCell className="font-mono font-semibold text-primary">
+                            <TableCell className="font-mono font-semibold text-primary tabular-nums">
                               {(r as Purchase).supplierInvoiceNumber || "—"}
                             </TableCell>
                           )}
@@ -1495,9 +1495,9 @@ export function DocumentListPage<T extends AnyDoc>({
                             {p?.name ?? "—"}
                             {p?.company ? <div className="text-[10px] text-muted-foreground">{p.company}</div> : null}
                           </TableCell>
-                          <TableCell className="text-right font-mono font-semibold">{formatMoney(r.grandTotal)}</TableCell>
+                          <TableCell className="text-right font-mono font-semibold tabular-nums">{formatMoney(r.grandTotal)}</TableCell>
                           {kind !== "quotation" && (
-                            <TableCell className={`text-right font-mono ${invBalance > 0 ? "text-amber-600 font-semibold" : ""}`}>
+                            <TableCell className={`text-right font-mono tabular-nums ${invBalance > 0 ? "text-amber-600 dark:text-amber-400 font-semibold" : ""}`}>
                               {formatMoney(invBalance)}
                             </TableCell>
                           )}
@@ -1516,21 +1516,35 @@ export function DocumentListPage<T extends AnyDoc>({
 
                               if (isVoidedOrCancelled) {
                                 return (
-                                  <span className="rounded-md bg-destructive/10 text-destructive border border-destructive/20 px-2 py-0.5 text-[10px] uppercase font-semibold">
+                                  <span className="rounded-full bg-destructive/15 text-destructive border border-destructive/20 px-2.5 py-0.5 text-[10px] uppercase font-semibold">
                                     Deleted / Voided
                                   </span>
                                 );
                               }
                               if (isDraft) {
                                 return (
-                                  <span className="rounded-md bg-amber-500/10 text-amber-600 border border-amber-500/20 px-2 py-0.5 text-[10px] uppercase font-semibold">
+                                  <span className="rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20 px-2.5 py-0.5 text-[10px] uppercase font-semibold">
                                     Draft
                                   </span>
                                 );
                               }
+                              if (docStatus === "paid") {
+                                return (
+                                  <span className="rounded-full bg-mint/15 text-mint border border-mint/20 px-2.5 py-0.5 text-[10px] uppercase font-semibold">
+                                    Paid
+                                  </span>
+                                );
+                              }
+                              if (docStatus === "partial") {
+                                return (
+                                  <span className="rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20 px-2.5 py-0.5 text-[10px] uppercase font-semibold">
+                                    Partial
+                                  </span>
+                                );
+                              }
                               return (
-                                <span className="rounded-md bg-muted/60 px-2 py-0.5 text-[10px] uppercase font-semibold">
-                                  {(r as unknown as Invoice).status}
+                                <span className="rounded-full bg-secondary text-secondary-foreground border border-border/60 px-2.5 py-0.5 text-[10px] uppercase font-semibold">
+                                  {(r as unknown as Invoice).status || "Active"}
                                 </span>
                               );
                             })()}

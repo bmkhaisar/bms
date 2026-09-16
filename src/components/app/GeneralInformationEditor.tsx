@@ -62,21 +62,21 @@ export function GeneralInformationEditor({
   }
 
   return (
-    <Card className="p-4 space-y-4 border-slate-200">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3">
+    <Card className="p-4 space-y-4 border-border/80 bg-card shadow-soft">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/60 pb-3">
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-sm text-slate-900">General Information</span>
-            <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 font-medium">
+            <span className="font-semibold text-sm text-foreground">General Information</span>
+            <span className="text-xs bg-sky-500/10 text-sky-700 dark:text-sky-300 px-2.5 py-0.5 rounded-full border border-sky-500/20 font-medium">
               Quotation Only
             </span>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="text-xs text-muted-foreground mt-0.5">
             Client site specifications, configuration details, and delivery requirements. Excluded from invoices.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Label htmlFor="include-gen-info" className="text-xs font-medium text-slate-700">
+          <Label htmlFor="include-gen-info" className="text-xs font-medium text-foreground">
             Include in Quotation
           </Label>
           <Switch
@@ -94,7 +94,7 @@ export function GeneralInformationEditor({
             <div className="flex items-center gap-2">
               {templates.length > 0 && onApplyTemplate && (
                 <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-slate-600">Template:</span>
+                  <span className="text-xs text-muted-foreground">Template:</span>
                   <Select
                     value={selectedTemplateId || ""}
                     onValueChange={onApplyTemplate}
@@ -119,7 +119,7 @@ export function GeneralInformationEditor({
               variant="outline"
               size="sm"
               onClick={addRow}
-              className="h-8 text-xs gap-1.5 border-primary text-primary hover:bg-primary/10"
+              className="h-8 text-xs gap-1.5"
             >
               <Plus className="h-3.5 w-3.5" /> Add Row
             </Button>
@@ -127,7 +127,7 @@ export function GeneralInformationEditor({
 
           {/* Rows List */}
           {rows.length === 0 ? (
-            <div className="text-center py-6 border border-dashed rounded-lg bg-slate-50 text-xs text-slate-500">
+            <div className="text-center py-6 border border-dashed border-border/80 rounded-xl bg-secondary/20 text-xs text-muted-foreground">
               No general information rows added. Click <strong>+ Add Row</strong> or select a template above.
             </div>
           ) : (
@@ -135,7 +135,7 @@ export function GeneralInformationEditor({
               {rows.map((row, idx) => (
                 <div
                   key={row.id || idx}
-                  className="p-3 border rounded-lg bg-slate-50/50 space-y-2 text-xs"
+                  className="p-3 border border-border/70 rounded-xl bg-secondary/25 space-y-2 text-xs"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 flex-1">
@@ -143,7 +143,7 @@ export function GeneralInformationEditor({
                         placeholder="Label (e.g. Configuration of Cabins)"
                         value={row.label}
                         onChange={(e) => updateRow(idx, { label: e.target.value })}
-                        className="h-8 text-xs font-semibold max-w-sm"
+                        className="h-8 text-xs font-semibold max-w-sm bg-card"
                       />
                       <Select
                         value={row.valueType || "TEXT"}
@@ -183,7 +183,7 @@ export function GeneralInformationEditor({
                         disabled={idx === 0}
                         onClick={() => moveRow(idx, "up")}
                       >
-                        <ArrowUp className="h-3.5 w-3.5 text-slate-500" />
+                        <ArrowUp className="h-3.5 w-3.5 text-muted-foreground" />
                       </Button>
                       <Button
                         type="button"
@@ -193,13 +193,13 @@ export function GeneralInformationEditor({
                         disabled={idx === rows.length - 1}
                         onClick={() => moveRow(idx, "down")}
                       >
-                        <ArrowDown className="h-3.5 w-3.5 text-slate-500" />
+                        <ArrowDown className="h-3.5 w-3.5 text-muted-foreground" />
                       </Button>
                       <Button
                         type="button"
                         size="icon"
                         variant="ghost"
-                        className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
+                        className="h-7 w-7 text-destructive hover:text-destructive/80"
                         onClick={() => deleteRow(idx)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -214,7 +214,7 @@ export function GeneralInformationEditor({
                       placeholder={"Enter bullet points (one item per line)\n• Cabin 40'L x 10'W x 8.5'H\n• Cabin 20'L x 10'W x 8.5'H"}
                       value={row.value}
                       onChange={(e) => updateRow(idx, { value: e.target.value })}
-                      className="text-xs leading-relaxed"
+                      className="text-xs leading-relaxed bg-card"
                     />
                   ) : row.valueType === "MULTILINE" ? (
                     <Textarea
@@ -222,14 +222,14 @@ export function GeneralInformationEditor({
                       placeholder="Enter detailed description or conditions…"
                       value={row.value}
                       onChange={(e) => updateRow(idx, { value: e.target.value })}
-                      className="text-xs"
+                      className="text-xs bg-card"
                     />
                   ) : (
                     <Input
                       placeholder="Value (e.g. INCLUDED, No Advance Sample)"
                       value={row.value}
                       onChange={(e) => updateRow(idx, { value: e.target.value })}
-                      className="h-8 text-xs"
+                      className="h-8 text-xs bg-card"
                     />
                   )}
                 </div>

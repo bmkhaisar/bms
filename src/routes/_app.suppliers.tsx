@@ -358,11 +358,11 @@ function SuppliersPage() {
           }
         />
       ) : (
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm overflow-hidden">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
           <div className="overflow-x-auto scrollbar-hidden">
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase border-b border-border/70">
                   <TableHead>Vendor Name</TableHead>
                   <TableHead>Mobile</TableHead>
                   <TableHead>GSTIN</TableHead>

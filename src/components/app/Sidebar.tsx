@@ -25,9 +25,9 @@ const navGroups: NavGroup[] = [
     title: "MASTERS",
     items: [
       { to: "/parties", label: "Party Master", icon: Users },
-      { to: "/products", label: "Product Master", icon: Package },
+      { to: "/products", label: "Products & Stock", icon: Package },
       { to: "/categories", label: "Category Master", icon: Tags },
-      { to: "/ledger", label: "Ledger Master", icon: BookOpen },
+      { to: "/ledger", label: "Ledger & Vouchers", icon: BookOpen },
       { to: "/masters", label: "Quote & Doc Masters", icon: Layers },
     ],
   },
@@ -36,7 +36,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/quotations", label: "Quotations", icon: FileText },
       { to: "/invoices", label: "Invoices", icon: Receipt },
-      { to: "/receipts", label: "Receipts", icon: HandCoins },
+      { to: "/receipts", label: "Receipts & Inflows", icon: HandCoins },
     ],
   },
   {
@@ -47,20 +47,13 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    title: "INVENTORY",
+    title: "FINANCIALS",
     items: [
-      { to: "/products", label: "Stock & Inventory", icon: Package },
-    ],
-  },
-  {
-    title: "ACCOUNTING",
-    items: [
-      { to: "/ledger", label: "Vouchers & Ledgers", icon: BookOpen },
       { to: "/reports", label: "Reports & GST", icon: BarChart3 },
     ],
   },
   {
-    title: "SETTINGS",
+    title: "CONFIGURATION",
     items: [
       { to: "/settings", label: "Company Settings", icon: Building2 },
       { to: "/backup", label: "Backup & Sync", icon: HardDriveDownload },
@@ -81,18 +74,18 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   }, []);
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
+    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-border/70 bg-sidebar text-sidebar-foreground select-none">
       {/* Brand Header */}
-      <div className="flex items-center gap-2.5 border-b px-4 py-3.5">
-        <img src={logo.url} alt="BMS logo" className="h-9 w-9 rounded-lg object-contain shadow-xs" />
+      <div className="flex items-center gap-2.5 border-b border-border/70 px-4 py-3.5">
+        <img src={logo.url} alt="BMS logo" className="h-9 w-9 rounded-xl object-contain shadow-xs border border-border/60 bg-card p-0.5" />
         <div className="leading-tight">
-          <div className="text-sm font-bold tracking-tight">BMS NEXT</div>
+          <div className="text-sm font-bold tracking-tight text-foreground">BMS NEXT</div>
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Business ERP</div>
         </div>
       </div>
 
       {/* Multi-Company Switcher */}
-      <div className="p-3 border-b bg-sidebar-accent/30">
+      <div className="p-2.5 border-b border-border/70 bg-secondary/30">
         <CompanySwitcher />
       </div>
 
@@ -100,7 +93,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       <nav className="flex-1 overflow-y-auto scrollbar-hidden p-2 space-y-3">
         {navGroups.map((group) => (
           <div key={group.title} className="space-y-0.5">
-            <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+            <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/75">
               {group.title}
             </div>
             {group.items.map((n) => {
@@ -112,13 +105,13 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                   to={n.to as unknown as "/"}
                   onClick={onNavigate}
                   className={cn(
-                    "group flex items-center gap-3 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+                    "group flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-150 active:scale-[0.98]",
                     active
-                      ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-xs font-semibold"
-                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                      ? "bg-accent text-accent-foreground font-semibold shadow-2xs"
+                      : "text-sidebar-foreground/75 hover:bg-secondary hover:text-foreground",
                   )}
                 >
-                  <Icon className="h-4 w-4 shrink-0" />
+                  <Icon className={cn("h-4 w-4 shrink-0 transition-colors", active ? "text-mint" : "text-muted-foreground group-hover:text-foreground")} />
                   <span>{n.label}</span>
                 </Link>
               );
@@ -128,13 +121,13 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       {/* Realtime / Offline Sync Status Footer */}
-      <div className="border-t p-3 text-[11px] text-muted-foreground space-y-1">
+      <div className="border-t border-border/70 p-3 text-[11px] text-muted-foreground space-y-1 bg-secondary/20">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 font-medium">
             {networkStatus === "online" && (
               <>
                 <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-foreground/90">Cloud Synced</span>
+                <span className="text-foreground/90">All changes synced</span>
               </>
             )}
             {networkStatus === "syncing" && (
@@ -146,17 +139,17 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             {networkStatus === "offline" && (
               <>
                 <WifiOff className="h-3 w-3 text-rose-500" />
-                <span className="text-rose-600 dark:text-rose-400">Offline mode</span>
+                <span className="text-rose-600 dark:text-rose-400">Working offline</span>
               </>
             )}
           </div>
           {pendingCount > 0 && networkStatus === "offline" && (
-            <span className="text-[10px] bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 px-1.5 py-0.2 rounded font-mono">
+            <span className="text-[10px] bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 px-1.5 py-0.5 rounded font-mono font-medium">
               {pendingCount} pending
             </span>
           )}
         </div>
-        <div className="text-[10px] text-muted-foreground/80">Firebase RTDB · Dexie Cache</div>
+        <div className="text-[10px] text-muted-foreground/70">Continuous Cloud Sync · Offline Safe</div>
       </div>
     </aside>
   );

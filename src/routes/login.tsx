@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { toast } from "sonner";
-import { KeyRound, Loader2, ShieldCheck, ShieldAlert, Lock } from "lucide-react";
+import { KeyRound, Loader2, ShieldCheck, ShieldAlert, Lock, Eye, EyeOff, Sun, Moon } from "lucide-react";
 import logo from "@/assets/bms-logo.png.asset.json";
 import { BRAND_ATTRIBUTION, BRAND_TAGLINE } from "@/config/publicConfig";
 import { checkPlatformAdminSetupStatusFn } from "@/functions/platformAdminFns";
@@ -32,11 +32,26 @@ function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [dark, setDark] = useState(false);
   const [loading, setLoading] = useState(false);
   const [entering, setEntering] = useState(false);
   const [routingResolved, setRoutingResolved] = useState(false);
   const [resolvingDestination, setResolvingDestination] = useState(false);
   const [lockoutStatus, setLockoutStatus] = useState<LockoutStatus>(() => checkLoginLockout());
+
+  useEffect(() => {
+    const t = localStorage.getItem("bms_theme") === "dark";
+    setDark(t);
+    document.documentElement.classList.toggle("dark", t);
+  }, []);
+
+  function toggleTheme() {
+    const next = !dark;
+    setDark(next);
+    localStorage.setItem("bms_theme", next ? "dark" : "light");
+    document.documentElement.classList.toggle("dark", next);
+  }
 
   // Keep lockout status synchronized with current email
   useEffect(() => {
@@ -187,25 +202,36 @@ function LoginPage() {
 
   if (authInitializing) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-sky-50/40 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4" />
+      <div className="flex min-h-screen items-center justify-center bg-background p-4" />
     );
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-slate-50 via-sky-50/40 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4">
-      {/* Decorative ambient lighting */}
-      <div className="pointer-events-none absolute -top-40 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-sky-200/40 blur-3xl dark:bg-sky-900/20" />
+    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(44,123,82,0.06),transparent_80%)] dark:bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(141,214,170,0.05),transparent_80%)] p-4 selection:bg-accent selection:text-accent-foreground">
+      {/* Top right theme toggle */}
+      <div className="absolute top-4 right-4">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleTheme}
+          className="h-8 w-8 text-muted-foreground hover:text-foreground rounded-lg"
+          aria-label="Toggle theme"
+        >
+          {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </Button>
+      </div>
 
-      <div className="relative w-full max-w-[420px]">
+      <div className="relative w-full max-w-[400px]">
+        {/* Brand Header */}
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <div className="relative">
             <img
               src={logo.url}
               alt="BMS NEXT logo"
-              className="h-14 w-14 rounded-2xl object-contain shadow-md ring-1 ring-border/60 backdrop-blur"
+              className="h-14 w-14 rounded-2xl object-contain shadow-soft border border-border/80 bg-card p-1"
             />
-            <div className="absolute -bottom-1 -right-1 rounded-full bg-background p-0.5 shadow">
-              <ShieldCheck className="h-4 w-4 text-primary" />
+            <div className="absolute -bottom-1 -right-1 rounded-full bg-card p-0.5 shadow-xs border border-border/80">
+              <ShieldCheck className="h-3.5 w-3.5 text-mint" />
             </div>
           </div>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground">BMS NEXT</h1>
@@ -214,17 +240,18 @@ function LoginPage() {
           </p>
         </div>
 
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur-md shadow-xl transition-all">
-          <CardHeader className="space-y-1 pb-4">
-            <CardTitle className="text-lg font-semibold tracking-tight">Sign In</CardTitle>
-            <CardDescription className="text-xs">
-              Enter your corporate credentials to access your workspaces
+        {/* Soft Login Card (Photo 1 inspired) */}
+        <Card className="rounded-3xl border border-border/80 bg-card shadow-raised transition-all">
+          <CardHeader className="space-y-1 p-6 pb-2 sm:p-7 sm:pb-2">
+            <CardTitle className="text-base font-semibold tracking-tight text-foreground">Sign In</CardTitle>
+            <CardDescription className="text-xs text-muted-foreground">
+              Enter your corporate credentials to access your workspace
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-6 pt-3 sm:p-7 sm:pt-3">
             <form onSubmit={submit} className="space-y-4">
               <div className="space-y-1.5">
-                <Label htmlFor="email" className="text-xs font-medium">Corporate Email</Label>
+                <Label htmlFor="email" className="text-xs font-medium text-foreground">Corporate Email</Label>
                 <Input
                   id="email"
                   type="email"
@@ -232,31 +259,42 @@ function LoginPage() {
                   placeholder="name@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="h-9 text-sm"
+                  className="h-10 text-sm"
                   disabled={loading || entering}
                   required
                 />
               </div>
+
               <div className="space-y-1.5">
-                <Label htmlFor="password" className="text-xs font-medium">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="h-9 text-sm"
-                  disabled={loading || entering}
-                  required
-                />
+                <Label htmlFor="password" className="text-xs font-medium text-foreground">Password</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="h-10 text-sm pr-10"
+                    disabled={loading || entering}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1 transition-colors cursor-pointer"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
 
               {lockoutStatus.isLocked && (
                 <div
                   role="alert"
                   aria-live="assertive"
-                  className="rounded-xl border border-destructive/40 bg-destructive/10 p-3.5 text-xs text-destructive backdrop-blur-sm"
+                  className="rounded-xl border border-destructive/30 bg-destructive/10 p-3.5 text-xs text-destructive backdrop-blur-sm"
                 >
                   <div className="flex items-start gap-2.5">
                     <ShieldAlert className="h-5 w-5 mt-0.5 shrink-0 text-destructive" />
@@ -278,7 +316,7 @@ function LoginPage() {
 
               <Button
                 type="submit"
-                className="w-full gap-2 font-medium"
+                className="w-full h-10 gap-2 font-semibold text-xs rounded-xl shadow-xs active:scale-[0.98]"
                 disabled={loading || entering || lockoutStatus.isLocked}
               >
                 {loading ? (
@@ -302,6 +340,7 @@ function LoginPage() {
           </CardContent>
         </Card>
 
+        {/* Supporting Footer Links */}
         <div className="mt-6 flex flex-col items-center gap-2 text-center text-xs text-muted-foreground">
           <div className="flex items-center gap-3">
             <a href="/about" className="transition-colors hover:text-foreground">About</a>
@@ -316,9 +355,9 @@ function LoginPage() {
 
       {(entering || resolvingDestination || (isAuthenticated && !routingResolved)) && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-background/85 backdrop-blur-md animate-fade-in">
-          <img src={logo.url} alt="BMS logo" className="h-16 w-16 rounded-2xl object-contain animate-scale-in shadow-lg" />
+          <img src={logo.url} alt="BMS logo" className="h-16 w-16 rounded-2xl object-contain shadow-soft border border-border bg-card p-1" />
           <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <Loader2 className="h-4 w-4 animate-spin text-mint" />
             <span>Resolving workspace access...</span>
           </div>
         </div>

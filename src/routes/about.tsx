@@ -20,7 +20,7 @@ function AboutPage() {
   return (
     <PublicShell>
       <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="rounded-2xl border border-border/60 bg-card/75 backdrop-blur shadow-sm lg:col-span-2">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft lg:col-span-2">
           <CardContent className="p-8">
             <div className="flex items-center gap-4">
               <div className="grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/20">
@@ -74,7 +74,7 @@ function AboutPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-2xl border border-border/60 bg-card/75 backdrop-blur shadow-sm">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
           <CardContent className="p-8">
             <h2 className="text-base font-semibold text-foreground">Current Capabilities</h2>
             <div className="mt-4 space-y-3 text-sm text-muted-foreground">

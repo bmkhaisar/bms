@@ -195,10 +195,10 @@ function CategoriesPage() {
           </Button>
         }
       />
-      <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm overflow-hidden">
+      <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
         <Table>
           <TableHeader>
-            <TableRow>
+            <TableRow className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase border-b border-border/70">
               <TableHead>Name</TableHead>
               <TableHead className="w-24 text-right">Actions</TableHead>
             </TableRow>

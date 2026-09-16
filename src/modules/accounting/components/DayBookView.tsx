@@ -116,14 +116,14 @@ export function DayBookView({ vouchers, onReverse }: DayBookViewProps) {
   const typeBadges: Record<VoucherType, { label: string; color: string }> = {
     journal: { label: "Journal", color: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20" },
     payment: { label: "Payment", color: "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/20" },
-    receipt: { label: "Receipt", color: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20" },
+    receipt: { label: "Receipt", color: "bg-mint/15 text-mint border-mint/20" },
     contra: { label: "Contra", color: "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20" },
   };
 
   return (
     <div className="space-y-4">
       {/* Filter Bar */}
-      <Card className="p-4 card-soft flex flex-wrap items-end gap-3">
+      <Card className="p-4 rounded-2xl border border-border/80 bg-card shadow-soft flex flex-wrap items-end gap-3">
         <div className="space-y-1.5 flex-1 min-w-[180px]">
           <Label className="text-xs">Search</Label>
           <Input
@@ -195,28 +195,28 @@ export function DayBookView({ vouchers, onReverse }: DayBookViewProps) {
 
       {/* Summary Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <Card className="p-3 card-soft">
+        <Card className="p-4 rounded-2xl border border-border/80 bg-card shadow-soft">
           <div className="text-[11px] font-medium text-muted-foreground uppercase">Posted Vouchers</div>
-          <div className="text-xl font-bold mt-1">{postedCount}</div>
+          <div className="text-2xl font-bold mt-1 tabular-nums text-foreground">{postedCount}</div>
         </Card>
-        <Card className="p-3 card-soft">
+        <Card className="p-4 rounded-2xl border border-border/80 bg-card shadow-soft">
           <div className="text-[11px] font-medium text-muted-foreground uppercase">Day Book Total Debit</div>
-          <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1">
+          <div className="text-2xl font-bold font-mono tabular-nums text-mint mt-1">
             {formatPaise(totalDrPaise)}
           </div>
         </Card>
-        <Card className="p-3 card-soft">
+        <Card className="p-4 rounded-2xl border border-border/80 bg-card shadow-soft">
           <div className="text-[11px] font-medium text-muted-foreground uppercase">Day Book Total Credit</div>
-          <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
+          <div className="text-2xl font-bold font-mono tabular-nums text-sky-600 dark:text-sky-400 mt-1">
             {formatPaise(totalCrPaise)}
           </div>
         </Card>
       </div>
 
       {/* Transactions Table */}
-      <Card className="card-soft overflow-hidden">
+      <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
         <Table>
-          <TableHeader className="bg-muted/40">
+          <TableHeader className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
             <TableRow>
               <TableHead className="w-[100px]">Date</TableHead>
               <TableHead className="w-[140px]">Voucher #</TableHead>
@@ -240,11 +240,11 @@ export function DayBookView({ vouchers, onReverse }: DayBookViewProps) {
               filtered.map((v) => {
                 const b = typeBadges[v.voucherType] || { label: v.voucherType, color: "" };
                 return (
-                  <TableRow key={v.id} className="hover:bg-muted/30">
+                  <TableRow key={v.id} className="hover:bg-secondary/30 transition-colors">
                     <TableCell className="text-xs whitespace-nowrap">{formatDate(v.date)}</TableCell>
-                    <TableCell className="font-mono text-xs font-semibold">{v.voucherNumber}</TableCell>
+                    <TableCell className="font-mono text-xs font-semibold tabular-nums">{v.voucherNumber}</TableCell>
                     <TableCell>
-                      <span className={`text-[11px] px-2 py-0.5 rounded border font-medium ${b.color}`}>
+                      <span className={`text-[10px] px-2.5 py-0.5 rounded-full border font-semibold uppercase ${b.color}`}>
                         {b.label}
                       </span>
                     </TableCell>
@@ -252,21 +252,21 @@ export function DayBookView({ vouchers, onReverse }: DayBookViewProps) {
                     <TableCell className="text-xs max-w-xs truncate" title={v.narration}>
                       {v.narration}
                     </TableCell>
-                    <TableCell className="text-right font-mono text-xs">{formatPaise(v.totalDebit)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{formatPaise(v.totalCredit)}</TableCell>
+                    <TableCell className="text-right font-mono text-xs tabular-nums">{formatPaise(v.totalDebit)}</TableCell>
+                    <TableCell className="text-right font-mono text-xs tabular-nums">{formatPaise(v.totalCredit)}</TableCell>
                     <TableCell className="text-center">
                       {v.status === "posted" ? (
-                        <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
+                        <span className="text-[10px] rounded-full px-2.5 py-0.5 font-semibold uppercase bg-mint/15 text-mint border border-mint/20">
                           Posted
-                        </Badge>
+                        </span>
                       ) : v.status === "reversed" ? (
-                        <Badge variant="outline" className="text-[10px] bg-rose-500/10 text-rose-600 border-rose-500/20">
+                        <span className="text-[10px] rounded-full px-2.5 py-0.5 font-semibold uppercase bg-destructive/15 text-destructive border border-destructive/20">
                           Reversed
-                        </Badge>
+                        </span>
                       ) : (
-                        <Badge variant="outline" className="text-[10px]">
+                        <span className="text-[10px] rounded-full px-2.5 py-0.5 font-semibold uppercase bg-secondary text-secondary-foreground border border-border/60">
                           {v.status}
-                        </Badge>
+                        </span>
                       )}
                     </TableCell>
                     <TableCell className="text-right">

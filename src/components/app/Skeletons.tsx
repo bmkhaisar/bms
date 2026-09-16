@@ -7,7 +7,7 @@ function Bar({ w = "w-full", h = "h-4" }: { w?: string; h?: string }) {
 
 export function KpiCardSkeleton() {
   return (
-    <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur p-4 shadow-sm">
+    <Card className="rounded-2xl border border-border/80 bg-card shadow-soft p-4">
       <div className="flex items-center justify-between">
         <Bar w="w-24" h="h-3" />
         <div className="h-8 w-8 rounded-xl bg-muted/60 animate-pulse" />
@@ -31,11 +31,11 @@ export function DashboardSkeleton() {
         ))}
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="rounded-2xl border border-border/60 bg-card/85 p-4 lg:col-span-2 shadow-sm">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft p-4 lg:col-span-2">
           <Bar w="w-40" h="h-4" />
           <div className="mt-4 h-64 w-full rounded-xl bg-muted/30 animate-pulse" />
         </Card>
-        <Card className="rounded-2xl border border-border/60 bg-card/85 p-4 shadow-sm">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft p-4">
           <Bar w="w-32" h="h-4" />
           <div className="mt-4 space-y-3">
             {Array.from({ length: 5 }).map((_, i) => (
@@ -58,7 +58,7 @@ export function ListSkeleton({ columns = 5, rows = 6 }: { columns?: number; rows
         <Bar w="w-64" h="h-9" />
         <Bar w="w-24" h="h-9" />
       </div>
-      <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur overflow-hidden shadow-sm">
+      <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
         <div className="overflow-x-auto scrollbar-hidden">
           <Table>
             <TableHeader>

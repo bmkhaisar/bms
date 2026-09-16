@@ -73,7 +73,7 @@ function PlatformAdminSetupRequiredPage() {
 
   if (initializing || serverStatusVerified === null) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-sky-50/40 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4">
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-7 w-7 animate-spin text-primary" />
           <p className="text-xs font-medium text-muted-foreground">Checking administrator status...</p>
@@ -83,11 +83,11 @@ function PlatformAdminSetupRequiredPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-slate-50 via-amber-50/20 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4 sm:p-6">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4 sm:p-6">
       <div className="w-full max-w-lg">
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white font-bold text-sm shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground font-bold text-sm shadow-soft">
               BMS
             </div>
             <div>
@@ -106,7 +106,7 @@ function PlatformAdminSetupRequiredPage() {
           </Button>
         </div>
 
-        <Card className="rounded-2xl border border-amber-200/70 dark:border-amber-900/40 bg-card/90 backdrop-blur shadow-md">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
           <CardHeader className="text-center pb-3">
             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
               <ShieldAlert className="h-6 w-6" />

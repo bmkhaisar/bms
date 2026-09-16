@@ -97,7 +97,7 @@ function BackupPage() {
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {/* 1. Cloud Sync Status (PRD #85) */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <Wifi className="h-4 w-4 text-emerald-500" /> Cloud Synchronization
@@ -138,7 +138,7 @@ function BackupPage() {
         </Card>
 
         {/* 2. Local Dexie Cache (PRD #4, #5, #85) */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <Database className="h-4 w-4 text-primary" /> Local Indexed Cache
@@ -175,7 +175,7 @@ function BackupPage() {
         </Card>
 
         {/* 3. Export Card */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <Download className="h-4 w-4 text-primary" /> Export Company Data
@@ -200,7 +200,7 @@ function BackupPage() {
         </Card>
 
         {/* Security / Invariant Notice */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <ShieldAlert className="h-4 w-4 text-primary" /> Accounting Protection

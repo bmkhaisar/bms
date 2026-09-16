@@ -628,10 +628,10 @@ function ReceiptsAndPaymentsPage() {
               }
             />
           ) : (
-            <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm overflow-hidden">
+            <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
               <div className="overflow-x-auto scrollbar-hidden">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                     <TableRow>
                       <TableHead>Receipt #</TableHead>
                       <TableHead>Date</TableHead>
@@ -648,17 +648,17 @@ function ReceiptsAndPaymentsPage() {
                       const isAdvance = r.allocationType === "ADVANCE" || (!r.invoiceId && !r.allocatedInvoices?.length);
                       const isRefunded = r.postingStatus === "refunded" || (r.refundAmountPaise && r.refundAmountPaise >= Math.round(r.amount * 100));
                       return (
-                        <TableRow key={r.id}>
-                          <TableCell className="font-mono font-medium">{r.number}</TableCell>
+                        <TableRow key={r.id} className="hover:bg-secondary/30 transition-colors">
+                          <TableCell className="font-mono font-medium tabular-nums">{r.number}</TableCell>
                           <TableCell>{formatDate(r.date)}</TableCell>
-                          <TableCell>{customers.find((c) => c.id === r.customerId)?.name ?? "—"}</TableCell>
+                          <TableCell className="font-medium">{customers.find((c) => c.id === r.customerId)?.name ?? "—"}</TableCell>
                           <TableCell>
                             {isAdvance ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-primary/10 text-primary">
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary uppercase">
                                 {r.supplyType || "GOODS"} ADVANCE
                               </span>
                             ) : (
-                              <span className="font-mono text-xs text-muted-foreground">
+                              <span className="font-mono text-xs text-muted-foreground tabular-nums">
                                 {invoices.find((i) => i.id === r.invoiceId)?.number ?? "On account"}
                               </span>
                             )}
@@ -666,15 +666,15 @@ function ReceiptsAndPaymentsPage() {
                           <TableCell>
                             {isAdvance ? (
                               r.taxTreatment === "ADVANCE_GST" ? (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-400">
                                   GST ₹{((r.totalTaxPaise || 0) / 100).toFixed(2)}
                                 </span>
                               ) : r.taxTreatment === "PENDING_CLASSIFICATION" ? (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-yellow-500/10 text-yellow-700 dark:text-yellow-400">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-400">
                                   Pending Review
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-500/10 text-slate-600 dark:text-slate-400">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-secondary text-secondary-foreground">
                                   No Advance GST
                                 </span>
                               )
@@ -683,10 +683,10 @@ function ReceiptsAndPaymentsPage() {
                             )}
                           </TableCell>
                           <TableCell className="uppercase text-xs font-semibold">{r.mode}</TableCell>
-                          <TableCell className="text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                          <TableCell className="text-right font-mono font-semibold tabular-nums text-mint">
                             {formatMoney(r.amount)}
                             {r.refundAmountPaise ? (
-                              <div className="text-[10px] text-rose-500">
+                              <div className="text-[10px] text-destructive">
                                 Ref: -{formatMoney(r.refundAmountPaise / 100)}
                               </div>
                             ) : null}
@@ -736,17 +736,31 @@ function ReceiptsAndPaymentsPage() {
           {payments.length === 0 ? (
             <EmptyState title="No supplier payments yet" description="Record a supplier payment and optionally link it to a purchase." action={<Button onClick={openNewPayment} className="mt-2 gap-2"><ArrowUpRight className="h-4 w-4" /> Record Supplier Payment</Button>} />
           ) : (
-            <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm overflow-hidden">
+            <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
               <Table className="text-xs">
-                <TableHeader><TableRow><TableHead>Payment #</TableHead><TableHead>Date</TableHead><TableHead>Supplier</TableHead><TableHead>Purchase</TableHead><TableHead className="text-right">Amount</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+                <TableHeader className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  <TableRow>
+                    <TableHead>Payment #</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Supplier</TableHead>
+                    <TableHead>Purchase</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
                 <TableBody>{payments.map((payment) => (
-                  <TableRow key={payment.id}>
-                    <TableCell className="font-mono font-medium">{payment.number}</TableCell>
+                  <TableRow key={payment.id} className="hover:bg-secondary/30 transition-colors">
+                    <TableCell className="font-mono font-medium tabular-nums">{payment.number}</TableCell>
                     <TableCell>{formatDate(payment.date)}</TableCell>
-                    <TableCell>{suppliers.find((s) => s.id === payment.supplierId)?.name || "—"}</TableCell>
-                    <TableCell className="font-mono">{purchases.find((p) => p.id === payment.purchaseId)?.number || "On account"}</TableCell>
-                    <TableCell className="text-right font-mono font-semibold">{formatMoney(payment.amount)}</TableCell>
-                    <TableCell><span className="rounded bg-muted px-2 py-0.5 text-[10px] uppercase">{payment.postingStatus || "draft"}</span></TableCell>
+                    <TableCell className="font-medium">{suppliers.find((s) => s.id === payment.supplierId)?.name || "—"}</TableCell>
+                    <TableCell className="font-mono tabular-nums">{purchases.find((p) => p.id === payment.purchaseId)?.number || "On account"}</TableCell>
+                    <TableCell className="text-right font-mono font-semibold tabular-nums text-foreground">{formatMoney(payment.amount)}</TableCell>
+                    <TableCell>
+                      <span className="rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[10px] uppercase font-semibold">
+                        {payment.postingStatus || "draft"}
+                      </span>
+                    </TableCell>
                     <TableCell className="text-right"><Button size="icon" variant="ghost" title="Delete Payment" onClick={() => setDeletePaymentId(payment.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></TableCell>
                   </TableRow>
                 ))}</TableBody>

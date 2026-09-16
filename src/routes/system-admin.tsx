@@ -443,7 +443,7 @@ function SystemAdminPage() {
 
             {/* KPI Cards Grid (PRD Section 4: Exact or Unavailable) */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-              <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-xs">
+              <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
                 <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
                   <CardTitle className="text-xs font-medium text-muted-foreground">Total Companies</CardTitle>
                   <Building2 className="h-4 w-4 text-primary" />
@@ -456,7 +456,7 @@ function SystemAdminPage() {
                 </CardContent>
               </Card>
 
-              <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-xs">
+              <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
                 <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
                   <CardTitle className="text-xs font-medium text-muted-foreground">Active Companies</CardTitle>
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
@@ -469,7 +469,7 @@ function SystemAdminPage() {
                 </CardContent>
               </Card>
 
-              <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-xs">
+              <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
                 <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
                   <CardTitle className="text-xs font-medium text-muted-foreground">Platform Users</CardTitle>
                   <Users className="h-4 w-4 text-sky-600" />
@@ -482,7 +482,7 @@ function SystemAdminPage() {
                 </CardContent>
               </Card>
 
-              <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-xs">
+              <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
                 <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
                   <CardTitle className="text-xs font-medium text-muted-foreground">Active Memberships</CardTitle>
                   <Layers className="h-4 w-4 text-indigo-600" />
@@ -497,7 +497,7 @@ function SystemAdminPage() {
             </div>
 
             {/* Quick Actions */}
-            <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-xs">
+            <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold text-foreground">Quick Management Actions</CardTitle>
                 <CardDescription className="text-xs text-muted-foreground">
@@ -536,7 +536,7 @@ function SystemAdminPage() {
 
             {/* Authorized Workspaces */}
             {userTenantCompanies.length > 0 && (
-              <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-xs">
+              <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-semibold text-foreground">Your Assigned Workspaces</CardTitle>
                   <CardDescription className="text-xs text-muted-foreground">

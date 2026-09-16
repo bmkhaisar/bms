@@ -179,7 +179,7 @@ function Dashboard() {
       label: "Total Sales",
       value: formatMoney(metrics.totalSales),
       icon: TrendingUp,
-      tint: "text-emerald-600 dark:text-emerald-400",
+      tint: "text-mint",
       subtext: activeFinancialYear ? activeFinancialYear.name : "All Time",
       href: "/invoices",
     },
@@ -187,7 +187,7 @@ function Dashboard() {
       label: "Amount Received",
       value: formatMoney(metrics.totalAmountReceived),
       icon: HandCoins,
-      tint: "text-emerald-600 dark:text-emerald-400",
+      tint: "text-mint",
       subtext: "Posted customer receipts",
       href: "/receipts",
     },
@@ -219,7 +219,7 @@ function Dashboard() {
       label: "Gross Profit",
       value: formatMoney(metrics.grossProfit),
       icon: ArrowUpRight,
-      tint: "text-emerald-600 dark:text-emerald-400",
+      tint: "text-mint",
       subtext: "Sales minus direct COGS",
       href: "/reports",
     },
@@ -227,7 +227,7 @@ function Dashboard() {
       label: "Net Profit",
       value: formatMoney(metrics.netProfit),
       icon: Wallet,
-      tint: "text-emerald-600 dark:text-emerald-400",
+      tint: "text-mint",
       subtext: "After operating expenses",
       href: "/reports",
     },
@@ -237,7 +237,7 @@ function Dashboard() {
       icon: Landmark,
       tint: "text-sky-600 dark:text-sky-400",
       subtext: `Cash: ${formatMoney(metrics.cashInHand)}`,
-      href: "/ledgers",
+      href: "/ledger",
     },
     {
       label: "Inventory Value",
@@ -260,15 +260,15 @@ function Dashboard() {
             <img
               src={activeCompany.logoUrl}
               alt={activeCompany.name}
-              className="h-11 w-11 rounded-lg border border-border/60 bg-white object-contain p-1 shadow-xs"
+              className="h-11 w-11 rounded-xl border border-border/80 bg-white object-contain p-1 shadow-soft"
             />
           ) : (
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-base font-bold text-primary shadow-xs">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-base font-bold text-primary shadow-soft">
               {activeCompany?.name ? activeCompany.name.slice(0, 2).toUpperCase() : "BH"}
             </div>
           )}
           <div>
-            <h2 className="text-xl font-bold tracking-tight sm:text-2xl">
+            <h2 className="text-xl font-bold tracking-tight sm:text-2xl text-foreground">
               {activeCompany ? activeCompany.name : "Company Overview"}
             </h2>
             <p className="text-xs text-muted-foreground">
@@ -288,7 +288,7 @@ function Dashboard() {
       </div>
 
       {/* KPI Cards Grid with Interactive Drill-Down Navigation */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3">
         {kpiCards.map((k, idx) => (
           <motion.div
             key={k.label}
@@ -297,18 +297,18 @@ function Dashboard() {
             transition={{ delay: idx * 0.02 }}
           >
             <Link to={k.href} className="block transition-transform hover:-translate-y-0.5">
-              <Card className="cursor-pointer rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm transition-all hover:shadow-md hover:border-primary/40">
-                <CardContent className="flex items-center justify-between p-4">
+              <Card className="cursor-pointer rounded-2xl border border-border/80 bg-card shadow-soft transition-all hover:shadow-md hover:border-mint/40">
+                <CardContent className="flex items-center justify-between p-4 sm:p-5">
                   <div>
                     <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                       {k.label}
                     </div>
-                    <div className="mt-1 text-lg font-bold sm:text-xl font-mono text-foreground">
+                    <div className="mt-1 text-lg font-bold sm:text-2xl font-mono tabular-nums text-foreground">
                       {k.value}
                     </div>
-                    <div className="mt-0.5 text-[10px] text-muted-foreground">{k.subtext}</div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">{k.subtext}</div>
                   </div>
-                  <div className="rounded-xl bg-muted/30 p-2">
+                  <div className="rounded-xl bg-secondary/50 p-2.5">
                     <k.icon className={`h-5 w-5 ${k.tint}`} />
                   </div>
                 </CardContent>
@@ -320,15 +320,15 @@ function Dashboard() {
 
       {/* Dedicated GST & Statutory Tax Position (PRD #22, #42, #44) */}
       <div className="mt-4">
-        <Card className="rounded-2xl border border-border/70 bg-gradient-to-r from-card/90 via-card/75 to-card/90 backdrop-blur shadow-sm p-4 sm:p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 pb-3">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-3">
             <div>
               <div className="flex items-center gap-2">
                 <ReceiptText className="h-5 w-5 text-indigo-500" />
                 <h3 className="text-base font-semibold tracking-tight text-foreground">
                   GST & Tax Position
                 </h3>
-                <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
+                <span className="rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
                   Statutory Tax Amounts Only
                 </span>
               </div>
@@ -337,7 +337,7 @@ function Dashboard() {
               </p>
             </div>
             <Link to="/reports">
-              <Button variant="outline" size="sm" className="gap-1.5 text-xs hover:bg-muted">
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs">
                 View GST Register &rarr;
               </Button>
             </Link>
@@ -345,11 +345,11 @@ function Dashboard() {
 
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
             {/* Output GST */}
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3.5">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+            <div className="rounded-xl border border-mint/25 bg-mint/5 p-3.5">
+              <div className="text-[11px] font-medium uppercase tracking-wider text-mint">
                 Output GST (Sales Tax Collected)
               </div>
-              <div className="mt-1 text-xl font-bold font-mono text-emerald-800 dark:text-emerald-300">
+              <div className="mt-1 text-xl font-bold font-mono tabular-nums text-foreground">
                 {formatMoney(metrics.outputGst)}
               </div>
               <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
@@ -370,7 +370,7 @@ function Dashboard() {
               <div className="text-[11px] font-medium uppercase tracking-wider text-sky-700 dark:text-sky-400">
                 Input GST (Purchase ITC Paid)
               </div>
-              <div className="mt-1 text-xl font-bold font-mono text-sky-800 dark:text-sky-300">
+              <div className="mt-1 text-xl font-bold font-mono tabular-nums text-foreground">
                 {formatMoney(metrics.inputGst)}
               </div>
               <div className="mt-1 text-[10px] text-muted-foreground">
@@ -383,13 +383,13 @@ function Dashboard() {
               className={`rounded-xl border p-3.5 ${
                 metrics.netGst >= 0
                   ? "border-amber-500/20 bg-amber-500/5"
-                  : "border-emerald-500/20 bg-emerald-500/5"
+                  : "border-mint/25 bg-mint/5"
               }`}
             >
               <div className="text-[11px] font-medium uppercase tracking-wider text-foreground">
                 {metrics.netGst >= 0 ? "Net GST Payable to Govt" : "Net ITC Credit Balance"}
               </div>
-              <div className="mt-1 text-xl font-bold font-mono text-foreground">
+              <div className="mt-1 text-xl font-bold font-mono tabular-nums text-foreground">
                 {formatMoney(Math.abs(metrics.netGst))}
               </div>
               <div className="mt-1 text-[10px] text-muted-foreground">
@@ -402,15 +402,15 @@ function Dashboard() {
 
       {/* Customer Receipts & Payment Mode Breakdown (PRD § 40-49) */}
       <div className="mt-4">
-        <Card className="rounded-2xl border border-border/70 bg-gradient-to-r from-card/90 via-card/75 to-card/90 backdrop-blur shadow-sm p-4 sm:p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 pb-3">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-3">
             <div>
               <div className="flex items-center gap-2">
-                <HandCoins className="h-5 w-5 text-emerald-500" />
+                <HandCoins className="h-5 w-5 text-mint" />
                 <h3 className="text-base font-semibold tracking-tight text-foreground">
                   Customer Collections & Payment Methods
                 </h3>
-                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                <span className="rounded-full bg-mint/10 px-2.5 py-0.5 text-[11px] font-medium text-mint">
                   Posted Receipts Only
                 </span>
               </div>
@@ -419,63 +419,63 @@ function Dashboard() {
               </p>
             </div>
             <Link to="/receipts">
-              <Button variant="outline" size="sm" className="gap-1.5 text-xs hover:bg-muted">
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs">
                 Open Receipt Register &rarr;
               </Button>
             </Link>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+            <div className="rounded-xl border border-mint/25 bg-mint/5 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-mint">
                 Total Received
               </div>
-              <div className="mt-1 text-base sm:text-lg font-bold font-mono text-emerald-800 dark:text-emerald-300">
+              <div className="mt-1 text-base sm:text-lg font-bold font-mono tabular-nums text-foreground">
                 {formatMoney(metrics.totalAmountReceived)}
               </div>
             </div>
 
-            <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+            <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Bank / Transfer
               </div>
-              <div className="mt-1 text-base font-bold font-mono text-foreground">
+              <div className="mt-1 text-base font-bold font-mono tabular-nums text-foreground">
                 {formatMoney(metrics.receivedByPaymentMode.bank)}
               </div>
             </div>
 
-            <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+            <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 UPI
               </div>
-              <div className="mt-1 text-base font-bold font-mono text-foreground">
+              <div className="mt-1 text-base font-bold font-mono tabular-nums text-foreground">
                 {formatMoney(metrics.receivedByPaymentMode.upi)}
               </div>
             </div>
 
-            <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+            <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Cash
               </div>
-              <div className="mt-1 text-base font-bold font-mono text-foreground">
+              <div className="mt-1 text-base font-bold font-mono tabular-nums text-foreground">
                 {formatMoney(metrics.receivedByPaymentMode.cash)}
               </div>
             </div>
 
-            <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+            <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Cheque
               </div>
-              <div className="mt-1 text-base font-bold font-mono text-foreground">
+              <div className="mt-1 text-base font-bold font-mono tabular-nums text-foreground">
                 {formatMoney(metrics.receivedByPaymentMode.cheque)}
               </div>
             </div>
 
-            <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+            <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Card / Other
               </div>
-              <div className="mt-1 text-base font-bold font-mono text-foreground">
+              <div className="mt-1 text-base font-bold font-mono tabular-nums text-foreground">
                 {formatMoney(metrics.receivedByPaymentMode.card + metrics.receivedByPaymentMode.other)}
               </div>
             </div>
@@ -486,7 +486,7 @@ function Dashboard() {
       {/* Charts Section */}
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         {/* Sales vs Purchases 6-Month Trend */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm lg:col-span-2">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <div>
               <CardTitle className="text-base font-semibold">Sales vs Purchases Trend</CardTitle>
@@ -513,14 +513,16 @@ function Dashboard() {
                     <Tooltip
                       formatter={(val: any) => [formatMoney(Number(val)), ""]}
                       contentStyle={{
-                        borderRadius: "8px",
+                        borderRadius: "12px",
                         border: "1px solid var(--border)",
-                        backgroundColor: "var(--background)",
+                        backgroundColor: "var(--card)",
+                        color: "var(--foreground)",
+                        boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
                       }}
                     />
                     <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
-                    <Bar dataKey="sales" name="Sales Revenue" fill="#10b981" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="purchases" name="Purchases" fill="#0284c7" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="sales" name="Sales Revenue" fill="var(--mint, #2C7B52)" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="purchases" name="Purchases" fill="#3B82F6" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -537,7 +539,7 @@ function Dashboard() {
         </Card>
 
         {/* Receivables Aging */}
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-semibold">Receivables Aging</CardTitle>
             <CardDescription className="text-xs">Outstanding customer balance aging</CardDescription>
@@ -563,12 +565,14 @@ function Dashboard() {
                     <Tooltip
                       formatter={(val: any) => [formatMoney(Number(val)), "Outstanding"]}
                       contentStyle={{
-                        borderRadius: "8px",
+                        borderRadius: "12px",
                         border: "1px solid var(--border)",
-                        backgroundColor: "var(--background)",
+                        backgroundColor: "var(--card)",
+                        color: "var(--foreground)",
+                        boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
                       }}
                     />
-                    <Bar dataKey="amount" name="Amount" fill="#f59e0b" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="amount" name="Amount" fill="#D97706" radius={[0, 6, 6, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -587,14 +591,14 @@ function Dashboard() {
 
       {/* Recent Invoices Table */}
       <div className="mt-6">
-        <Card className="rounded-2xl border border-border/60 bg-card/85 backdrop-blur shadow-sm overflow-hidden">
-          <CardHeader className="flex flex-row items-center justify-between">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
             <div>
               <CardTitle className="text-base font-semibold">Recent Sales Invoices</CardTitle>
               <CardDescription className="text-xs">Latest transactions created in this company</CardDescription>
             </div>
             <Link to="/invoices">
-              <Button variant="ghost" size="sm" className="text-xs">
+              <Button variant="ghost" size="sm" className="text-xs hover:bg-secondary">
                 View all →
               </Button>
             </Link>
@@ -607,7 +611,7 @@ function Dashboard() {
             ) : (
               <div className="overflow-x-auto scrollbar-hidden">
                 <table className="w-full text-left text-sm">
-                  <thead className="border-b border-border/60 bg-muted/20 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  <thead className="border-b border-border/70 bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                     <tr>
                       <th className="px-6 py-3">Invoice #</th>
                       <th className="px-6 py-3">Date</th>
@@ -616,25 +620,25 @@ function Dashboard() {
                       <th className="px-6 py-3">Status</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-border/40">
+                  <tbody className="divide-y divide-border/50">
                     {recentInvoices.map((inv) => (
-                      <tr key={inv.id} className="hover:bg-muted/10 transition-colors">
-                        <td className="px-6 py-3 font-mono font-medium">{inv.number}</td>
+                      <tr key={inv.id} className="hover:bg-secondary/30 transition-colors">
+                        <td className="px-6 py-3 font-mono font-medium tabular-nums">{inv.number}</td>
                         <td className="px-6 py-3 text-xs text-muted-foreground">{formatDate(inv.date)}</td>
                         <td className="px-6 py-3">
                           {inv.customerSnapshot?.name || customers.find((c) => c.id === inv.customerId)?.name || "—"}
                         </td>
-                        <td className="px-6 py-3 text-right font-mono font-semibold">
+                        <td className="px-6 py-3 text-right font-mono font-semibold tabular-nums">
                           {formatMoney(inv.grandTotal)}
                         </td>
                         <td className="px-6 py-3">
                           <span
-                            className={`rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                            className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                               inv.status === "paid"
-                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                                ? "bg-mint/15 text-mint"
                                 : inv.status === "partial"
-                                ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                                : "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
+                                ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                                : "bg-rose-500/15 text-rose-700 dark:text-rose-400"
                             }`}
                           >
                             {inv.status}

@@ -38,7 +38,7 @@ export interface BmsStartupControllerProps {
  */
 export function BmsStartupController({
   children,
-  durationMs = 4000,
+  durationMs = 0,
   timeoutMs = 12000,
 }: BmsStartupControllerProps) {
   const [mounted, setMounted] = useState(false);

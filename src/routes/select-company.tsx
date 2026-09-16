@@ -54,7 +54,7 @@ function SelectCompanyPage() {
 
   if (authInitializing || claimsLoading || companiesLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-sky-50/40 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4">
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-7 w-7 animate-spin text-primary" />
           <p className="text-xs font-medium text-muted-foreground">Loading business workspaces...</p>
@@ -64,11 +64,11 @@ function SelectCompanyPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-gradient-to-br from-slate-50 via-sky-50/30 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4 sm:p-8">
+    <div className="flex min-h-screen flex-col bg-background p-4 sm:p-8">
       <div className="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center">
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white font-bold text-sm shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground font-bold text-sm shadow-soft">
               BMS
             </div>
             <div>
@@ -89,7 +89,7 @@ function SelectCompanyPage() {
           </Button>
         </div>
 
-        <Card className="rounded-2xl border border-border/60 bg-card/90 backdrop-blur shadow-md">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
           <CardHeader className="pb-4">
             <CardTitle className="text-base font-semibold tracking-tight text-foreground">
               Select Business Workspace
@@ -99,7 +99,7 @@ function SelectCompanyPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="divide-y divide-border/40 rounded-xl border border-border/50 overflow-hidden bg-card/50">
+            <div className="divide-y divide-border/60 rounded-xl border border-border/70 overflow-hidden bg-secondary/20">
               {companies.map((c) => (
                 <button
                   key={c.id}
