@@ -13,7 +13,7 @@ import {
   type Quotation, type Customer, type CompanySettings, type QuotationTemplate, type Invoice,
 } from "@/lib/db";
 import { convertQuotationToInvoice, updateLinkedDraftInvoiceFromQuotation, isInvoiceImmutable } from "@/modules/documents/quotationConversion";
-import { useLive } from "@/lib/useLive";
+import { useLive, useLiveState } from "@/lib/useLive";
 import { formatDate, formatMoney } from "@/lib/format";
 import { downloadQuotationPDF, downloadQuotationDOCX, exportQuotationPDF } from "@/lib/quotationExport";
 import { QuotationForm } from "./QuotationForm";
@@ -22,7 +22,6 @@ import { ListToolbar, EmptyState, usePagination, Pager } from "./ListHelpers";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ListSkeleton } from "./Skeletons";
 import { BmsShareDialog, type ShareDocumentData } from "./share";
-import { useInitialLoading } from "@/lib/useInitialLoading";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { getNextDocumentNumber } from "@/lib/numberingClient";
@@ -36,7 +35,9 @@ import { useDocumentDeepLink, documentDeepLink } from "@/lib/useDocumentDeepLink
 import { useNavigate } from "@tanstack/react-router";
 
 export function QuotationsPage() {
-  const rawRows = useLive<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
+  const rawRowsState = useLiveState<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
+  const rawRows = rawRowsState.data;
+  const initialLoading = !rawRowsState.isLoaded;
   const rows = useMemo(() => rawRows.map(normalizeQuotationRecord), [rawRows]);
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const templates = useLive<QuotationTemplate>(() => db().quotationTemplates.orderBy("name").toArray());
@@ -50,7 +51,6 @@ export function QuotationsPage() {
   const [previewQuotation, setPreviewQuotation] = useState<Quotation | null>(null);
   const [shareQuotation, setShareQuotation] = useState<Quotation | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const initialLoading = useInitialLoading();
 
   const { user } = useAuth();
   const { activeCompany, activeFinancialYear } = useActiveCompany();

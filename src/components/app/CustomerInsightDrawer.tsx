@@ -97,8 +97,27 @@ export function CustomerInsightDrawer({ customerId, open, onOpenChange, onSelect
         </SheetHeader>
 
         {loading ? (
-          <div className="py-12 text-center text-xs text-muted-foreground animate-pulse">
-            Loading customer financial records…
+          <div className="py-4 space-y-4 animate-pulse">
+            <div className="h-20 rounded-xl border border-border/80 bg-muted/30 p-3 space-y-2">
+              <div className="h-3 w-32 bg-muted/60 rounded" />
+              <div className="h-6 w-28 bg-muted/70 rounded" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="h-16 rounded-xl border border-border/80 bg-muted/30 p-3 space-y-1">
+                <div className="h-2.5 w-16 bg-muted/60 rounded" />
+                <div className="h-5 w-20 bg-muted/70 rounded" />
+              </div>
+              <div className="h-16 rounded-xl border border-border/80 bg-muted/30 p-3 space-y-1">
+                <div className="h-2.5 w-16 bg-muted/60 rounded" />
+                <div className="h-5 w-20 bg-muted/70 rounded" />
+              </div>
+            </div>
+            <div className="h-40 rounded-xl border border-border/80 bg-muted/20 p-4 space-y-2">
+              <div className="h-3 w-28 bg-muted/60 rounded" />
+              <div className="h-4 w-full bg-muted/40 rounded" />
+              <div className="h-4 w-full bg-muted/40 rounded" />
+              <div className="h-4 w-full bg-muted/40 rounded" />
+            </div>
           </div>
         ) : summary ? (
           <div className="py-4 space-y-4 text-xs">

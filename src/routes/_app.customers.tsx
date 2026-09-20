@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AppShell, PageHeader } from "@/components/app/AppShell";
 import { db, uid, type Customer } from "@/lib/db";
-import { useLive } from "@/lib/useLive";
+import { useLive, useLiveState } from "@/lib/useLive";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { ListToolbar, EmptyState, usePagination, Pager } from "@/components/app/ListHelpers";
+import { ListSkeleton } from "@/components/app/Skeletons";
 import { Pencil, Plus, Trash2, UserPlus, Eye, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
@@ -56,7 +57,9 @@ function CustomersPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
-  const dexieRows = useLive<Customer>(() => db().customers.orderBy("name").toArray());
+  const dexieRowsState = useLiveState<Customer>(() => db().customers.orderBy("name").toArray());
+  const rows = dexieRowsState.data;
+  const initialLoading = !dexieRowsState.isLoaded;
   const [, setCloudRows] = useState<Customer[]>([]);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "ALL" | "INACTIVE">("ACTIVE");
@@ -70,9 +73,6 @@ function CustomersPage() {
     customer: Customer;
     usage: HistoricalUsageResult;
   } | null>(null);
-
-  // The company-level ordered realtime synchronizer is the single read owner.
-  const rows = dexieRows;
 
   // Deep-link support
   useEffect(() => {
@@ -248,9 +248,7 @@ function CustomersPage() {
         active: editing.active !== false,
       };
 
-      const isNew =
-        !rows.some((c) => c.id === customerToSave.id) &&
-        !dexieRows.some((c) => c.id === customerToSave.id);
+      const isNew = !rows.some((c) => c.id === customerToSave.id);
 
       await performOptimisticMutation<Customer>({
         entityType: "customer",
@@ -350,7 +348,9 @@ function CustomersPage() {
         </Tabs>
       </div>
 
-      {filtered.length === 0 ? (
+      {initialLoading ? (
+        <ListSkeleton columns={6} />
+      ) : filtered.length === 0 ? (
         <EmptyState
           title={statusFilter === "INACTIVE" ? "No inactive customers" : "No customers yet"}
           description={

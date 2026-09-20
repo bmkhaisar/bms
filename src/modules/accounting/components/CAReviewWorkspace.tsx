@@ -57,6 +57,7 @@ interface CAReviewWorkspaceProps {
   purchases?: any[];
   products?: any[];
   parties?: any[];
+  loading?: boolean;
 }
 
 export function CAReviewWorkspace({
@@ -68,6 +69,7 @@ export function CAReviewWorkspace({
   purchases = [],
   products = [],
   parties = [],
+  loading = false,
 }: CAReviewWorkspaceProps) {
   const navigate = useNavigate();
 
@@ -167,6 +169,10 @@ export function CAReviewWorkspace({
         return null;
     }
   };
+
+  if (loading) {
+    return <CAReviewSkeleton />;
+  }
 
   return (
     <div className="space-y-6">
@@ -285,7 +291,7 @@ export function CAReviewWorkspace({
           <ShieldCheck className="h-4 w-4 text-primary" />
           <span>Accounting Health & Reconciliation Matrix</span>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           {/* 1. Day Book */}
           <Card className="p-3.5 card-soft space-y-2">
             <div className="flex items-center justify-between">
@@ -441,7 +447,7 @@ export function CAReviewWorkspace({
             <span className="text-xs text-muted-foreground font-mono">Comparative Metrics</span>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div className="p-3 rounded-lg border bg-background/50 space-y-1">
               <div className="text-[11px] text-muted-foreground font-medium">Monthly Billed Sales</div>
               <div className="text-base font-bold font-mono">
@@ -598,7 +604,7 @@ export function CAReviewWorkspace({
 
       {/* Section 6: Tabbed Drill-Down Reconciliations */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="w-full flex-wrap justify-start">
+        <TabsList className="w-full flex-wrap justify-start gap-1 p-1 h-auto">
           <TabsTrigger value="summary">Sales & Round-Off</TabsTrigger>
           <TabsTrigger value="credits">Customer Credits ({recon.customerCredits.traces.length})</TabsTrigger>
           <TabsTrigger value="receivables">Receivables ({recon.receivables.openInvoicesCount})</TabsTrigger>
@@ -930,3 +936,53 @@ export function CAReviewWorkspace({
     </div>
   );
 }
+
+export function CAReviewSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      {/* Skeleton Top Filter */}
+      <div className="h-14 rounded-2xl border border-border/80 bg-card p-4 shadow-soft flex items-center justify-between">
+        <div className="h-5 w-48 bg-muted/60 rounded-md" />
+        <div className="h-8 w-28 bg-muted/60 rounded-md" />
+      </div>
+
+      {/* Skeleton Matrix */}
+      <div className="space-y-2">
+        <div className="h-4 w-56 bg-muted/70 rounded-md" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          {Array.from({ length: 10 }).map((_, i) => (
+            <Card key={i} className="p-3.5 card-soft space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="h-3 w-16 bg-muted/60 rounded-md" />
+                <div className="h-4 w-12 bg-muted/50 rounded-full" />
+              </div>
+              <div className="h-6 w-24 bg-muted/70 rounded-md" />
+              <div className="h-2.5 w-28 bg-muted/40 rounded-md" />
+            </Card>
+          ))}
+        </div>
+      </div>
+
+      {/* Skeleton Period Comparison */}
+      <div className="p-4 rounded-2xl border border-border/80 bg-card/60 shadow-soft space-y-3">
+        <div className="h-4 w-48 bg-muted/70 rounded-md" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="p-3 rounded-lg border bg-background/50 space-y-2">
+              <div className="h-2.5 w-24 bg-muted/50 rounded-md" />
+              <div className="h-5 w-28 bg-muted/70 rounded-md" />
+              <div className="h-2 w-32 bg-muted/40 rounded-md" />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Skeleton Drilldown */}
+      <div className="h-64 rounded-2xl border border-border/80 bg-card p-4 shadow-soft flex flex-col justify-center items-center gap-3">
+        <div className="h-8 w-8 rounded-full border-2 border-primary/40 border-t-transparent animate-spin" />
+        <div className="h-4 w-40 bg-muted/60 rounded-md" />
+      </div>
+    </div>
+  );
+}
+

@@ -1,7 +1,6 @@
 import { ReactNode, useEffect, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
-import { motion } from "framer-motion";
 import { InstallPwaBanner } from "./InstallPwaBanner";
 
 export function AppShell({ title, children }: { title: string; children: ReactNode }) {
@@ -12,22 +11,16 @@ export function AppShell({ title, children }: { title: string; children: ReactNo
       <div className="hidden md:block">
         <Sidebar />
       </div>
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
         <Topbar title={title} />
-        <motion.main
-          key={title}
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.2 }}
-          className="min-w-0 flex-1 p-3 sm:p-6"
-        >
+        <main className="min-w-0 flex-1 p-3 sm:p-6">
           {mounted ? (
             <>
               <InstallPwaBanner />
               {children}
             </>
           ) : null}
-        </motion.main>
+        </main>
       </div>
     </div>
   );

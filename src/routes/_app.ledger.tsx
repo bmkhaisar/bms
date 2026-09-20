@@ -17,6 +17,7 @@ import { TrialBalanceView } from "@/modules/accounting/components/TrialBalanceVi
 import { ChartOfAccountsView } from "@/modules/accounting/components/ChartOfAccountsView";
 import { VoucherEntryModal } from "@/modules/accounting/components/VoucherEntryModal";
 import type { VoucherType } from "@/modules/accounting/types";
+import { ListSkeleton } from "@/components/app/Skeletons";
 
 export const Route = createFileRoute("/_app/ledger")({
   head: () => ({ meta: [{ title: "Accounting Engine — BMS NEXT" }] }),
@@ -84,7 +85,7 @@ function AccountingPage() {
         />
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList className="w-full flex-wrap justify-start">
+          <TabsList className="w-full flex-wrap justify-start gap-1 p-1 h-auto">
             <TabsTrigger value="daybook" className="gap-1.5">
               <Calendar className="h-3.5 w-3.5" />
               <span>Day Book</span>
@@ -104,11 +105,19 @@ function AccountingPage() {
           </TabsList>
 
           <TabsContent value="daybook">
-            <DayBookView vouchers={vouchers} onReverse={reverseVoucher} />
+            {loading && vouchers.length === 0 ? (
+              <ListSkeleton columns={6} rows={6} />
+            ) : (
+              <DayBookView vouchers={vouchers} onReverse={reverseVoucher} />
+            )}
           </TabsContent>
 
           <TabsContent value="statement">
-            <LedgerStatementView ledgers={ledgers} vouchers={vouchers} />
+            {loading && ledgers.length === 0 ? (
+              <ListSkeleton columns={5} rows={6} />
+            ) : (
+              <LedgerStatementView ledgers={ledgers} vouchers={vouchers} />
+            )}
           </TabsContent>
 
           <TabsContent value="trialbalance">
@@ -116,18 +125,23 @@ function AccountingPage() {
               ledgers={ledgers}
               accountGroups={accountGroups}
               vouchers={vouchers}
+              loading={loading}
             />
           </TabsContent>
 
           <TabsContent value="chart">
-            <ChartOfAccountsView
-              ledgers={ledgers}
-              accountGroups={accountGroups}
-              vouchers={vouchers}
-              onCreateLedger={manageLedger}
-              onCreateGroup={manageGroup}
-              onInitChart={initChart}
-            />
+            {loading && ledgers.length === 0 ? (
+              <ListSkeleton columns={4} rows={6} />
+            ) : (
+              <ChartOfAccountsView
+                ledgers={ledgers}
+                accountGroups={accountGroups}
+                vouchers={vouchers}
+                onCreateLedger={manageLedger}
+                onCreateGroup={manageGroup}
+                onInitChart={initChart}
+              />
+            )}
           </TabsContent>
         </Tabs>
 

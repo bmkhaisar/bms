@@ -72,7 +72,7 @@ export function PartySearchSelect({
 
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 w-full min-w-0">
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <Button
@@ -80,17 +80,17 @@ export function PartySearchSelect({
               role="combobox"
               aria-expanded={open}
               disabled={disabled}
-              className="w-full justify-between h-9 text-xs font-normal bg-background"
+              className="flex-1 min-w-0 justify-between h-9 text-xs font-normal bg-background"
             >
               {selectedParty ? (
-                <span className="truncate font-medium flex items-center gap-1.5">
+                <span className="truncate font-medium flex items-center gap-1.5 min-w-0">
                   <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                   <span className="truncate">{selectedParty.name}</span>
                   {selectedParty.partyCode && (
                     <span className="shrink-0 font-mono text-[10px] font-semibold text-primary">{selectedParty.partyCode}</span>
                   )}
                   {selectedParty.company && (
-                    <span className="text-[11px] text-muted-foreground truncate">({selectedParty.company})</span>
+                    <span className="text-[11px] text-muted-foreground truncate hidden md:inline">({selectedParty.company})</span>
                   )}
                 </span>
               ) : (
@@ -187,12 +187,12 @@ export function PartySearchSelect({
             variant="outline"
             size="sm"
             onClick={() => setInsightOpen(true)}
-            className="h-9 px-2.5 gap-1 shrink-0 text-xs font-semibold text-primary hover:bg-primary/10"
-            title={`View ${selectedParty.name} Financial Insight`}
+            className="h-9 px-2.5 gap-1.5 shrink-0 text-xs font-semibold text-primary border border-primary/25 bg-primary/5 hover:bg-primary/15 hover:text-primary transition-all flex items-center rounded-md whitespace-nowrap shadow-2xs"
+            title={`View ${selectedParty.name} Financial Insights & History`}
+            aria-label={`View ${selectedParty.name} Financial Insights & History`}
           >
-            <Info className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Insight</span>
-            <ChevronRight className="h-3.5 w-3.5" />
+            <Info className="h-3.5 w-3.5 shrink-0 text-primary" />
+            <span className="font-medium">Insights</span>
           </Button>
         )}
       </div>

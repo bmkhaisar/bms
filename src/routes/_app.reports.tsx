@@ -11,7 +11,7 @@ import {
   type Payment,
   type Party,
 } from "@/lib/db";
-import { useLive } from "@/lib/useLive";
+import { useLive, useLiveState } from "@/lib/useLive";
 import { useMemo, useState, useEffect, Fragment } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -227,7 +227,9 @@ function resolveDocumentTaxes(doc: Invoice | Purchase) {
 // ========================================================================
 
 function SalesReport({ from, to }: { from?: number; to?: number }) {
-  const invoices = useLive<Invoice>(() => db().invoices.toArray());
+  const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
+  const invoices = invoicesState.data;
+  const isLoaded = invoicesState.isLoaded;
   const parties = useLive<Party>(() => db().parties.toArray());
   const customers = useLive<Customer>(() => db().customers.toArray());
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -247,10 +249,10 @@ function SalesReport({ from, to }: { from?: number; to?: number }) {
     <div className="space-y-4 mt-4">
       {/* Financial Summary Cards */}
       <div className="grid gap-3 sm:grid-cols-4">
-        <Stat label="Net Sales / Revenue" v={formatMoney(taxableRevenue)} accent />
-        <Stat label="Additional Charges" v={formatMoney(additionalChargesTotal)} />
-        <Stat label="Output GST" v={formatMoney(gstTotal)} />
-        <Stat label="Gross Invoice Value" v={formatMoney(grossInvoiceTotal)} />
+        <Stat label="Net Sales / Revenue" v={formatMoney(taxableRevenue)} accent loading={!isLoaded} />
+        <Stat label="Additional Charges" v={formatMoney(additionalChargesTotal)} loading={!isLoaded} />
+        <Stat label="Output GST" v={formatMoney(gstTotal)} loading={!isLoaded} />
+        <Stat label="Gross Invoice Value" v={formatMoney(grossInvoiceTotal)} loading={!isLoaded} />
       </div>
 
       <Card className="card-soft p-4">
@@ -428,8 +430,11 @@ function PurchaseReport({ from, to }: { from?: number; to?: number }) {
 // ========================================================================
 
 function OutstandingReport() {
-  const invoices = useLive<Invoice>(() => db().invoices.toArray());
-  const purchases = useLive<Purchase>(() => db().purchases.toArray());
+  const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
+  const purchasesState = useLiveState<Purchase>(() => db().purchases.toArray());
+  const invoices = invoicesState.data;
+  const purchases = purchasesState.data;
+  const isLoaded = invoicesState.isLoaded && purchasesState.isLoaded;
   const parties = useLive<Party>(() => db().parties.toArray());
   const customers = useLive<Customer>(() => db().customers.toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
@@ -481,31 +486,51 @@ function OutstandingReport() {
           <div className="text-xs text-muted-foreground flex items-center gap-1">
             <Clock className="h-3.5 w-3.5 text-emerald-600" /> Current (0–30 Days)
           </div>
-          <div className="font-mono text-base font-bold text-foreground mt-1">{formatMoney(aging.b0_30)}</div>
+          {!isLoaded ? (
+            <div className="mt-1.5 h-6 w-24 animate-pulse rounded bg-muted/60" />
+          ) : (
+            <div className="font-mono text-base font-bold text-foreground mt-1">{formatMoney(aging.b0_30)}</div>
+          )}
         </div>
         <div className="rounded-xl border bg-card p-3">
           <div className="text-xs text-muted-foreground flex items-center gap-1">
             <Clock className="h-3.5 w-3.5 text-blue-600" /> 31–60 Days
           </div>
-          <div className="font-mono text-base font-bold text-foreground mt-1">{formatMoney(aging.b31_60)}</div>
+          {!isLoaded ? (
+            <div className="mt-1.5 h-6 w-24 animate-pulse rounded bg-muted/60" />
+          ) : (
+            <div className="font-mono text-base font-bold text-foreground mt-1">{formatMoney(aging.b31_60)}</div>
+          )}
         </div>
         <div className="rounded-xl border bg-card p-3">
           <div className="text-xs text-muted-foreground flex items-center gap-1">
             <Clock className="h-3.5 w-3.5 text-amber-600" /> 61–90 Days
           </div>
-          <div className="font-mono text-base font-bold text-foreground mt-1">{formatMoney(aging.b61_90)}</div>
+          {!isLoaded ? (
+            <div className="mt-1.5 h-6 w-24 animate-pulse rounded bg-muted/60" />
+          ) : (
+            <div className="font-mono text-base font-bold text-foreground mt-1">{formatMoney(aging.b61_90)}</div>
+          )}
         </div>
         <div className="rounded-xl border bg-card p-3">
           <div className="text-xs text-muted-foreground flex items-center gap-1">
             <Clock className="h-3.5 w-3.5 text-destructive" /> 90+ Days (Overdue)
           </div>
-          <div className="font-mono text-base font-bold text-destructive mt-1">{formatMoney(aging.b90_plus)}</div>
+          {!isLoaded ? (
+            <div className="mt-1.5 h-6 w-24 animate-pulse rounded bg-muted/60" />
+          ) : (
+            <div className="font-mono text-base font-bold text-destructive mt-1">{formatMoney(aging.b90_plus)}</div>
+          )}
         </div>
         <div className="rounded-xl border bg-primary/10 p-3">
           <div className="text-xs text-primary font-semibold flex items-center gap-1">
             <ShieldCheck className="h-3.5 w-3.5" /> Total Receivable
           </div>
-          <div className="font-mono text-base font-bold text-primary mt-1">{formatMoney(aging.total)}</div>
+          {!isLoaded ? (
+            <div className="mt-1.5 h-6 w-24 animate-pulse rounded bg-muted/60" />
+          ) : (
+            <div className="font-mono text-base font-bold text-primary mt-1">{formatMoney(aging.total)}</div>
+          )}
         </div>
       </div>
 
@@ -836,9 +861,13 @@ function StockReport() {
 
 function ProfitReport({ from, to }: { from?: number; to?: number }) {
   const { activeCompany } = useActiveCompany();
-  const invoices = useLive<Invoice>(() => db().invoices.toArray());
-  const purchases = useLive<Purchase>(() => db().purchases.toArray());
-  const products = useLive<Product>(() => db().products.toArray());
+  const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
+  const purchasesState = useLiveState<Purchase>(() => db().purchases.toArray());
+  const productsState = useLiveState<Product>(() => db().products.toArray());
+  const invoices = invoicesState.data;
+  const purchases = purchasesState.data;
+  const products = productsState.data;
+  const isLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded;
   const valuationMethod = (activeCompany as any)?.inventoryValuationMethod || "purchase_cost";
 
   const postedInvoices = useMemo(
@@ -922,10 +951,10 @@ function ProfitReport({ from, to }: { from?: number; to?: number }) {
       )}
 
       <div className="grid gap-3 sm:grid-cols-4">
-        <Stat label="Net Sales Revenue (excl GST)" v={formatMoney(netSalesRevenue)} />
-        <Stat label="Cost of Goods Sold (COGS)" v={formatMoney(totalCogs)} />
-        <Stat label={`Gross Profit (${grossMarginPct.toFixed(1)}%)`} v={formatMoney(grossProfit)} accent={grossProfit >= 0} />
-        <Stat label="Total Purchases in Period" v={formatMoney(totalPurchases)} />
+        <Stat label="Net Sales Revenue (excl GST)" v={formatMoney(netSalesRevenue)} loading={!isLoaded} />
+        <Stat label="Cost of Goods Sold (COGS)" v={formatMoney(totalCogs)} loading={!isLoaded} />
+        <Stat label={`Gross Profit (${grossMarginPct.toFixed(1)}%)`} v={formatMoney(grossProfit)} accent={grossProfit >= 0} loading={!isLoaded} />
+        <Stat label="Total Purchases in Period" v={formatMoney(totalPurchases)} loading={!isLoaded} />
       </div>
 
       <Card className="card-soft p-4">
@@ -986,9 +1015,13 @@ function ProfitReport({ from, to }: { from?: number; to?: number }) {
 // ========================================================================
 
 function GstReport({ from, to }: { from?: number; to?: number }) {
-  const invoices = useLive<Invoice>(() => db().invoices.toArray());
-  const purchases = useLive<Purchase>(() => db().purchases.toArray());
-  const receipts = useLive<Receipt>(() => db().receipts.toArray());
+  const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
+  const purchasesState = useLiveState<Purchase>(() => db().purchases.toArray());
+  const receiptsState = useLiveState<Receipt>(() => db().receipts.toArray());
+  const invoices = invoicesState.data;
+  const purchases = purchasesState.data;
+  const receipts = receiptsState.data;
+  const isLoaded = invoicesState.isLoaded && purchasesState.isLoaded && receiptsState.isLoaded;
   const parties = useLive<Party>(() => db().parties.toArray());
   const customers = useLive<Customer>(() => db().customers.toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
@@ -1268,14 +1301,15 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-4">
-          <Stat label="Total Output Liability (Net)" v={formatMoney(totalOutputLiability)} accent />
-          <Stat label="Eligible Input GST (ITC)" v={formatMoney(totalInputGst)} />
+          <Stat label="Total Output Liability (Net)" v={formatMoney(totalOutputLiability)} accent loading={!isLoaded} />
+          <Stat label="Eligible Input GST (ITC)" v={formatMoney(totalInputGst)} loading={!isLoaded} />
           <Stat
             label={estimatedNetGstLiability >= 0 ? "Estimated Net GST Liability" : "Net ITC Carry Forward"}
             v={formatMoney(Math.abs(estimatedNetGstLiability))}
             accent={estimatedNetGstLiability > 0}
+            loading={!isLoaded}
           />
-          <Stat label="Taxable Turnover" v={formatMoney(taxableSales)} />
+          <Stat label="Taxable Turnover" v={formatMoney(taxableSales)} loading={!isLoaded} />
         </div>
 
         {/* Time of Supply & Advance GST Breakdown Card */}
@@ -1394,10 +1428,15 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
 // ========================================================================
 
 function FinancialReconciliationReport({ from, to }: { from?: number; to?: number }) {
-  const invoices = useLive<Invoice>(() => db().invoices.toArray());
-  const purchases = useLive<Purchase>(() => db().purchases.toArray());
-  const receipts = useLive<Receipt>(() => db().receipts.toArray());
-  const payments = useLive<Payment>(() => db().payments.toArray());
+  const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
+  const purchasesState = useLiveState<Purchase>(() => db().purchases.toArray());
+  const receiptsState = useLiveState<Receipt>(() => db().receipts.toArray());
+  const paymentsState = useLiveState<Payment>(() => db().payments.toArray());
+  const invoices = invoicesState.data;
+  const purchases = purchasesState.data;
+  const receipts = receiptsState.data;
+  const payments = paymentsState.data;
+  const isLoaded = invoicesState.isLoaded && purchasesState.isLoaded && receiptsState.isLoaded && paymentsState.isLoaded;
 
   const activeInvoices = useMemo(
     () => invoices.filter((i) => i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed"),
@@ -1489,70 +1528,78 @@ function FinancialReconciliationReport({ from, to }: { from?: number; to?: numbe
           Automated double-entry invariants, ledger reconciliation, and tax parity diagnostics across AR, AP, and GST registers.
         </p>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          {/* Expanded AR Invariant Card */}
-          <div className="rounded-xl border bg-muted/20 p-4 space-y-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-foreground">Accounts Receivable (AR)</span>
-              <Badge variant={arReconciles ? "secondary" : "destructive"}>
-                {arReconciles ? "Reconciled" : "Discrepancy"}
-              </Badge>
-            </div>
-            <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
-              <div className="flex justify-between"><span>Opening AR:</span><strong className="text-foreground">{formatMoney(openingAr)}</strong></div>
-              <div className="flex justify-between"><span>(+) Invoices Issued:</span><strong className="text-foreground">{formatMoney(arInvoices)}</strong></div>
-              {arDebitAdjustments > 0 && <div className="flex justify-between"><span>(+) Debit Adjustments:</span><strong className="text-foreground">{formatMoney(arDebitAdjustments)}</strong></div>}
-              <div className="flex justify-between"><span>(-) Direct Receipts:</span><strong className="text-emerald-600">- {formatMoney(arReceipts)}</strong></div>
-              {arCreditNotes > 0 && <div className="flex justify-between"><span>(-) Credit Notes:</span><strong className="text-amber-600">- {formatMoney(arCreditNotes)}</strong></div>}
-              <div className="flex justify-between"><span>(-) Advance Allocations:</span><strong className="text-primary">- {formatMoney(arAdvanceAllocations)}</strong></div>
-              {arRefundWriteOff > 0 && <div className="flex justify-between"><span>(-) Refund/Write-off:</span><strong className="text-muted-foreground">- {formatMoney(arRefundWriteOff)}</strong></div>}
-              {arReversals !== 0 && <div className="flex justify-between"><span>(±) Reversals:</span><strong className="text-foreground">{formatMoney(arReversals)}</strong></div>}
-              <div className="flex justify-between border-t pt-1 font-semibold text-foreground"><span>Calculated Closing AR:</span><span>{formatMoney(calculatedClosingAr)}</span></div>
-              <div className="flex justify-between text-muted-foreground"><span>Actual Closing Balance:</span><span>{formatMoney(actualClosingAr)}</span></div>
-              <div className="flex justify-between text-[10px] text-muted-foreground border-t pt-0.5"><span>Variance:</span><span>{formatMoney(arVariance)}</span></div>
-            </div>
+        {!isLoaded ? (
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="h-64 animate-pulse rounded-xl bg-muted/40" />
+            <div className="h-64 animate-pulse rounded-xl bg-muted/40" />
+            <div className="h-64 animate-pulse rounded-xl bg-muted/40" />
           </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-3">
+            {/* Expanded AR Invariant Card */}
+            <div className="rounded-xl border bg-muted/20 p-4 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-foreground">Accounts Receivable (AR)</span>
+                <Badge variant={arReconciles ? "secondary" : "destructive"}>
+                  {arReconciles ? "Reconciled" : "Discrepancy"}
+                </Badge>
+              </div>
+              <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
+                <div className="flex justify-between"><span>Opening AR:</span><strong className="text-foreground">{formatMoney(openingAr)}</strong></div>
+                <div className="flex justify-between"><span>(+) Invoices Issued:</span><strong className="text-foreground">{formatMoney(arInvoices)}</strong></div>
+                {arDebitAdjustments > 0 && <div className="flex justify-between"><span>(+) Debit Adjustments:</span><strong className="text-foreground">{formatMoney(arDebitAdjustments)}</strong></div>}
+                <div className="flex justify-between"><span>(-) Direct Receipts:</span><strong className="text-emerald-600">- {formatMoney(arReceipts)}</strong></div>
+                {arCreditNotes > 0 && <div className="flex justify-between"><span>(-) Credit Notes:</span><strong className="text-amber-600">- {formatMoney(arCreditNotes)}</strong></div>}
+                <div className="flex justify-between"><span>(-) Advance Allocations:</span><strong className="text-primary">- {formatMoney(arAdvanceAllocations)}</strong></div>
+                {arRefundWriteOff > 0 && <div className="flex justify-between"><span>(-) Refund/Write-off:</span><strong className="text-muted-foreground">- {formatMoney(arRefundWriteOff)}</strong></div>}
+                {arReversals !== 0 && <div className="flex justify-between"><span>(±) Reversals:</span><strong className="text-foreground">{formatMoney(arReversals)}</strong></div>}
+                <div className="flex justify-between border-t pt-1 font-semibold text-foreground"><span>Calculated Closing AR:</span><span>{formatMoney(calculatedClosingAr)}</span></div>
+                <div className="flex justify-between text-muted-foreground"><span>Actual Closing Balance:</span><span>{formatMoney(actualClosingAr)}</span></div>
+                <div className="flex justify-between text-[10px] text-muted-foreground border-t pt-0.5"><span>Variance:</span><span>{formatMoney(arVariance)}</span></div>
+              </div>
+            </div>
 
-          {/* Expanded AP Invariant Card */}
-          <div className="rounded-xl border bg-muted/20 p-4 space-y-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-foreground">Accounts Payable (AP)</span>
-              <Badge variant={apReconciles ? "secondary" : "destructive"}>
-                {apReconciles ? "Reconciled" : "Discrepancy"}
-              </Badge>
+            {/* Expanded AP Invariant Card */}
+            <div className="rounded-xl border bg-muted/20 p-4 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-foreground">Accounts Payable (AP)</span>
+                <Badge variant={apReconciles ? "secondary" : "destructive"}>
+                  {apReconciles ? "Reconciled" : "Discrepancy"}
+                </Badge>
+              </div>
+              <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
+                <div className="flex justify-between"><span>Opening AP:</span><strong className="text-foreground">{formatMoney(openingAp)}</strong></div>
+                <div className="flex justify-between"><span>(+) Purchases Recorded:</span><strong className="text-foreground">{formatMoney(apPurchases)}</strong></div>
+                {apCreditAdjustments > 0 && <div className="flex justify-between"><span>(+) Credit Adjustments:</span><strong className="text-foreground">{formatMoney(apCreditAdjustments)}</strong></div>}
+                <div className="flex justify-between"><span>(-) Direct Payments:</span><strong className="text-sky-600">- {formatMoney(apPayments)}</strong></div>
+                {apDebitNotes > 0 && <div className="flex justify-between"><span>(-) Debit Notes:</span><strong className="text-amber-600">- {formatMoney(apDebitNotes)}</strong></div>}
+                <div className="flex justify-between"><span>(-) Supplier Advances:</span><strong className="text-primary">- {formatMoney(apSupplierAdvanceAllocations)}</strong></div>
+                {apRefundDiscount > 0 && <div className="flex justify-between"><span>(-) Refund/Discounts:</span><strong className="text-muted-foreground">- {formatMoney(apRefundDiscount)}</strong></div>}
+                {apReversals !== 0 && <div className="flex justify-between"><span>(±) Reversals:</span><strong className="text-foreground">{formatMoney(apReversals)}</strong></div>}
+                <div className="flex justify-between border-t pt-1 font-semibold text-foreground"><span>Calculated Closing AP:</span><span>{formatMoney(calculatedClosingAp)}</span></div>
+                <div className="flex justify-between text-muted-foreground"><span>Actual Closing Balance:</span><span>{formatMoney(actualClosingAp)}</span></div>
+                <div className="flex justify-between text-[10px] text-muted-foreground border-t pt-0.5"><span>Variance:</span><span>{formatMoney(apVariance)}</span></div>
+              </div>
             </div>
-            <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
-              <div className="flex justify-between"><span>Opening AP:</span><strong className="text-foreground">{formatMoney(openingAp)}</strong></div>
-              <div className="flex justify-between"><span>(+) Purchases Recorded:</span><strong className="text-foreground">{formatMoney(apPurchases)}</strong></div>
-              {apCreditAdjustments > 0 && <div className="flex justify-between"><span>(+) Credit Adjustments:</span><strong className="text-foreground">{formatMoney(apCreditAdjustments)}</strong></div>}
-              <div className="flex justify-between"><span>(-) Direct Payments:</span><strong className="text-sky-600">- {formatMoney(apPayments)}</strong></div>
-              {apDebitNotes > 0 && <div className="flex justify-between"><span>(-) Debit Notes:</span><strong className="text-amber-600">- {formatMoney(apDebitNotes)}</strong></div>}
-              <div className="flex justify-between"><span>(-) Supplier Advances:</span><strong className="text-primary">- {formatMoney(apSupplierAdvanceAllocations)}</strong></div>
-              {apRefundDiscount > 0 && <div className="flex justify-between"><span>(-) Refund/Discounts:</span><strong className="text-muted-foreground">- {formatMoney(apRefundDiscount)}</strong></div>}
-              {apReversals !== 0 && <div className="flex justify-between"><span>(±) Reversals:</span><strong className="text-foreground">{formatMoney(apReversals)}</strong></div>}
-              <div className="flex justify-between border-t pt-1 font-semibold text-foreground"><span>Calculated Closing AP:</span><span>{formatMoney(calculatedClosingAp)}</span></div>
-              <div className="flex justify-between text-muted-foreground"><span>Actual Closing Balance:</span><span>{formatMoney(actualClosingAp)}</span></div>
-              <div className="flex justify-between text-[10px] text-muted-foreground border-t pt-0.5"><span>Variance:</span><span>{formatMoney(apVariance)}</span></div>
-            </div>
-          </div>
 
-          {/* GST Statutory Parity Card */}
-          <div className="rounded-xl border bg-muted/20 p-4 space-y-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-foreground">GST Statutory Invariant</span>
-              <Badge variant={gstReconciles ? "secondary" : "destructive"}>
-                {gstReconciles ? "Reconciled" : "Discrepancy"}
-              </Badge>
-            </div>
-            <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
-              <div className="flex justify-between"><span>Net Invoices Tax:</span><strong className="text-foreground">{formatMoney(invoiceNetTaxTotal)}</strong></div>
-              <div className="flex justify-between"><span>(+) Service Advances Tax:</span><strong className="text-purple-600">+ {formatMoney(serviceAdvanceTaxTotal)}</strong></div>
-              <div className="flex justify-between border-t pt-1 font-semibold text-foreground"><span>Net Output Tax Liability:</span><span>{formatMoney(netOutputTaxLiability)}</span></div>
-              <div className="flex justify-between text-muted-foreground"><span>Register Total Output Tax:</span><span>{formatMoney(registerTaxTotal)}</span></div>
-              <div className="flex justify-between text-[10px] text-muted-foreground border-t pt-0.5"><span>Variance:</span><span>{formatMoney(Math.abs(registerTaxTotal - netOutputTaxLiability))}</span></div>
+            {/* GST Statutory Parity Card */}
+            <div className="rounded-xl border bg-muted/20 p-4 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-foreground">GST Statutory Invariant</span>
+                <Badge variant={gstReconciles ? "secondary" : "destructive"}>
+                  {gstReconciles ? "Reconciled" : "Discrepancy"}
+                </Badge>
+              </div>
+              <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
+                <div className="flex justify-between"><span>Net Invoices Tax:</span><strong className="text-foreground">{formatMoney(invoiceNetTaxTotal)}</strong></div>
+                <div className="flex justify-between"><span>(+) Service Advances Tax:</span><strong className="text-purple-600">+ {formatMoney(serviceAdvanceTaxTotal)}</strong></div>
+                <div className="flex justify-between border-t pt-1 font-semibold text-foreground"><span>Net Output Tax Liability:</span><span>{formatMoney(netOutputTaxLiability)}</span></div>
+                <div className="flex justify-between text-muted-foreground"><span>Register Total Output Tax:</span><span>{formatMoney(registerTaxTotal)}</span></div>
+                <div className="flex justify-between text-[10px] text-muted-foreground border-t pt-0.5"><span>Variance:</span><span>{formatMoney(Math.abs(registerTaxTotal - netOutputTaxLiability))}</span></div>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </Card>
     </div>
   );
@@ -1717,15 +1764,19 @@ function GstDataIntegrityAuditReport() {
   );
 }
 
-function Stat({ label, v, accent }: { label: string; v: string; accent?: boolean }) {
+function Stat({ label, v, accent, loading }: { label: string; v?: string; accent?: boolean; loading?: boolean }) {
   return (
-    <div className={`rounded-2xl border p-4 transition-all shadow-soft ${
+    <div className={`rounded-2xl border p-4 transition-all shadow-soft min-w-0 ${
       accent 
         ? "border-mint/30 bg-mint/5 text-foreground" 
         : "border-border/80 bg-card text-foreground"
     }`}>
-      <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={`mt-1.5 text-xl sm:text-2xl font-bold font-mono tabular-nums ${accent ? "text-mint" : "text-foreground"}`}>{v}</div>
+      <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground truncate">{label}</div>
+      {loading || !v ? (
+        <div className="mt-2 h-7 w-28 animate-pulse rounded bg-muted/60" />
+      ) : (
+        <div className={`mt-1.5 text-xl sm:text-2xl font-bold font-mono tabular-nums truncate ${accent ? "text-mint" : "text-foreground"}`}>{v}</div>
+      )}
     </div>
   );
 }

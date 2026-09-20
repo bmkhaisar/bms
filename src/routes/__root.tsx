@@ -86,7 +86,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   head: () => ({
     meta: [
       { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { name: "viewport", content: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" },
       { name: "theme-color", content: "#F4F6F3" },
       { title: "BMS NEXT — Business Management System" },
       { name: "description", content: "Connected cloud business management software for quotations, GST invoices, receipts, purchases, ledgers and reports. Built by MMA." },
@@ -147,6 +147,11 @@ function RootShell({ children }: { children: ReactNode }) {
             __html: `(function(){try{var t=localStorage.getItem("bms_theme")||"light";if(t==="dark"){document.documentElement.classList.add("dark");}else{document.documentElement.classList.remove("dark");}}catch(e){}})();`,
           }}
         />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var h=window.location.hostname;if(h==="localhost"||h==="127.0.0.1"){if("serviceWorker" in navigator){navigator.serviceWorker.getRegistrations().then(function(regs){for(var i=0;i<regs.length;i++){regs[i].unregister();}});};if("caches" in window){caches.keys().then(function(keys){for(var j=0;j<keys.length;j++){caches.delete(keys[j]);}});}}}catch(e){}})();`,
+          }}
+        />
       </head>
       <body className="min-h-screen bg-background text-foreground antialiased selection:bg-accent selection:text-accent-foreground">
         {children}
@@ -165,13 +170,29 @@ function RootComponent() {
     // Initialize connectivity listener & outbox sync
     const cleanupOutbox = outboxManager.init();
 
-    // Register PWA service worker
+    // Register PWA service worker in production only. In dev/localhost, unregister and clear CacheStorage
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js").catch((err) => {
-          console.warn("[SW] Registration error:", err);
+      const isDev = import.meta.env.DEV || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+      if (isDev) {
+        navigator.serviceWorker.getRegistrations().then((registrations) => {
+          for (const reg of registrations) {
+            reg.unregister();
+          }
         });
-      });
+        if ("caches" in window) {
+          caches.keys().then((keys) => {
+            for (const key of keys) {
+              caches.delete(key);
+            }
+          });
+        }
+      } else {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("/sw.js").catch((err) => {
+            console.warn("[SW] Registration error:", err);
+          });
+        });
+      }
     }
 
     return () => cleanupOutbox();

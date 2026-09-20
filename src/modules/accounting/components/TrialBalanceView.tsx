@@ -28,12 +28,14 @@ interface TrialBalanceViewProps {
   ledgers: Ledger[];
   accountGroups: AccountGroup[];
   vouchers: Voucher[];
+  loading?: boolean;
 }
 
 export function TrialBalanceView({
   ledgers,
   accountGroups,
   vouchers,
+  loading = false,
 }: TrialBalanceViewProps) {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
@@ -134,6 +136,10 @@ export function TrialBalanceView({
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  if (loading) {
+    return <TrialBalanceSkeleton />;
+  }
 
   return (
     <div className="space-y-4">
@@ -432,3 +438,41 @@ export function TrialBalanceView({
     </div>
   );
 }
+
+export function TrialBalanceSkeleton() {
+  return (
+    <div className="space-y-4 animate-pulse">
+      {/* Status banner skeleton */}
+      <div className="h-16 rounded-xl border border-border/70 bg-card p-4 shadow-soft flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-full bg-muted/70" />
+          <div className="space-y-1.5">
+            <div className="h-4 w-64 bg-muted/70 rounded-md" />
+            <div className="h-3 w-40 bg-muted/40 rounded-md" />
+          </div>
+        </div>
+      </div>
+
+      {/* Filter bar skeleton */}
+      <div className="h-20 rounded-xl border border-border/70 bg-card p-4 shadow-soft flex flex-col justify-between gap-2">
+        <div className="h-5 w-72 bg-muted/60 rounded-md" />
+        <div className="h-6 w-80 bg-muted/40 rounded-md" />
+      </div>
+
+      {/* Table skeleton */}
+      <div className="rounded-xl border border-border/70 bg-card shadow-soft overflow-hidden p-4 space-y-3">
+        <div className="h-8 w-full bg-muted/50 rounded-md" />
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="flex justify-between items-center py-2.5 border-b border-border/40">
+            <div className="h-4 w-36 bg-muted/60 rounded-md" />
+            <div className="h-4 w-24 bg-muted/40 rounded-md" />
+            <div className="h-4 w-16 bg-muted/30 rounded-md" />
+            <div className="h-4 w-20 bg-muted/50 rounded-md" />
+            <div className="h-4 w-20 bg-muted/50 rounded-md" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+

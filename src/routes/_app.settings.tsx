@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
@@ -582,57 +581,77 @@ function SettingsPage() {
                   <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Signature Mode
                   </Label>
-                  <RadioGroup
-                    value={form.signatureMode || (form.signatureUrl ? "uploaded" : "none")}
-                    disabled={!canEdit}
-                    onValueChange={(val: any) =>
-                      setForm({
-                        ...form,
-                        signatureMode: val,
-                        showSignature: val !== "none",
-                      })
-                    }
+                  <div
+                    role="radiogroup"
+                    aria-label="Signature Mode"
                     className="grid grid-cols-3 gap-3"
                   >
-                    <label
-                      htmlFor="sig-mode-none"
-                      className={`flex flex-col items-center justify-center rounded-lg border p-3 text-center cursor-pointer transition-colors ${
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={(form.signatureMode || "none") === "none"}
+                      disabled={!canEdit}
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          signatureMode: "none",
+                          showSignature: false,
+                        })
+                      }
+                      className={`flex flex-col items-center justify-center rounded-lg border p-3 text-center transition-colors ${
                         (form.signatureMode || "none") === "none"
                           ? "border-primary bg-primary/5 text-primary font-medium"
                           : "border-border/60 hover:bg-muted/50"
-                      }`}
+                      } ${!canEdit ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                     >
-                      <RadioGroupItem value="none" id="sig-mode-none" className="sr-only" />
                       <span className="text-xs">None</span>
                       <span className="text-[10px] text-muted-foreground mt-0.5">Plain text / blank</span>
-                    </label>
+                    </button>
 
-                    <label
-                      htmlFor="sig-mode-typed"
-                      className={`flex flex-col items-center justify-center rounded-lg border p-3 text-center cursor-pointer transition-colors ${
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={form.signatureMode === "typed"}
+                      disabled={!canEdit}
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          signatureMode: "typed",
+                          showSignature: true,
+                        })
+                      }
+                      className={`flex flex-col items-center justify-center rounded-lg border p-3 text-center transition-colors ${
                         form.signatureMode === "typed"
                           ? "border-primary bg-primary/5 text-primary font-medium"
                           : "border-border/60 hover:bg-muted/50"
-                      }`}
+                      } ${!canEdit ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                     >
-                      <RadioGroupItem value="typed" id="sig-mode-typed" className="sr-only" />
                       <span className="text-xs">Typed Signature</span>
                       <span className="text-[10px] text-muted-foreground mt-0.5">Cursive font style</span>
-                    </label>
+                    </button>
 
-                    <label
-                      htmlFor="sig-mode-uploaded"
-                      className={`flex flex-col items-center justify-center rounded-lg border p-3 text-center cursor-pointer transition-colors ${
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={form.signatureMode === "uploaded"}
+                      disabled={!canEdit}
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          signatureMode: "uploaded",
+                          showSignature: true,
+                        })
+                      }
+                      className={`flex flex-col items-center justify-center rounded-lg border p-3 text-center transition-colors ${
                         form.signatureMode === "uploaded"
                           ? "border-primary bg-primary/5 text-primary font-medium"
                           : "border-border/60 hover:bg-muted/50"
-                      }`}
+                      } ${!canEdit ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                     >
-                      <RadioGroupItem value="uploaded" id="sig-mode-uploaded" className="sr-only" />
                       <span className="text-xs">Upload Signature</span>
                       <span className="text-[10px] text-muted-foreground mt-0.5">Scanned PNG / WebP</span>
-                    </label>
-                  </RadioGroup>
+                    </button>
+                  </div>
 
                   {/* 2a. Typed Signature Style Selector */}
                   {form.signatureMode === "typed" && (

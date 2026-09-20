@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell, PageHeader } from "@/components/app/AppShell";
 import { db, uid, type Supplier } from "@/lib/db";
-import { useLive } from "@/lib/useLive";
+import { useLive, useLiveState } from "@/lib/useLive";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { ListToolbar, EmptyState, usePagination, Pager } from "@/components/app/ListHelpers";
+import { ListSkeleton } from "@/components/app/Skeletons";
 import { Pencil, Plus, Trash2, Truck, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
@@ -46,7 +47,9 @@ const empty: Supplier = {
 function SuppliersPage() {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
-  const dexieRows = useLive<Supplier>(() => db().suppliers.orderBy("name").toArray());
+  const dexieRowsState = useLiveState<Supplier>(() => db().suppliers.orderBy("name").toArray());
+  const rows = dexieRowsState.data;
+  const initialLoading = !dexieRowsState.isLoaded;
   const [, setCloudRows] = useState<Supplier[]>([]);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "ALL" | "INACTIVE">("ACTIVE");
@@ -59,9 +62,6 @@ function SuppliersPage() {
     supplier: Supplier;
     usage: HistoricalUsageResult;
   } | null>(null);
-
-  // The company-level ordered realtime synchronizer is the single read owner.
-  const rows = dexieRows;
 
   // Deep-link support
   useEffect(() => {
@@ -237,9 +237,7 @@ function SuppliersPage() {
         active: editing.active !== false,
       };
 
-      const isNew =
-        !rows.some((s) => s.id === supplierToSave.id) &&
-        !dexieRows.some((s) => s.id === supplierToSave.id);
+      const isNew = !rows.some((s) => s.id === supplierToSave.id);
 
       await performOptimisticMutation<Supplier>({
         entityType: "supplier",
@@ -339,7 +337,9 @@ function SuppliersPage() {
         </Tabs>
       </div>
 
-      {filtered.length === 0 ? (
+      {initialLoading ? (
+        <ListSkeleton columns={6} />
+      ) : filtered.length === 0 ? (
         <EmptyState
           title={statusFilter === "INACTIVE" ? "No inactive suppliers" : "No suppliers yet"}
           description={

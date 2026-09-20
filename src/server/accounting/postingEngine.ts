@@ -11,6 +11,7 @@ import type {
 import { rupeesToPaise } from "@/modules/accounting/constants";
 import { allocateVoucherNumber } from "./numberingEngine";
 import { ensureCompanyChartOfAccounts } from "./initChartOfAccounts";
+import { getDefaultSystemLedgers } from "@/modules/accounting/defaultGroups";
 import { resolveVoucherPartyMetadata, VoucherPartyValidationError } from "./voucherPartyResolution";
 import { assertNoUndefinedValues } from "../firebasePayloadInvariant";
 
@@ -399,6 +400,59 @@ export async function executePostVoucher(
     const snap = ledgerSnaps[idx];
     const requestedId = Array.from(referencedLedgerIds)[idx];
     if (!snap.exists()) {
+      const now = Date.now();
+      // 1. Foundational system ledgers (cash, bank, sales, purchase, etc.)
+      const defaultSystemLedgers = getDefaultSystemLedgers(input.companyId, now);
+      const matchedSystem = defaultSystemLedgers.find((sl) => sl.id === requestedId);
+      if (matchedSystem) {
+        const autoLedger: Ledger = {
+          ...matchedSystem,
+          updatedAt: now,
+        };
+        await db.ref(`companyData/${input.companyId}/ledgers/${requestedId}`).update(autoLedger);
+        loadedLedgers[requestedId] = autoLedger;
+        continue;
+      }
+
+      // 2. Party subledgers (supplier or customer)
+      if (requestedId.includes("_supp_") || requestedId.includes("_cust_")) {
+        const isSupplier = requestedId.includes("_supp_");
+        const partyId = requestedId.split(isSupplier ? "_supp_" : "_cust_")[1];
+        let partyName = isSupplier ? "Supplier" : "Customer";
+        let partyGstin: string | undefined = undefined;
+        try {
+          const partySnap = await db.ref(`companyData/${input.companyId}/${isSupplier ? "suppliers" : "customers"}/${partyId}`).once("value");
+          if (partySnap.exists()) {
+            const p = partySnap.val();
+            partyName = p.company ? `${p.name} (${p.company})` : p.name;
+            partyGstin = p.gstin;
+          }
+        } catch {}
+
+        const autoPartyLedger: Ledger = {
+          id: requestedId,
+          companyId: input.companyId,
+          name: partyName,
+          code: isSupplier ? "SUPP" : "CUST",
+          groupId: isSupplier ? "grp_sundry_creditors" : "grp_sundry_debtors",
+          groupNature: isSupplier ? "liability" : "asset",
+          openingBalance: 0,
+          openingBalanceType: isSupplier ? "cr" : "dr",
+          currentBalance: 0,
+          currency: "INR",
+          gstin: partyGstin,
+          partyType: isSupplier ? "supplier" : "customer",
+          partyId,
+          isSystem: false,
+          active: true,
+          createdAt: now,
+          updatedAt: now,
+        };
+        await db.ref(`companyData/${input.companyId}/ledgers/${requestedId}`).update(autoPartyLedger);
+        loadedLedgers[requestedId] = autoPartyLedger;
+        continue;
+      }
+
       return {
         success: false,
         error: `Referenced ledger '${requestedId}' does not exist in this company.`,

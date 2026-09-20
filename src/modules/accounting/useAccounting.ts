@@ -47,6 +47,22 @@ export function useAccounting() {
     const ledgersRef = ref(firebaseDb, `companyData/${companyId}/ledgers`);
     const groupsRef = ref(firebaseDb, `companyData/${companyId}/accountGroups`);
 
+    let vouchersLoaded = false;
+    let ledgersLoaded = false;
+    let groupsLoaded = false;
+
+    // Safety timeout: Ensure loading never hangs indefinitely if RTDB connection lags or reconnects
+    const fallbackTimer = setTimeout(() => {
+      setLoading(false);
+    }, 2000);
+
+    const checkAllLoaded = () => {
+      if (vouchersLoaded && ledgersLoaded && groupsLoaded) {
+        clearTimeout(fallbackTimer);
+        setLoading(false);
+      }
+    };
+
     const unsubs: (() => void)[] = [];
 
     const unsubVouchers = onValue(
@@ -57,9 +73,13 @@ export function useAccounting() {
         } else {
           setVouchersMap({});
         }
+        vouchersLoaded = true;
+        checkAllLoaded();
       },
       (err) => {
         console.error("Vouchers listener error:", err);
+        vouchersLoaded = true;
+        checkAllLoaded();
       }
     );
     unsubs.push(() => off(vouchersRef, "value", unsubVouchers));
@@ -72,9 +92,13 @@ export function useAccounting() {
         } else {
           setLedgersMap({});
         }
+        ledgersLoaded = true;
+        checkAllLoaded();
       },
       (err) => {
         console.error("Ledgers listener error:", err);
+        ledgersLoaded = true;
+        checkAllLoaded();
       }
     );
     unsubs.push(() => off(ledgersRef, "value", unsubLedgers));
@@ -87,16 +111,19 @@ export function useAccounting() {
         } else {
           setCustomGroupsMap({});
         }
-        setLoading(false);
+        groupsLoaded = true;
+        checkAllLoaded();
       },
       (err) => {
         console.error("Account groups listener error:", err);
-        setLoading(false);
+        groupsLoaded = true;
+        checkAllLoaded();
       }
     );
     unsubs.push(() => off(groupsRef, "value", unsubGroups));
 
     return () => {
+      clearTimeout(fallbackTimer);
       unsubs.forEach((u) => u());
     };
   }, [companyId]);

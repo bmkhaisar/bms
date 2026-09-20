@@ -14,7 +14,7 @@ import { db, nextNumber, uid, getCompany } from "@/lib/db";
 import { useAccounting } from "@/modules/accounting/useAccounting";
 import { migrateLegacyCustomersAndSuppliersToParties } from "@/modules/accounting/domain/partyResolver";
 import { useEffect, useState, useMemo, useRef } from "react";
-import { useLive } from "@/lib/useLive";
+import { useLive, useLiveState } from "@/lib/useLive";
 import { toDateInput, fromDateInput, formatDate, formatMoney } from "@/lib/format";
 import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -77,10 +77,11 @@ export function DocumentListPage<T extends AnyDoc>({
   tableFor: "customer" | "supplier";
 }) {
   const navigate = useNavigate();
-  const rows = useLive<T>(async () => {
+  const rowsState = useLiveState<T>(async () => {
     const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
     return (await table.orderBy("createdAt").reverse().toArray()) as unknown as T[];
   });
+  const rows = rowsState.data;
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.orderBy("name").toArray());
   const canonicalParties = useLive<Party>(() => db().parties.orderBy("name").toArray());
@@ -226,7 +227,7 @@ export function DocumentListPage<T extends AnyDoc>({
   const allReceipts = useLive<Receipt>(() => (kind === "invoice" ? db().receipts.toArray() : Promise.resolve([])));
 
   useEffect(() => { getCompany().then(setCompany); }, []);
-  const initialLoading = useInitialLoading();
+  const initialLoading = !rowsState.isLoaded;
 
   function getNormalizedDoc(doc: T): NormalizedDocument {
     const isInv = kind === "invoice";
@@ -2092,14 +2093,14 @@ export function DocumentListPage<T extends AnyDoc>({
                       PURCHASE & SUPPLIER DETAILS
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs font-medium">Supplier *</Label>
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 min-w-0">
+                          <Label className="text-xs font-medium shrink-0">Supplier *</Label>
                           {(editing as Purchase).supplierId && (
                             <button
                               type="button"
                               onClick={() => setInsightSupplierId((editing as Purchase).supplierId)}
-                              className="text-[11px] text-primary hover:underline flex items-center gap-1 font-medium"
+                              className="text-[11px] text-primary hover:underline flex items-center gap-1 font-medium truncate shrink-0"
                             >
                               <FileText className="h-3 w-3" /> Supplier History
                             </button>
@@ -2114,7 +2115,7 @@ export function DocumentListPage<T extends AnyDoc>({
                         />
                       </div>
 
-                      <div className="space-y-1">
+                      <div className="space-y-1 min-w-0">
                         <Label className="text-xs font-medium">
                           Supplier Invoice No.
                           {((activeCompany as any)?.supplierInvoiceNumberPolicy === "REQUIRED") && <span className="text-destructive"> *</span>}
@@ -2128,7 +2129,7 @@ export function DocumentListPage<T extends AnyDoc>({
                         <p className="text-[10px] text-muted-foreground">Original invoice number from vendor bill</p>
                       </div>
 
-                      <div className="space-y-1">
+                      <div className="space-y-1 min-w-0">
                         <Label className="text-xs font-medium">Supplier Invoice Date</Label>
                         <Input
                           type="date"
@@ -2138,13 +2139,13 @@ export function DocumentListPage<T extends AnyDoc>({
                         <p className="text-[10px] text-muted-foreground">Date printed on supplier's invoice</p>
                       </div>
 
-                      <div className="space-y-1">
+                      <div className="space-y-1 min-w-0">
                         <Label className="text-xs font-medium">BMS Purchase No.</Label>
                         <Input value={editing.number} readOnly className="font-mono text-xs bg-muted/30" />
                         <p className="text-[10px] text-muted-foreground">Internal atomic BMS reference</p>
                       </div>
 
-                      <div className="space-y-1">
+                      <div className="space-y-1 min-w-0">
                         <Label className="text-xs font-medium">Purchase Entry Date</Label>
                         <Input
                           type="date"
@@ -2154,7 +2155,7 @@ export function DocumentListPage<T extends AnyDoc>({
                         <p className="text-[10px] text-muted-foreground">Date entered into accounts</p>
                       </div>
 
-                      <div className="space-y-1">
+                      <div className="space-y-1 min-w-0">
                         <Label className="text-xs font-medium">Payment Settlement</Label>
                         <div className="rounded-md border bg-muted/30 px-2.5 py-1.5 text-[11px] text-muted-foreground">
                           Supplier payments are recorded via <strong className="text-foreground">Payment Vouchers</strong>.

@@ -829,3 +829,55 @@ export async function createPartyWithLedger(
     };
   }
 }
+
+/**
+ * Idempotently ensures a default system liquidity ledger (cash or bank) exists.
+ */
+export async function ensureLiquidityLedger(params: {
+  companyId: string;
+  type: "cash" | "bank";
+  uid?: string;
+}): Promise<string> {
+  const { companyId, type, uid = "system" } = params;
+  const canonicalId = `led_${companyId}_${type}`;
+
+  if (firebaseDb) {
+    try {
+      const ledgerRef = ref(firebaseDb, `companyData/${companyId}/ledgers/${canonicalId}`);
+      const snap = await get(ledgerRef);
+      if (!snap.exists()) {
+        const now = Date.now();
+        const newLedger: Ledger = {
+          id: canonicalId,
+          companyId,
+          name: type === "cash" ? "Cash in Hand" : "Bank Account",
+          code: type === "cash" ? "CASH" : "BANK",
+          groupId: type === "cash" ? "grp_cash" : "grp_bank",
+          groupNature: "asset",
+          openingBalance: 0,
+          openingBalanceType: "dr",
+          currentBalance: 0,
+          currency: "INR",
+          partyType: type,
+          isSystem: true,
+          active: true,
+          createdAt: now,
+          updatedAt: now,
+        };
+        await set(ledgerRef, sanitizeForFirebase(newLedger));
+        await cacheEntity({
+          uid,
+          companyId,
+          entityType: "ledger",
+          entityId: canonicalId,
+          data: newLedger,
+        });
+      }
+    } catch (e) {
+      console.warn("Failed to check/create liquidity ledger in Firebase:", e);
+    }
+  }
+
+  return canonicalId;
+}
+

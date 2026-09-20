@@ -1,4 +1,4 @@
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { LogOut, Moon, Sun, Menu, Search, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { GlobalSearch } from "./GlobalSearch";
 
 export function Topbar({ title }: { title: string }) {
   const nav = useNavigate();
+  const isNavigating = useRouterState({ select: (s) => s.status === "pending" });
   const [dark, setDark] = useState(false);
   const [openLogout, setOpenLogout] = useState(false);
   const [openSearch, setOpenSearch] = useState(false);
@@ -47,7 +48,12 @@ export function Topbar({ title }: { title: string }) {
   }
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-2.5 border-b border-border/70 bg-card/85 px-3.5 backdrop-blur-md sm:px-6 no-print">
+    <header className="relative sticky top-0 z-30 flex h-14 items-center gap-2.5 border-b border-border/70 bg-card/85 px-3.5 backdrop-blur-md sm:px-6 no-print">
+      {isNavigating && (
+        <div className="absolute top-0 left-0 right-0 h-[2.5px] overflow-hidden bg-primary/20 z-50">
+          <div className="h-full bg-primary animate-pulse w-full origin-left" />
+        </div>
+      )}
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetTrigger asChild>
           <Button variant="ghost" size="icon" className="md:hidden h-8 w-8 text-muted-foreground hover:text-foreground">
@@ -58,7 +64,7 @@ export function Topbar({ title }: { title: string }) {
           <Sidebar onNavigate={() => setMobileOpen(false)} />
         </SheetContent>
       </Sheet>
-      <h1 className="text-sm font-semibold tracking-tight text-foreground sm:text-base">{title}</h1>
+      <h1 className="text-sm font-semibold tracking-tight text-foreground sm:text-base truncate max-w-[150px] sm:max-w-none">{title}</h1>
       <div className="ml-auto flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => setOpenSearch(true)} className="gap-2">
           <Search className="h-4 w-4" />

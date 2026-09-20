@@ -110,6 +110,7 @@ function Dashboard() {
 
   // Cloud Realtime Ledgers for authoritative accounting calculations
   const [ledgers, setLedgers] = useState<Ledger[]>([]);
+  const [ledgersLoaded, setLedgersLoaded] = useState(false);
 
   // Deferred chart rendering for instant header & KPI display (PRD #36)
   const [renderCharts, setRenderCharts] = useState(false);
@@ -121,9 +122,11 @@ function Dashboard() {
   useEffect(() => {
     if (!activeCompany?.id || !firebaseDb) {
       setLedgers([]);
+      setLedgersLoaded(true);
       return;
     }
 
+    setLedgersLoaded(false);
     const ledgersRef = ref(firebaseDb, `companyData/${activeCompany.id}/ledgers`);
     const onData = (snap: any) => {
       if (snap.exists()) {
@@ -132,6 +135,7 @@ function Dashboard() {
       } else {
         setLedgers([]);
       }
+      setLedgersLoaded(true);
     };
 
     onValue(ledgersRef, onData);
@@ -141,12 +145,12 @@ function Dashboard() {
     };
   }, [activeCompany?.id]);
 
-  const isDexieLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded && receiptsState.isLoaded;
+  const isDataLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded && receiptsState.isLoaded && customersState.isLoaded && ledgersLoaded;
   const cacheKey = `${activeCompany?.id || "default"}_${activeFinancialYear?.id || "all"}`;
 
   // Compute authoritative metrics using formal double-entry and transaction data
   const metrics = useMemo(() => {
-    if (!isDexieLoaded && dashboardMetricsMemoryCache[cacheKey]) {
+    if (!isDataLoaded && dashboardMetricsMemoryCache[cacheKey]) {
       return dashboardMetricsMemoryCache[cacheKey];
     }
     const computed = computeDashboardMetrics({
@@ -159,14 +163,14 @@ function Dashboard() {
       financialYearEnd: activeFinancialYear?.endDate,
       inventoryValuationMethod: (activeCompany as any)?.inventoryValuationMethod,
     });
-    if (isDexieLoaded) {
+    if (isDataLoaded) {
       dashboardMetricsMemoryCache[cacheKey] = computed;
     }
     return computed;
-  }, [isDexieLoaded, ledgers, invoices, purchases, products, receipts, activeFinancialYear?.startDate, activeFinancialYear?.endDate, (activeCompany as any)?.inventoryValuationMethod, cacheKey]);
+  }, [isDataLoaded, ledgers, invoices, purchases, products, receipts, activeFinancialYear?.startDate, activeFinancialYear?.endDate, (activeCompany as any)?.inventoryValuationMethod, cacheKey]);
 
-  // If Dexie is still querying its initial tick and no memory cache exists yet, show skeleton rather than flashing ₹0 (PRD #22, #23)
-  if (!isDexieLoaded && !dashboardMetricsMemoryCache[cacheKey]) {
+  // If data is still querying and no memory cache exists yet, show skeleton rather than flashing ₹0
+  if (!isDataLoaded && !dashboardMetricsMemoryCache[cacheKey]) {
     return (
       <AppShell title="Dashboard">
         <DashboardSkeleton />
@@ -288,7 +292,7 @@ function Dashboard() {
       </div>
 
       {/* KPI Cards Grid with Interactive Drill-Down Navigation */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {kpiCards.map((k, idx) => (
           <motion.div
             key={k.label}

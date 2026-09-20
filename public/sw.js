@@ -7,6 +7,23 @@ const STATIC_ASSETS = [
   "/icon-512.png",
 ];
 
+// If registered on localhost or 127.0.0.1 during development, immediately unregister self and purge caches!
+if (
+  self.location.hostname === "localhost" ||
+  self.location.hostname === "127.0.0.1"
+) {
+  if (self.registration) {
+    self.registration.unregister().then(() => {
+      return self.clients.matchAll();
+    }).then((clients) => {
+      clients.forEach((client) => client.navigate(client.url));
+    }).catch(() => {});
+  }
+  caches.keys().then((keys) => {
+    return Promise.all(keys.map((k) => caches.delete(k)));
+  }).catch(() => {});
+}
+
 // Install: Cache static shell assets
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -41,6 +58,22 @@ self.addEventListener("fetch", (event) => {
 
   // Strictly skip caching for non-GET requests
   if (request.method !== "GET") {
+    return;
+  }
+
+  // Strictly bypass caching in development / localhost or for Vite internal dev modules
+  if (
+    url.hostname === "localhost" ||
+    url.hostname === "127.0.0.1" ||
+    url.port === "8080" ||
+    url.port === "8081" ||
+    url.pathname.includes("/node_modules/") ||
+    url.pathname.includes("/@vite/") ||
+    url.pathname.includes("/@fs/") ||
+    url.pathname.includes("/src/") ||
+    url.pathname.includes("/@id/") ||
+    url.search.includes("?v=")
+  ) {
     return;
   }
 
@@ -90,18 +123,17 @@ self.addEventListener("fetch", (event) => {
     url.pathname.endsWith(".woff2")
   ) {
     event.respondWith(
-      caches.match(request).then((cachedResponse) => {
-        const fetchPromise = fetch(request)
-          .then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200) {
-              const copy = networkResponse.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-            }
-            return networkResponse;
-          })
-          .catch(() => cachedResponse);
-
-        return cachedResponse || fetchPromise;
+      caches.match(request).then(async (cachedResponse) => {
+        try {
+          const networkResponse = await fetch(request);
+          if (networkResponse && networkResponse.status === 200) {
+            const copy = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
+          return networkResponse;
+        } catch {
+          return cachedResponse || new Response(null, { status: 404 });
+        }
       })
     );
     return;
@@ -109,7 +141,10 @@ self.addEventListener("fetch", (event) => {
 
   // Default: Network fetch with offline cache fallback
   event.respondWith(
-    fetch(request).catch(() => caches.match(request))
+    fetch(request).catch(async () => {
+      const cached = await caches.match(request);
+      return cached || new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain" } });
+    })
   );
 });
 

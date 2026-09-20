@@ -159,9 +159,20 @@
   }
 }
 
-/* Mobile optimizations: maintain standard base size and permit zoom */
+/* Mobile optimizations: disable double-tap/pinch zoom on normal UI, maintain standard base size */
 @media (max-width: 640px) {
-  html { touch-action: manipulation; }
+  html, body {
+    touch-action: manipulation;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+}
+
+/* Preserve pinch and native zoom gestures within PDF preview frames */
+iframe.pdf-viewport,
+.pdf-preview-container,
+#canonical-pdf-preview {
+  touch-action: auto !important;
 }
 
 /* Print A4 contract: always white paper and dark ink */

@@ -13,7 +13,8 @@ import {
   type CompanySettings,
   getCompany,
 } from "@/lib/db";
-import { useLive } from "@/lib/useLive";
+import { useLive, useLiveState } from "@/lib/useLive";
+import { ListSkeleton } from "@/components/app/Skeletons";
 import { useEffect, useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -41,6 +42,11 @@ import { createCompanySnapshot } from "@/modules/company/types";
 import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
 import { authoritativeDeleteDraft, authoritativeSaveEntity, authoritativeVoidPosted } from "@/modules/sync/canonicalMutationService";
+import {
+  ensureCustomerLedger,
+  ensureSupplierLedger,
+  ensureLiquidityLedger,
+} from "@/modules/accounting/services/partyLedgerSyncService";
 
 export const Route = createFileRoute("/_app/receipts")({
   head: () => ({ meta: [{ title: "Receipts & Payments — BMS NEXT" }] }),
@@ -53,19 +59,43 @@ function ReceiptsAndPaymentsPage() {
   const [activeTab, setActiveTab] = useState<"receipts" | "payments">("receipts");
 
   // Receipts data
-  const receipts = useLive<Receipt>(() => db().receipts.orderBy("createdAt").reverse().toArray());
+  const receiptsState = useLiveState<Receipt>(() => db().receipts.orderBy("createdAt").reverse().toArray());
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const invoices = useLive<Invoice>(() => db().invoices.orderBy("createdAt").reverse().toArray());
+  const receipts = receiptsState.data;
 
   // Payments data
   const suppliers = useLive<Supplier>(() => db().suppliers.orderBy("name").toArray());
-  const payments = useLive<Payment>(() => db().payments.orderBy("createdAt").reverse().toArray());
+  const paymentsState = useLiveState<Payment>(() => db().payments.orderBy("createdAt").reverse().toArray());
   const purchases = useLive<Purchase>(() => db().purchases.orderBy("createdAt").reverse().toArray());
+  const payments = paymentsState.data;
 
   // Accounting Ledgers for real settlement
   const { ledgers } = useAccounting();
-  const cashLedgers = ledgers.filter((l) => l.groupId === "grp_cash" && l.active !== false);
-  const bankLedgers = ledgers.filter((l) => l.groupId === "grp_bank_accounts" && l.active !== false);
+  const cashLedgers = useMemo(
+    () =>
+      ledgers.filter(
+        (l) =>
+          (l.groupId === "grp_cash" ||
+            l.groupId === "grp_cash_equiv" ||
+            l.partyType === "cash" ||
+            l.name.toLowerCase().includes("cash")) &&
+          l.active !== false
+      ),
+    [ledgers]
+  );
+  const bankLedgers = useMemo(
+    () =>
+      ledgers.filter(
+        (l) =>
+          (l.groupId === "grp_bank" ||
+            l.groupId === "grp_bank_accounts" ||
+            l.partyType === "bank" ||
+            l.name.toLowerCase().includes("bank")) &&
+          l.active !== false
+      ),
+    [ledgers]
+  );
 
   const [q, setQ] = useState("");
   const [openReceipt, setOpenReceipt] = useState(false);
@@ -405,7 +435,28 @@ function ReceiptsAndPaymentsPage() {
       if (activeCompany?.id && activeFinancialYear?.id && user) {
         const idToken = await user.getIdToken();
         const customer = customers.find((c) => c.id === editingReceipt.customerId);
-        const customerLedgerId = customer?.ledgerId || `led_${activeCompany.id}_cust_${editingReceipt.customerId}`;
+        let customerLedgerId = customer?.ledgerId;
+        if (!customerLedgerId && customer) {
+          customerLedgerId = await ensureCustomerLedger({
+            companyId: activeCompany.id,
+            customer,
+            uid: user.uid,
+          });
+        }
+        if (!customerLedgerId) {
+          customerLedgerId = `led_${activeCompany.id}_cust_${editingReceipt.customerId}`;
+        }
+
+        // Ensure settlement ledger exists
+        const isCash = editingReceipt.paymentMethod === "cash";
+        let settlementLedgerId = editingReceipt.settlementLedgerId;
+        if (!settlementLedgerId || settlementLedgerId === `led_${activeCompany.id}_${isCash ? "cash" : "bank"}`) {
+          settlementLedgerId = await ensureLiquidityLedger({
+            companyId: activeCompany.id,
+            type: isCash ? "cash" : "bank",
+            uid: user.uid,
+          });
+        }
 
         const result = await postReceiptTransaction({
           companyId: activeCompany.id,
@@ -413,7 +464,7 @@ function ReceiptsAndPaymentsPage() {
           receipt: editingReceipt,
           company: activeCompany || undefined,
           customerLedgerId,
-          settlementLedgerId: editingReceipt.settlementLedgerId,
+          settlementLedgerId,
           idToken,
           uid: user.uid,
         });
@@ -521,7 +572,28 @@ function ReceiptsAndPaymentsPage() {
       if (activeCompany?.id && activeFinancialYear?.id && user) {
         const idToken = await user.getIdToken();
         const supplier = suppliers.find((s) => s.id === editingPayment.supplierId);
-        const supplierLedgerId = supplier?.ledgerId || `led_${activeCompany.id}_supp_${editingPayment.supplierId}`;
+        let supplierLedgerId = supplier?.ledgerId;
+        if (!supplierLedgerId && supplier) {
+          supplierLedgerId = await ensureSupplierLedger({
+            companyId: activeCompany.id,
+            supplier,
+            uid: user.uid,
+          });
+        }
+        if (!supplierLedgerId) {
+          supplierLedgerId = `led_${activeCompany.id}_supp_${editingPayment.supplierId}`;
+        }
+
+        // Ensure settlement ledger exists
+        const isCash = editingPayment.paymentMethod === "cash";
+        let settlementLedgerId = editingPayment.settlementLedgerId;
+        if (!settlementLedgerId || settlementLedgerId === `led_${activeCompany.id}_${isCash ? "cash" : "bank"}`) {
+          settlementLedgerId = await ensureLiquidityLedger({
+            companyId: activeCompany.id,
+            type: isCash ? "cash" : "bank",
+            uid: user.uid,
+          });
+        }
 
         const result = await postPaymentTransaction({
           companyId: activeCompany.id,
@@ -529,7 +601,7 @@ function ReceiptsAndPaymentsPage() {
           payment: editingPayment,
           company: activeCompany || undefined,
           supplierLedgerId,
-          settlementLedgerId: editingPayment.settlementLedgerId,
+          settlementLedgerId,
           idToken,
           uid: user.uid,
         });
@@ -670,7 +742,9 @@ function ReceiptsAndPaymentsPage() {
 
         <TabsContent value="receipts" className="space-y-4">
           <ListToolbar query={q} onQuery={setQ} placeholder="Search by receipt number or customer name…" />
-          {receipts.length === 0 ? (
+          {!receiptsState.isLoaded ? (
+            <ListSkeleton columns={8} rows={6} />
+          ) : receipts.length === 0 ? (
             <EmptyState
               title="No customer receipts yet"
               description="Record payments received from customers to reconcile accounts receivable."
@@ -798,7 +872,9 @@ function ReceiptsAndPaymentsPage() {
         </TabsContent>
 
         <TabsContent value="payments" className="space-y-4">
-          {payments.length === 0 ? (
+          {!paymentsState.isLoaded ? (
+            <ListSkeleton columns={7} rows={6} />
+          ) : payments.length === 0 ? (
             <EmptyState title="No supplier payments yet" description="Record a supplier payment and optionally link it to a purchase." action={<Button onClick={openNewPayment} className="mt-2 gap-2"><ArrowUpRight className="h-4 w-4" /> Record Supplier Payment</Button>} />
           ) : (
             <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
@@ -843,13 +919,13 @@ function ReceiptsAndPaymentsPage() {
           if (!o) setEditingReceipt(null);
         }}
       >
-        <DialogContent className="max-w-xl max-h-[90dvh] flex flex-col p-0 overflow-hidden sm:rounded-2xl">
-          <DialogHeader className="p-6 pb-3 border-b shrink-0 bg-background/95 backdrop-blur">
+        <DialogContent className="max-w-xl max-h-[92dvh] sm:max-h-[88dvh] w-[calc(100vw-1.5rem)] sm:w-full flex flex-col p-0 overflow-hidden rounded-2xl">
+          <DialogHeader className="p-4 sm:p-6 pb-2.5 sm:pb-3 border-b shrink-0 bg-background/95 backdrop-blur">
             <DialogTitle>Record Customer Receipt</DialogTitle>
           </DialogHeader>
           {editingReceipt && (
-            <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-4 space-y-4 scrollbar-thin">
-              <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 py-3 sm:py-4 space-y-3.5 sm:space-y-4 scrollbar-thin">
+              <div className="grid gap-3 sm:gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Receipt Number</Label>
                   <Input value={editingReceipt.number} readOnly className="font-mono bg-muted/40" />
@@ -1374,7 +1450,7 @@ function ReceiptsAndPaymentsPage() {
               </div>
             </div>
           )}
-          <DialogFooter className="p-4 border-t shrink-0 bg-background/95 backdrop-blur flex justify-end gap-2">
+          <DialogFooter className="p-3 sm:p-4 border-t shrink-0 bg-background/95 backdrop-blur flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
             <Button variant="outline" onClick={() => setOpenReceipt(false)}>
               Cancel
             </Button>
@@ -1399,13 +1475,13 @@ function ReceiptsAndPaymentsPage() {
           if (!o) setEditingPayment(null);
         }}
       >
-        <DialogContent className="max-w-xl max-h-[90dvh] flex flex-col p-0 overflow-hidden sm:rounded-2xl">
-          <DialogHeader className="p-6 pb-3 border-b shrink-0 bg-background/95 backdrop-blur">
+        <DialogContent className="max-w-xl max-h-[92dvh] sm:max-h-[88dvh] w-[calc(100vw-1.5rem)] sm:w-full flex flex-col p-0 overflow-hidden rounded-2xl">
+          <DialogHeader className="p-4 sm:p-6 pb-2.5 sm:pb-3 border-b shrink-0 bg-background/95 backdrop-blur">
             <DialogTitle>Record Supplier Payment</DialogTitle>
           </DialogHeader>
           {editingPayment && (
-            <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-4 space-y-4 scrollbar-thin">
-              <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 py-3 sm:py-4 space-y-3.5 sm:space-y-4 scrollbar-thin">
+              <div className="grid gap-3 sm:gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Payment Ref</Label>
                   <Input value={editingPayment.number} readOnly className="font-mono bg-muted/40" />
@@ -1560,7 +1636,7 @@ function ReceiptsAndPaymentsPage() {
               </div>
             </div>
           )}
-          <DialogFooter className="p-4 border-t shrink-0 bg-background/95 backdrop-blur flex justify-end gap-2">
+          <DialogFooter className="p-3 sm:p-4 border-t shrink-0 bg-background/95 backdrop-blur flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
             <Button variant="outline" onClick={() => setOpenPayment(false)}>
               Cancel
             </Button>
