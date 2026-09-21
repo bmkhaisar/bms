@@ -3,6 +3,7 @@ import { createCompanySnapshot } from "@/modules/company/types";
 import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 import { extractTableRowsFromMarkdown, extractTermsFromMarkdown } from "@/lib/markdownDoc";
 import { resolveGeneralInfoFields } from "@/lib/cabinConfiguration";
+import { resolveTechSpecSections } from "@/lib/techSpecResolution";
 
 /**
  * Freezes immutable master snapshots at Quotation Issue/Finalization (PRD §§ 7-9, 28, 78-82)
@@ -87,6 +88,7 @@ export function freezeQuotationSnapshots(
 
   const resolvedGeneralInfo = resolveGeneralInfoFields({
     companyFields: comp?.generalInfoFields,
+    companyMarkdown: comp?.quotationGeneralInfoMarkdown,
     items: quotation.items,
     documentOverride: quotation.generalInformationSnapshot || quotation.generalInfoSnapshot,
     cabinOverride: quotation.cabinConfigurationOverride,
@@ -95,13 +97,16 @@ export function freezeQuotationSnapshots(
     frozenSnapshot: quotation.generalInformationSnapshot || quotation.generalInfoSnapshot,
   });
 
-  const resolvedTechSpecs: TechSpecSection[] | undefined =
-    quotation.technicalSpecificationSnapshot ||
-    (quotation.structuredSections?.filter((s) => s.type === "SPEC_TABLE")?.length
-      ? (quotation.structuredSections.filter((s) => s.type === "SPEC_TABLE") as any)
-      : comp?.quotationTechnicalSpecsMarkdown
-      ? [{ title: "Technical Specifications", rows: extractTableRowsFromMarkdown(comp.quotationTechnicalSpecsMarkdown) }]
-      : undefined);
+  const resolvedTechSpecs: TechSpecSection[] | undefined = resolveTechSpecSections({
+    companyMarkdown: comp?.quotationTechnicalSpecsMarkdown,
+    documentOverride: (quotation.structuredSections && quotation.structuredSections.length > 0)
+      ? quotation.structuredSections
+      : (quotation.technicalSpecificationSnapshot && quotation.technicalSpecificationSnapshot.length > 0)
+        ? quotation.technicalSpecificationSnapshot
+        : quotation.techSpecSnapshot,
+    isIssuedOrFrozen: true,
+    frozenSnapshot: quotation.technicalSpecificationSnapshot || quotation.techSpecSnapshot,
+  });
 
   const resolvedVisibility =
     quotation.visibilitySnapshot || {

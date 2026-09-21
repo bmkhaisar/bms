@@ -58,6 +58,18 @@ import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot"
 import { authoritativeDeleteDraft, authoritativeVoidPosted, authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
 import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYearFn";
 import { useDocumentDeepLink, documentDeepLink } from "@/lib/useDocumentDeepLink";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GeneralInformationEditor } from "./GeneralInformationEditor";
+import { TechnicalSpecificationsEditor } from "./TechnicalSpecificationsEditor";
+import { StructuredTermsEditor } from "./StructuredTermsEditor";
+import { buildCabinConfigurationFromItems, isCabinConfigurationRow } from "@/lib/cabinConfiguration";
+import {
+  parseMarkdownToStructuredTerms,
+  parseMarkdownToGeneralInfoRows,
+  hydrateInvoiceFromCompany,
+} from "@/modules/documents/documentContentHydration";
+import { normalizeTechSpecSections } from "@/lib/techSpecResolution";
+import type { GeneralInfoField, TechSpecSection, QuotationSection, SectionRow, GeneralInfoTemplate, TechSpecTemplate } from "@/lib/db";
 import { useNavigate } from "@tanstack/react-router";
 import {
   assertPostedDocumentNotDirectlyMutable,
@@ -88,6 +100,8 @@ export function DocumentListPage<T extends AnyDoc>({
   const quotations = useLive<Quotation>(() => kind === "invoice" ? db().quotations.orderBy("createdAt").reverse().toArray() : Promise.resolve([]));
   const bankAccounts = useLive<BankAccount>(() => db().bankAccounts.orderBy("bankName").toArray());
   const termsTemplates = useLive<TermsTemplate>(() => db().termsTemplates.orderBy("name").toArray());
+  const genTemplates = useLive<GeneralInfoTemplate>(() => db().generalInfoTemplates.orderBy("name").toArray());
+  const techTemplates = useLive<TechSpecTemplate>(() => db().techSpecTemplates.orderBy("name").toArray());
 
   const { ledgers } = useAccounting();
   const settlementLedgers = useMemo(() => ledgers.filter(l => (l.groupId === "grp_cash" || l.groupId === "grp_bank_accounts") && l.active !== false), [ledgers]);
@@ -342,6 +356,12 @@ export function DocumentListPage<T extends AnyDoc>({
       includeBankDetails: (doc as any).includeBankDetails,
       enableGst: isTaxDoc,
       watermarkMode: (docCompany as any).watermarkSetting || "off",
+      visibilitySnapshot: (doc as any).visibilitySnapshot || {
+        showTerms: (doc as any).includeTerms !== false,
+        showGeneralInfo: (doc as any).includeGeneralInfo === true || ((doc as any).includeGeneralInfo !== false && Boolean((doc as any).generalInformationSnapshot?.length || (doc as any).generalInfoSnapshot?.length || (docCompany as any).showInvoiceGeneralInfo === true)),
+        showTechSpecs: (doc as any).includeTechSpecs === true || ((doc as any).includeTechSpecs !== false && Boolean((doc as any).technicalSpecificationSnapshot?.length || (doc as any).techSpecSnapshot?.length || (doc as any).structuredSections?.length || (docCompany as any).showInvoiceTechnicalSpecs === true)),
+        showBankDetails: (doc as any).includeBankDetails !== false,
+      },
     };
   }
 
@@ -495,7 +515,140 @@ export function DocumentListPage<T extends AnyDoc>({
     return () => URL.revokeObjectURL(url);
   }, [preview, includeDescriptions, activeCompany?.id, company]);
 
-  async function openNew() {
+    const derivedCabinConfig = useMemo(() => {
+    if (!editing?.items) return "";
+    return buildCabinConfigurationFromItems(editing.items);
+  }, [editing?.items]);
+
+  const invoiceGenInfoRows: SectionRow[] = useMemo(() => {
+    if (!editing || kind !== "invoice") return [];
+    const inv = editing as unknown as Invoice;
+    const rawFields: GeneralInfoField[] =
+      inv.generalInformationSnapshot ||
+      inv.generalInfoSnapshot ||
+      ((activeCompany as any)?.generalInfoFields as GeneralInfoField[]) ||
+      [];
+    return rawFields.map((f, i) => {
+      let val = f.value;
+      if (isCabinConfigurationRow(f.label) && !inv.isCabinConfigCustom && derivedCabinConfig) {
+        val = derivedCabinConfig;
+      }
+      return {
+        id: (f as any).id || uid(),
+        label: f.label,
+        value: val,
+        order: i + 1,
+      };
+    });
+  }, [editing, kind, derivedCabinConfig, activeCompany]);
+
+  function applyInvoiceTermsTemplate(id: string) {
+    const t = termsTemplates.find(x => x.id === id);
+    if (!t) return;
+    const items = (t.terms || []).filter((x: any) => x.enabled !== false);
+    const structured: StructuredTermItem[] = items.map((item: any, i: number) => ({
+      id: uid(),
+      text: item.text,
+      format: (item.format as any) || "NUMBERED",
+      order: i + 1,
+    }));
+    setEditing(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        termsTemplateId: id,
+        includeTerms: true,
+        structuredTerms: structured,
+        termsSnapshot: structured.map(x => x.text),
+        terms: structured.map((x, i) => `${i + 1}. ${x.text}`).join("\n"),
+        structuredTermsSnapshot: [{ title: t.name, format: "numbered", items: structured }],
+        visibilitySnapshot: {
+          ...((prev as any).visibilitySnapshot || {}),
+          showTerms: true,
+        },
+      } as T;
+    });
+  }
+
+  const handleResetInvoiceCabinConfig = () => {
+    setEditing(prev => {
+      if (!prev) return prev;
+      const rawFields: GeneralInfoField[] =
+        (prev as any).generalInformationSnapshot ||
+        (prev as any).generalInfoSnapshot ||
+        ((activeCompany as any)?.generalInfoFields as GeneralInfoField[]) ||
+        [];
+      const updated = rawFields.map(f => {
+        if (isCabinConfigurationRow(f.label)) {
+          return { ...f, value: derivedCabinConfig };
+        }
+        return f;
+      });
+      return {
+        ...prev,
+        generalInformationSnapshot: updated,
+        generalInfoSnapshot: updated,
+        cabinConfigurationOverride: undefined,
+        isCabinConfigCustom: false,
+      } as T;
+    });
+  };
+
+  function applyInvoiceGeneralInfoTemplate(id: string) {
+    const t = genTemplates.find(x => x.id === id);
+    if (!t) return;
+    setEditing(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        generalInfoTemplateId: id,
+        includeGeneralInfo: true,
+        generalInformationSnapshot: [...t.fields],
+        generalInfoSnapshot: [...t.fields],
+        visibilitySnapshot: {
+          ...((prev as any).visibilitySnapshot || {}),
+          showGeneralInfo: true,
+        },
+      } as T;
+    });
+  }
+
+  function applyInvoiceTechSpecTemplate(id: string) {
+    const t = techTemplates.find(x => x.id === id);
+    if (!t) return;
+    const mappedSections: QuotationSection[] = t.sections.map((s, idx) => ({
+      id: uid(),
+      type: "SPEC_TABLE" as const,
+      title: s.title,
+      order: idx + 1,
+      rows: (s.rows || []).map((r, rIdx) => ({
+        id: uid(),
+        label: r.label,
+        value: r.value,
+        order: rIdx + 1,
+      })),
+    }));
+    const canonicalSnapshots: TechSpecSection[] = t.sections.map(s => ({
+      title: s.title,
+      rows: (s.rows || []).map(r => ({ label: r.label, value: r.value })),
+    }));
+    setEditing(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        techSpecTemplateId: id,
+        includeTechSpecs: true,
+        structuredSections: mappedSections,
+        technicalSpecificationSnapshot: canonicalSnapshots,
+        techSpecSnapshot: canonicalSnapshots,
+        visibilitySnapshot: {
+          ...((prev as any).visibilitySnapshot || {}),
+          showTechSpecs: true,
+        },
+      } as T;
+    });
+  }
+async function openNew() {
     let idToken: string | undefined;
     try { idToken = await user?.getIdToken(); } catch {}
     let resolvedFinancialYear = activeFinancialYear;
@@ -533,7 +686,40 @@ export function DocumentListPage<T extends AnyDoc>({
     markManualOpen();
     let initDoc: T;
     if (kind === "invoice") {
-      initDoc = { ...base, customerId: "", cgstTotal: 0, sgstTotal: 0, igstTotal: 0, isIgst: false, amountPaid: 0, balance: 0, status: "draft", postingStatus: "draft", sourceType: "DIRECT", gstCalculationMode: "overall", overallGstRate: 18 } as unknown as T;
+      const hydrated = hydrateInvoiceFromCompany({} as Invoice, activeCompany);
+      initDoc = {
+        ...base,
+        customerId: "",
+        cgstTotal: 0,
+        sgstTotal: 0,
+        igstTotal: 0,
+        isIgst: false,
+        amountPaid: 0,
+        balance: 0,
+        status: "draft",
+        postingStatus: "draft",
+        sourceType: "DIRECT",
+        gstCalculationMode: "overall",
+        overallGstRate: 18,
+        includeTerms: hydrated.includeTerms,
+        termsSnapshot: hydrated.termsSnapshot,
+        terms: hydrated.terms,
+        structuredTerms: hydrated.structuredTerms,
+        structuredTermsSnapshot: [{ title: "Terms & Conditions", format: "numbered", items: hydrated.structuredTerms }],
+        includeGeneralInfo: hydrated.includeGeneralInfo,
+        generalInformationSnapshot: hydrated.generalInformationSnapshot,
+        generalInfoSnapshot: hydrated.generalInformationSnapshot,
+        includeTechSpecs: hydrated.includeTechSpecs,
+        structuredSections: hydrated.structuredSections,
+        technicalSpecificationSnapshot: hydrated.technicalSpecificationSnapshot,
+        techSpecSnapshot: hydrated.technicalSpecificationSnapshot,
+        visibilitySnapshot: {
+          showTerms: hydrated.includeTerms,
+          showGeneralInfo: hydrated.includeGeneralInfo,
+          showTechSpecs: hydrated.includeTechSpecs,
+          showBankDetails: (activeCompany as any)?.showInvoiceBankDetails !== false,
+        },
+      } as unknown as T;
     } else if (kind === "quotation") {
       initDoc = { ...base, customerId: "", status: "draft", gstCalculationMode: "overall", overallGstRate: 18 } as unknown as T;
     } else {
@@ -568,7 +754,39 @@ export function DocumentListPage<T extends AnyDoc>({
     }
     markManualOpen();
     initialEditingStateRef.current = JSON.stringify(r);
-    setEditing({ ...r });
+    if (kind === "invoice") {
+      const inv = { ...r } as unknown as Invoice;
+      const hydrated = hydrateInvoiceFromCompany(inv, activeCompany);
+      if (!inv.structuredTerms || inv.structuredTerms.length === 0) {
+        inv.structuredTerms = hydrated.structuredTerms;
+        inv.termsSnapshot = hydrated.termsSnapshot;
+        inv.terms = hydrated.terms;
+        inv.structuredTermsSnapshot = [{ title: "Terms & Conditions", format: "numbered", items: hydrated.structuredTerms }];
+      }
+      if (!inv.structuredSections || inv.structuredSections.length === 0) {
+        inv.structuredSections = hydrated.structuredSections;
+        inv.technicalSpecificationSnapshot = hydrated.technicalSpecificationSnapshot;
+        inv.techSpecSnapshot = hydrated.technicalSpecificationSnapshot;
+      }
+      if ((!inv.generalInformationSnapshot || inv.generalInformationSnapshot.length === 0) && (!inv.generalInfoSnapshot || inv.generalInfoSnapshot.length === 0)) {
+        inv.generalInformationSnapshot = hydrated.generalInformationSnapshot;
+        inv.generalInfoSnapshot = hydrated.generalInformationSnapshot;
+      }
+      if (inv.includeTerms === undefined) inv.includeTerms = hydrated.includeTerms;
+      if (inv.includeGeneralInfo === undefined) inv.includeGeneralInfo = hydrated.includeGeneralInfo;
+      if (inv.includeTechSpecs === undefined) inv.includeTechSpecs = hydrated.includeTechSpecs;
+      if (!inv.visibilitySnapshot) {
+        inv.visibilitySnapshot = {
+          showTerms: inv.includeTerms,
+          showGeneralInfo: inv.includeGeneralInfo,
+          showTechSpecs: inv.includeTechSpecs,
+          showBankDetails: (activeCompany as any)?.showInvoiceBankDetails !== false,
+        };
+      }
+      setEditing(inv as unknown as T);
+    } else {
+      setEditing({ ...r });
+    }
     const isDocNonGst = (r as any).gstTotal === 0 && (r as any).cgstTotal === 0 && (r as any).igstTotal === 0 && (r as any).items?.every((it: LineItem) => it.gstRate === 0);
     setEnableGst(!isDocNonGst);
     setOpen(true);
@@ -822,6 +1040,32 @@ export function DocumentListPage<T extends AnyDoc>({
       if (activeCompany?.id && !resolvedFinancialYearId) throw new Error("Current financial year is still initializing. Please retry in a moment.");
       inv.financialYearId = resolvedFinancialYearId;
       inv.sourceType = inv.sourceQuotationId || inv.convertedFromQuotationId ? "QUOTATION" : (inv.sourceType || "DIRECT");
+            if (inv.includeTerms !== false) {
+        if (inv.structuredTerms?.length) {
+          inv.termsSnapshot = inv.structuredTerms.map(t => t.text);
+          inv.structuredTermsSnapshot = [{ title: "Terms & Conditions", format: "numbered", items: inv.structuredTerms }];
+        }
+      }
+      if (inv.generalInformationSnapshot?.length) {
+        inv.generalInfoSnapshot = inv.generalInformationSnapshot;
+      }
+      if (inv.structuredSections?.length) {
+        const canonicalTech: TechSpecSection[] = inv.structuredSections.map(s => ({
+          title: s.title,
+          subtitle: s.subtitle,
+          rows: (s.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
+        }));
+        inv.technicalSpecificationSnapshot = canonicalTech;
+        inv.techSpecSnapshot = canonicalTech;
+      } else if (inv.technicalSpecificationSnapshot?.length) {
+        inv.techSpecSnapshot = inv.technicalSpecificationSnapshot;
+      }
+      inv.visibilitySnapshot = {
+        showTerms: inv.includeTerms !== false,
+        showGeneralInfo: inv.includeGeneralInfo === true || (inv.includeGeneralInfo !== false && Boolean(inv.generalInformationSnapshot?.length || inv.generalInfoSnapshot?.length)),
+        showTechSpecs: inv.includeTechSpecs === true || (inv.includeTechSpecs !== false && Boolean(inv.technicalSpecificationSnapshot?.length || inv.techSpecSnapshot?.length || inv.structuredSections?.length)),
+        showBankDetails: inv.includeBankDetails !== false,
+      };
       const cust = party as Customer | undefined;
 
       // Freeze presentation-critical master snapshots (PRD §§ 7-9, 28)
@@ -1349,6 +1593,37 @@ export function DocumentListPage<T extends AnyDoc>({
       termsSnapshot: quote.termsSnapshot,
       structuredTermsSnapshot: quote.structuredTermsSnapshot,
       includeTerms: quote.includeTerms !== false,
+      structuredTerms: (quote.structuredTerms || []).map(t => ({ ...t })),
+      generalInformationSnapshot: quote.generalInformationSnapshot ? [...quote.generalInformationSnapshot] : quote.generalInfoSnapshot ? [...quote.generalInfoSnapshot] : [],
+      generalInfoSnapshot: quote.generalInfoSnapshot ? [...quote.generalInfoSnapshot] : quote.generalInformationSnapshot ? [...quote.generalInformationSnapshot] : [],
+      includeGeneralInfo: quote.includeGeneralInfo !== false,
+      structuredSections: (quote.structuredSections || []).map(s => ({
+        ...s,
+        rows: (s.rows || []).map(r => ({ ...r })),
+      })),
+      technicalSpecificationSnapshot: normalizeTechSpecSections(
+        (quote.technicalSpecificationSnapshot && quote.technicalSpecificationSnapshot.length > 0)
+          ? quote.technicalSpecificationSnapshot
+          : (quote.structuredSections && quote.structuredSections.length > 0)
+            ? quote.structuredSections
+            : quote.techSpecSnapshot
+      ),
+      techSpecSnapshot: normalizeTechSpecSections(
+        (quote.technicalSpecificationSnapshot && quote.technicalSpecificationSnapshot.length > 0)
+          ? quote.technicalSpecificationSnapshot
+          : (quote.structuredSections && quote.structuredSections.length > 0)
+            ? quote.structuredSections
+            : quote.techSpecSnapshot
+      ),
+      includeTechSpecs: quote.includeTechSpecs !== false,
+      cabinConfigurationOverride: quote.cabinConfigurationOverride,
+      isCabinConfigCustom: quote.isCabinConfigCustom,
+      visibilitySnapshot: {
+        showTerms: quote.includeTerms !== false,
+        showGeneralInfo: quote.includeGeneralInfo !== false,
+        showTechSpecs: quote.includeTechSpecs !== false,
+        showBankDetails: quote.includeBankDetails !== false,
+      },
       bankAccountId: quote.bankAccountId,
       bankSnapshot: quote.bankSnapshot,
       bankDetailsSnapshot: quote.bankDetailsSnapshot || quote.bankSnapshot,
@@ -1759,342 +2034,816 @@ export function DocumentListPage<T extends AnyDoc>({
                   <div className="mt-0.5 text-[11px]">Reason: {(editing as Invoice | Purchase).correctionReason}</div>
                 </div>
               )}
-              {kind === "invoice" && (
-                <div className="space-y-4">
-                  {/* Bill To & Ship To Side-by-Side Cards */}
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {/* BILL TO */}
-                    <Card className="p-3.5 space-y-2.5 border-border/70 shadow-xs">
-                      <div className="flex items-center justify-between border-b pb-1.5">
-                        <div className="text-xs font-bold uppercase tracking-wider text-primary">
-                          BILL TO (Customer)
-                        </div>
-                        {(editing as any).customerId && (
-                          <button
-                            type="button"
-                            onClick={() => setInsightCustomerId((editing as any).customerId)}
-                            className="text-[11px] text-primary hover:underline font-medium"
-                          >
-                            Financial History
-                          </button>
-                        )}
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs font-medium">Customer *</Label>
-                        <PartySearchSelect
-                          type="customer"
-                          value={(editing as any).customerId || ""}
-                          parties={parties}
-                          onChange={(id: string) => onPartySelect(id)}
-                          onAddNew={() => setOpenCustomerDrawer(true)}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <PartyAddressSelect
-                          party={partyById((editing as any).customerId)}
-                          selectedAddressId={(editing as any).billingAddressId}
-                          onChange={(snapshot, addressId) => {
-                            setEditing(prev => {
-                              if (!prev) return prev;
-                              const formatted = formatAddressLines(snapshot);
-                              const isSame = (prev as any).sameAsBilling !== false;
-                              return {
-                                ...prev,
-                                billingAddressId: addressId,
-                                billingAddressSnapshot: snapshot,
-                                billingAddress: formatted,
-                                ...(isSame ? {
-                                  shippingAddressId: addressId,
-                                  shippingAddressSnapshot: snapshot,
-                                  shippingAddress: formatted,
-                                } : {}),
-                              } as T;
-                            });
-                          }}
-                          label="Billing Address (Saved Party Master)"
-                        />
-                      </div>
-                    </Card>
+              {kind === "invoice" ? (
+                <Tabs defaultValue="details" className="space-y-4">
+                  <div className="sticky top-0 z-10 -mx-3 -mt-4 mb-2 overflow-x-auto scrollbar-hidden bg-background/95 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6">
+                    <TabsList className="inline-flex w-max flex-nowrap gap-1">
+                      <TabsTrigger value="details">Details</TabsTrigger>
+                      <TabsTrigger value="items">Items</TabsTrigger>
+                      <TabsTrigger value="charges">Charges & Totals</TabsTrigger>
+                      <TabsTrigger value="general-info">General Info</TabsTrigger>
+                      <TabsTrigger value="tech-specs">Tech Specs</TabsTrigger>
+                      <TabsTrigger value="terms">Terms</TabsTrigger>
+                    </TabsList>
+                  </div>
 
-                    {/* SHIP TO */}
-                    <Card className="p-3.5 space-y-2.5 border-border/70 shadow-xs">
-                      <div className="flex items-center justify-between border-b pb-1.5">
-                        <div className="text-xs font-bold uppercase tracking-wider text-primary">
-                          SHIP TO (Delivery Destination / Consignee)
+                  {/* ============ DETAILS ============ */}
+                  <TabsContent value="details" className="space-y-4">
+                    {/* Bill To & Ship To Side-by-Side Cards */}
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {/* BILL TO */}
+                      <Card className="p-3.5 space-y-2.5 border-border/70 shadow-xs">
+                        <div className="flex items-center justify-between border-b pb-1.5">
+                          <div className="text-xs font-bold uppercase tracking-wider text-primary">
+                            BILL TO (Customer)
+                          </div>
+                          {(editing as any).customerId && (
+                            <button
+                              type="button"
+                              onClick={() => setInsightCustomerId((editing as any).customerId)}
+                              className="text-[11px] text-primary hover:underline font-medium"
+                            >
+                              Financial History
+                            </button>
+                          )}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Checkbox
-                            id="inv-same-as-billing"
-                            checked={(editing as any).sameAsBilling !== false}
-                            onCheckedChange={(checked) => {
-                              const isChecked = checked === true;
+                        <div className="space-y-1">
+                          <Label className="text-xs font-medium">Customer *</Label>
+                          <PartySearchSelect
+                            type="customer"
+                            value={(editing as any).customerId || ""}
+                            parties={parties}
+                            onChange={(id: string) => onPartySelect(id)}
+                            onAddNew={() => setOpenCustomerDrawer(true)}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <PartyAddressSelect
+                            party={partyById((editing as any).customerId)}
+                            selectedAddressId={(editing as any).billingAddressId}
+                            onChange={(snapshot, addressId) => {
                               setEditing(prev => {
                                 if (!prev) return prev;
-                                const billSnapshot = (prev as any).billingAddressSnapshot;
-                                const billAddr = (prev as any).billingAddress;
+                                const formatted = formatAddressLines(snapshot);
+                                const isSame = (prev as any).sameAsBilling !== false;
                                 return {
                                   ...prev,
-                                  sameAsBilling: isChecked,
-                                  ...(isChecked ? {
-                                    shipToPartyId: (prev as any).customerId,
-                                    shippingAddressId: (prev as any).billingAddressId,
-                                    shippingAddressSnapshot: billSnapshot,
-                                    shippingAddress: billAddr,
+                                  billingAddressId: addressId,
+                                  billingAddressSnapshot: snapshot,
+                                  billingAddress: formatted,
+                                  ...(isSame ? {
+                                    shippingAddressId: addressId,
+                                    shippingAddressSnapshot: snapshot,
+                                    shippingAddress: formatted,
                                   } : {}),
                                 } as T;
                               });
                             }}
+                            label="Billing Address (Saved Party Master)"
                           />
-                          <Label htmlFor="inv-same-as-billing" className="text-xs cursor-pointer select-none font-medium">
-                            Same as Billing Address
-                          </Label>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Billing Address (Printed on Document)</Label>
+                          <Textarea
+                            rows={2}
+                            value={(editing as any).billingAddress || ""}
+                            onChange={e => {
+                              const formatted = e.target.value;
+                              setEditing(prev => {
+                                if (!prev) return prev;
+                                const isSame = (prev as any).sameAsBilling !== false;
+                                return {
+                                  ...prev,
+                                  billingAddress: formatted,
+                                  ...(isSame ? { shippingAddress: formatted } : {}),
+                                } as T;
+                              });
+                            }}
+                            placeholder="Address will auto-fill from customer or address selection above…"
+                            className="text-xs"
+                          />
+                        </div>
+                      </Card>
+
+                      {/* SHIP TO */}
+                      <Card className="p-3.5 space-y-2.5 border-border/70 shadow-xs">
+                        <div className="flex items-center justify-between border-b pb-1.5">
+                          <div className="text-xs font-bold uppercase tracking-wider text-primary">
+                            SHIP TO (Delivery Destination / Consignee)
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Checkbox
+                              id="inv-same-as-billing"
+                              checked={(editing as any).sameAsBilling !== false}
+                              onCheckedChange={(checked) => {
+                                const isChecked = checked === true;
+                                setEditing(prev => {
+                                  if (!prev) return prev;
+                                  const billSnapshot = (prev as any).billingAddressSnapshot;
+                                  const billAddr = (prev as any).billingAddress;
+                                  return {
+                                    ...prev,
+                                    sameAsBilling: isChecked,
+                                    ...(isChecked ? {
+                                      shipToPartyId: (prev as any).customerId,
+                                      shippingAddressId: (prev as any).billingAddressId,
+                                      shippingAddressSnapshot: billSnapshot,
+                                      shippingAddress: billAddr,
+                                    } : {}),
+                                  } as T;
+                                });
+                              }}
+                            />
+                            <Label htmlFor="inv-same-as-billing" className="text-xs cursor-pointer select-none font-medium">
+                              Same as Billing Address
+                            </Label>
+                          </div>
+                        </div>
+
+                        {(editing as any).sameAsBilling !== false ? (
+                          <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 p-4 text-center text-xs text-muted-foreground">
+                            Same as Billing Address selected. Delivery destination details match customer billing location.
+                          </div>
+                        ) : (
+                          <div className="space-y-2.5">
+                            <div className="space-y-1">
+                              <Label className="text-xs font-medium">Ship To Party / Consignee</Label>
+                              <PartySearchSelect
+                                type="customer"
+                                value={(editing as any).shipToPartyId || (editing as any).customerId || ""}
+                                parties={parties}
+                                onChange={(id: string) => {
+                                  const p = partyById(id);
+                                  setEditing(prev => {
+                                    if (!prev) return prev;
+                                    return {
+                                      ...prev,
+                                      shipToPartyId: id,
+                                      shipToPartySnapshot: p ? {
+                                        partyName: p.name,
+                                        tradingName: p.tradingName,
+                                        gstin: p.gstin,
+                                        address: p.billingAddress || p.address,
+                                        city: p.city,
+                                        state: p.state,
+                                        country: p.country,
+                                        pincode: p.pincode,
+                                        phone: p.phone,
+                                      } : undefined,
+                                    } as T;
+                                  });
+                                }}
+                                onAddNew={() => setOpenCustomerDrawer(true)}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <PartyAddressSelect
+                                party={partyById((editing as any).shipToPartyId || (editing as any).customerId)}
+                                selectedAddressId={(editing as any).shippingAddressId}
+                                onChange={(snapshot, addressId) => {
+                                  setEditing(prev => {
+                                    if (!prev) return prev;
+                                    return {
+                                      ...prev,
+                                      shippingAddressId: addressId,
+                                      shippingAddressSnapshot: snapshot,
+                                      shippingAddress: formatAddressLines(snapshot),
+                                    } as T;
+                                  });
+                                }}
+                                label="Shipping / Delivery Destination (Saved Party Master)"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Custom Shipping / Site Destination Address Details</Label>
+                              <Textarea
+                                rows={2}
+                                value={(editing as any).shippingAddress || ""}
+                                onChange={e => setEditing({ ...editing, shippingAddress: e.target.value } as T)}
+                                placeholder="Site / delivery address, gate no, contact person at site…"
+                                className="text-xs"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </Card>
+                    </div>
+
+                    {/* Document Details Card */}
+                    <Card className="p-3.5 space-y-3 border-border/70 shadow-xs">
+                      <div className="text-xs font-bold uppercase tracking-wider text-primary border-b pb-1.5">
+                        DOCUMENT DETAILS & SCHEDULE
+                      </div>
+                      <div className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-4">
+                        <div className="space-y-1">
+                          <Label className="text-xs font-medium">Document Number</Label>
+                          <Input value={(editing as any).number} readOnly className="font-mono text-xs bg-muted/40" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs font-medium">Date</Label>
+                          <Input
+                            type="date"
+                            value={toDateInput((editing as any).date)}
+                            onChange={e => setEditing({ ...editing, date: fromDateInput(e.target.value) } as T)}
+                            className="text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs font-medium">Due Date</Label>
+                          <Input
+                            type="date"
+                            value={(editing as any).dueDate ? toDateInput((editing as any).dueDate) : ""}
+                            onChange={e => setEditing({ ...editing, dueDate: e.target.value ? fromDateInput(e.target.value) : undefined } as T)}
+                            className="text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs font-medium">Payment Mode</Label>
+                          <Select
+                            value={(editing as any).paymentMode || "credit"}
+                            onValueChange={(v: "cash" | "bank" | "cheque" | "credit") => setEditing({ ...editing, paymentMode: v } as T)}
+                          >
+                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="credit">Credit (Unpaid / Partial)</SelectItem>
+                              <SelectItem value="cash">Cash (Immediate Receipt)</SelectItem>
+                              <SelectItem value="bank">Bank Transfer (Immediate Receipt)</SelectItem>
+                              <SelectItem value="cheque">Cheque (Immediate Receipt)</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
                       </div>
 
-                      {(editing as any).sameAsBilling !== false ? (
-                        <div className="rounded-lg border border-dashed border-border/80 bg-muted/20 p-3.5 text-center text-xs text-muted-foreground leading-relaxed">
-                          <p className="font-medium text-foreground mb-0.5">Shipping destination is identical to Billing Address.</p>
-                          <p className="text-[11px]">Uncheck to select a different delivery destination, site address, or consignee.</p>
-                          {(editing as any).billingAddress && (
-                            <div className="mt-2 rounded border border-border/50 bg-background/80 p-2 text-left text-[11px] font-mono text-muted-foreground whitespace-pre-line">
-                              {(editing as any).billingAddress}
-                            </div>
+                      {/* Available Customer Credit Section */}
+                      <div className="space-y-1 pt-1 border-t border-border/40">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Available Customer Credit</Label>
+                          <span className="font-mono font-bold text-xs text-emerald-600">
+                            {formatMoney(availableCustomerCredit)}
+                          </span>
+                        </div>
+                        <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5 text-[11px] text-muted-foreground flex items-center justify-between">
+                          <span>
+                            {availableCustomerCredit > 0
+                              ? `Customer has ${formatMoney(availableCustomerCredit)} credit available`
+                              : "No unapplied customer credit"}
+                          </span>
+                          {availableCustomerCredit > 0 && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-6 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20"
+                              onClick={() => {
+                                const extraCharges = (editing as any).extraCharges || [];
+                                const extraChargesTotal = extraCharges.reduce((s: number, c: ExtraCharge) => s + (Number(c.amount) || 0), 0);
+                                const totals = computeTotals((editing as any).items || [], Boolean((editing as any).isIgst), {
+                                  enableGst,
+                                  gstCalculationMode: (editing as any).gstCalculationMode,
+                                  overallGstRate: (editing as any).overallGstRate,
+                                });
+                                const grandTotal = totals.grandTotal + extraChargesTotal;
+                                const currentPaid = (editing as any).amountPaid || 0;
+                                const currentBal = Math.max(0, grandTotal - currentPaid);
+                                const toApply = Math.min(availableCustomerCredit, currentBal);
+                                if (toApply <= 0) {
+                                  toast.info("Invoice has no outstanding balance to apply credit against.");
+                                  return;
+                                }
+                                const newPaid = currentPaid + toApply;
+                                const newBal = Math.max(0, grandTotal - newPaid);
+                                const creditPaise = Math.round(toApply * 100);
+                                setEditing({
+                                  ...editing,
+                                  amountPaid: newPaid,
+                                  balance: newBal,
+                                  customerCreditAppliedPaise: ((editing as any).customerCreditAppliedPaise || 0) + creditPaise,
+                                  advanceAllocatedPaise: ((editing as any).advanceAllocatedPaise || 0) + creditPaise,
+                                } as T);
+                                toast.success(`Applied ₹${toApply.toLocaleString("en-IN", { minimumFractionDigits: 2 })} Customer Credit`);
+                              }}
+                            >
+                              Apply Credit
+                            </Button>
                           )}
                         </div>
-                      ) : (
-                        <div className="space-y-2.5">
-                          <div className="space-y-1">
-                            <Label className="text-xs font-medium">Ship To Party / Consignee</Label>
-                            <PartySearchSelect
-                              type="customer"
-                              value={(editing as any).shipToPartyId || (editing as any).customerId || ""}
-                              parties={parties}
-                              onChange={(id: string) => {
-                                const p = customers.find(c => c.id === id);
-                                setEditing(prev => ({
-                                  ...prev,
-                                  shipToPartyId: id,
-                                  shipToPartySnapshot: p ? {
-                                    partyName: p.name,
-                                    tradingName: p.tradingName,
-                                    gstin: p.gstin,
-                                    address: p.billingAddress || p.address,
-                                    city: p.city,
-                                    state: p.state,
-                                    country: p.country,
-                                    pincode: p.pincode,
-                                    phone: p.phone,
-                                  } : undefined,
-                                } as T));
-                              }}
-                              onAddNew={() => setOpenCustomerDrawer(true)}
+                      </div>
+
+                      <div className="grid gap-2.5 sm:grid-cols-3 pt-1 border-t border-border/40">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Delivery Note</Label>
+                          <Input
+                            className="text-xs h-8"
+                            value={(editing as any).deliveryNote || ""}
+                            onChange={e => setEditing({ ...editing, deliveryNote: e.target.value } as T)}
+                            placeholder="e.g. DN-2024-001"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Supplier's Ref / Order No</Label>
+                          <Input
+                            className="text-xs h-8"
+                            value={(editing as any).supplierRef || ""}
+                            onChange={e => setEditing({ ...editing, supplierRef: e.target.value } as T)}
+                            placeholder="e.g. PO-88219"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Other References</Label>
+                          <Input
+                            className="text-xs h-8"
+                            value={(editing as any).otherReferences || ""}
+                            onChange={e => setEditing({ ...editing, otherReferences: e.target.value } as T)}
+                            placeholder="e.g. Contract #44"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid gap-2.5 sm:grid-cols-3 pt-1 border-t border-border/40">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Despatch Document No</Label>
+                          <Input
+                            className="text-xs h-8"
+                            value={(editing as any).despatchDocNo || ""}
+                            onChange={e => setEditing({ ...editing, despatchDocNo: e.target.value } as T)}
+                            placeholder="e.g. DD-1002"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Despatched through</Label>
+                          <Input
+                            className="text-xs h-8"
+                            value={(editing as any).despatchedThrough || ""}
+                            onChange={e => setEditing({ ...editing, despatchedThrough: e.target.value } as T)}
+                            placeholder="e.g. VRL Logistics / By Road"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Destination</Label>
+                          <Input
+                            className="text-xs h-8"
+                            value={(editing as any).destination || ""}
+                            onChange={e => setEditing({ ...editing, destination: e.target.value } as T)}
+                            placeholder="e.g. Bangalore Site"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid gap-2.5 sm:grid-cols-3 pt-1 border-t border-border/40">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Bill of Lading / LR-RR No</Label>
+                          <Input
+                            className="text-xs h-8"
+                            value={(editing as any).billOfLadingNo || ""}
+                            onChange={e => setEditing({ ...editing, billOfLadingNo: e.target.value } as T)}
+                            placeholder="e.g. LR-998234"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Motor Vehicle No</Label>
+                          <Input
+                            className="text-xs h-8 font-mono"
+                            value={(editing as any).motorVehicleNo || ""}
+                            onChange={e => setEditing({ ...editing, motorVehicleNo: e.target.value } as T)}
+                            placeholder="e.g. KA 01 AB 1234"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">e-Way Bill No</Label>
+                          <Input
+                            className="text-xs h-8 font-mono"
+                            value={(editing as any).eWayBillNo || ""}
+                            onChange={e => setEditing({ ...editing, eWayBillNo: e.target.value } as T)}
+                            placeholder="12-digit e-Way Bill No"
+                            maxLength={12}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Load from Quotation */}
+                      <div className="space-y-1 pt-1 border-t border-border/40">
+                        <Label className="text-xs font-medium">Load from Quotation</Label>
+                        <Select value="" onValueChange={applyQuotationToInvoice}>
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Select quotation to populate items, specs & terms…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {quotations.filter(q => !(editing as any).customerId || q.customerId === (editing as any).customerId).map((item) => (
+                              <SelectItem key={item.id} value={item.id}>
+                                {item.number} · {partyById(item.customerId)?.name ?? item.customerSnapshot?.name ?? "Customer"} · {formatMoney(item.grandTotal)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </Card>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs">Notes & Remarks</Label>
+                      <Textarea rows={2} value={(editing as AnyDoc).notes ?? ""} onChange={e => setEditing({ ...editing, notes: e.target.value } as T)} placeholder="Remarks, customer PO reference, internal notes…" />
+                    </div>
+
+                    {/* Signatory & Stamp Document Appearance Override */}
+                    <div className="rounded-xl border border-border/60 bg-muted/20 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold text-xs text-foreground">Signatory & Stamp (Document Appearance)</div>
+                          <div className="text-[11px] text-muted-foreground">Override company default signatory settings for this document.</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Use Company Default</span>
+                          <Switch
+                            checked={!(editing as any).signatoryOverride}
+                            onCheckedChange={(useDefault) => {
+                              setEditing({
+                                ...editing,
+                                signatoryOverride: useDefault ? undefined : {
+                                  showSignature: true,
+                                  showStamp: true,
+                                  showSignatoryName: true,
+                                  showDesignation: true,
+                                  showSignatureDate: true,
+                                  signatureDateMode: "document_date",
+                                },
+                              } as T);
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {(editing as any).signatoryOverride && (
+                        <div className="grid gap-2 sm:grid-cols-2 pt-2 border-t border-border/40">
+                          <div className="flex items-center justify-between rounded border bg-background p-2">
+                            <span className="text-xs">Show Signature</span>
+                            <Switch
+                              checked={(editing as any).signatoryOverride.showSignature ?? true}
+                              onCheckedChange={(v) =>
+                                setEditing({
+                                  ...editing,
+                                  signatoryOverride: { ...(editing as any).signatoryOverride, showSignature: v },
+                                } as T)
+                              }
                             />
                           </div>
-                          <div className="space-y-1">
-                            <PartyAddressSelect
-                              party={customers.find(c => c.id === ((editing as any).shipToPartyId || (editing as any).customerId))}
-                              selectedAddressId={(editing as any).shippingAddressId}
-                              onChange={(snapshot, addressId) => {
-                                setEditing(prev => ({
-                                  ...prev,
-                                  shippingAddressId: addressId,
-                                  shippingAddressSnapshot: snapshot,
-                                  shippingAddress: formatAddressLines(snapshot),
-                                } as T));
-                              }}
-                              label="Shipping / Site Destination (Saved Party Master)"
+                          <div className="flex items-center justify-between rounded border bg-background p-2">
+                            <span className="text-xs">Show Stamp</span>
+                            <Switch
+                              checked={(editing as any).signatoryOverride.showStamp ?? true}
+                              onCheckedChange={(v) =>
+                                setEditing({
+                                  ...editing,
+                                  signatoryOverride: { ...(editing as any).signatoryOverride, showStamp: v },
+                                } as T)
+                              }
                             />
                           </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Custom Shipping / Site Address Details</Label>
-                            <Textarea
-                              rows={2}
-                              value={(editing as unknown as Invoice).shippingAddress || ""}
-                              onChange={e => setEditing({ ...editing, shippingAddress: e.target.value } as T)}
-                              placeholder="Site / delivery address, gate no, contact person at site…"
-                              className="text-xs"
+                          <div className="flex items-center justify-between rounded border bg-background p-2">
+                            <span className="text-xs">Show Signatory Name</span>
+                            <Switch
+                              checked={(editing as any).signatoryOverride.showSignatoryName ?? true}
+                              onCheckedChange={(v) =>
+                                setEditing({
+                                  ...editing,
+                                  signatoryOverride: { ...(editing as any).signatoryOverride, showSignatoryName: v },
+                                } as T)
+                              }
+                            />
+                          </div>
+                          <div className="flex items-center justify-between rounded border bg-background p-2">
+                            <span className="text-xs">Show Designation</span>
+                            <Switch
+                              checked={(editing as any).signatoryOverride.showDesignation ?? true}
+                              onCheckedChange={(v) =>
+                                setEditing({
+                                  ...editing,
+                                  signatoryOverride: { ...(editing as any).signatoryOverride, showDesignation: v },
+                                } as T)
+                              }
+                            />
+                          </div>
+                          <div className="flex items-center justify-between rounded border bg-background p-2 sm:col-span-2">
+                            <span className="text-xs">Show Signature Date</span>
+                            <Switch
+                              checked={(editing as any).signatoryOverride.showSignatureDate ?? true}
+                              onCheckedChange={(v) =>
+                                setEditing({
+                                  ...editing,
+                                  signatoryOverride: { ...(editing as any).signatoryOverride, showSignatureDate: v },
+                                } as T)
+                              }
                             />
                           </div>
                         </div>
                       )}
+                    </div>
+                  </TabsContent>
+
+                  {/* ============ ITEMS ============ */}
+                  <TabsContent value="items">
+                    <Card className="p-3">
+                      <LineItemsEditor
+                        items={editing.items}
+                        onChange={(items) => setEditing({ ...editing, items } as T)}
+                        mode="sales"
+                        isIgst={(editing as unknown as Invoice).isIgst}
+                        enableGst={enableGst}
+                        gstCalculationMode={(editing as any).gstCalculationMode || "overall"}
+                        customerId={(editing as any).customerId}
+                      />
                     </Card>
-                  </div>
+                  </TabsContent>
 
-                  {(editing as any).customerId && (
-                    <InvoicePartyStatusPanel
-                      party={partyById((editing as any).customerId) as any}
-                      invoiceTotal={
-                        computeTotals(editing.items, Boolean((editing as any).isIgst), { enableGst }).grandTotal +
-                        ((editing as any).extraChargesTotal || 0)
-                      }
-                      onRecordReceipt={(_p, deficit) => {
-                        setSelectedInvoiceForReceipt(null);
-                        setReceiptAmount(deficit > 0 ? deficit : 0);
-                        setOpenReceiptModal(true);
-                      }}
-                    />
-                  )}
-
-                  {/* Document Parameters Grid */}
-                  <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
-                    <div className="space-y-1">
-                      <Label className="text-xs">Invoice Number</Label>
-                      <Input value={editing.number} readOnly className="font-mono text-xs bg-muted/30" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Invoice Date</Label>
-                      <Input
-                        type="date"
-                        value={toDateInput(editing.date)}
-                        onChange={e => {
-                          const newDate = fromDateInput(e.target.value);
-                          const cust = partyById((editing as any).customerId);
-                          const creditDays = (editing as unknown as Invoice).creditDaysSnapshot ?? resolveCreditDays(cust, activeCompany || company);
-                          setEditing({
-                            ...editing,
-                            date: newDate,
-                            dueDate: computeInvoiceDueDate({ date: newDate }, creditDays),
-                            creditDaysSnapshot: creditDays,
-                          } as T);
-                        }}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs">Due Date</Label>
-                        {partyById((editing as any).customerId) && (
-                          <span className="text-[10px] text-muted-foreground">
-                            {((editing as unknown as Invoice).creditDaysSnapshot ?? resolveCreditDays(partyById((editing as any).customerId), activeCompany || company))}d terms
-                          </span>
-                        )}
-                      </div>
-                      <Input
-                        type="date"
-                        value={toDateInput((editing as unknown as Invoice).dueDate)}
-                        onChange={e => setEditing({ ...editing, dueDate: fromDateInput(e.target.value) } as T)}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs">Available Customer Credit</Label>
-                        <span className="font-mono font-bold text-xs text-emerald-600">
-                          {formatMoney(availableCustomerCredit)}
-                        </span>
-                      </div>
-                      <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5 text-[11px] text-muted-foreground flex items-center justify-between">
-                        <span>
-                          {availableCustomerCredit > 0
-                            ? `Customer has ${formatMoney(availableCustomerCredit)} credit available`
-                            : "No unapplied customer credit"}
-                        </span>
-                        {availableCustomerCredit > 0 && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            className="h-6 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20"
-                            onClick={() => {
-                              const extraCharges = (editing as any).extraCharges || [];
-                              const extraChargesTotal = extraCharges.reduce((s: number, c: ExtraCharge) => s + (Number(c.amount) || 0), 0);
-                              const totals = computeTotals(editing.items, Boolean((editing as any).isIgst), {
-                                enableGst,
-                                gstCalculationMode: (editing as any).gstCalculationMode,
-                                overallGstRate: (editing as any).overallGstRate,
-                              });
-                              const grandTotal = totals.grandTotal + extraChargesTotal;
-                              const currentPaid = (editing as any).amountPaid || 0;
-                              const currentBal = Math.max(0, grandTotal - currentPaid);
-                              const toApply = Math.min(availableCustomerCredit, currentBal);
-                              if (toApply <= 0) {
-                                toast.info("Invoice has no outstanding balance to apply credit against.");
-                                return;
-                              }
-                              const newPaid = currentPaid + toApply;
-                              const newBal = Math.max(0, grandTotal - newPaid);
-                              const creditPaise = Math.round(toApply * 100);
-                              setEditing({
-                                ...editing,
-                                amountPaid: newPaid,
-                                balance: newBal,
-                                customerCreditAppliedPaise: ((editing as any).customerCreditAppliedPaise || 0) + creditPaise,
-                                advanceAllocatedPaise: ((editing as any).advanceAllocatedPaise || 0) + creditPaise,
-                              } as T);
-                              toast.success(`Applied ₹${toApply.toLocaleString("en-IN", { minimumFractionDigits: 2 })} Customer Credit`);
-                            }}
-                          >
-                            Apply Credit
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                    {enableGst && (
-                      <div className="space-y-2 sm:col-span-2 rounded-lg border border-border/60 bg-muted/20 p-2.5">
-                        <div className="grid gap-2 sm:grid-cols-3">
-                          <div className="space-y-1">
-                            <Label className="text-xs font-semibold">Tax Supply Determination</Label>
-                            <Select value={(editing as unknown as Invoice).isIgst ? "igst" : "cgst"} onValueChange={v => setEditing({ ...editing, isIgst: v === "igst" } as T)}>
-                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="cgst">Intra-State: CGST + SGST</SelectItem>
-                                <SelectItem value="igst">Inter-State: IGST</SelectItem>
-                              </SelectContent>
-                            </Select>
+                  {/* ============ CHARGES & TOTALS ============ */}
+                  <TabsContent value="charges" className="space-y-4">
+                    <Card className="p-4 space-y-3">
+                      <div className="space-y-2">
+                        <div className="font-semibold text-xs text-foreground flex items-center justify-between">
+                          <span>Additional Charges (Transportation, Freight, Installation)</span>
+                          <span className="font-mono text-muted-foreground">Total: {formatMoney((editing as any).extraChargesTotal || 0)}</span>
+                        </div>
+                        {((editing as any).extraCharges || []).map((chg: ExtraCharge, cIdx: number) => (
+                          <div key={cIdx} className="flex items-center gap-2 bg-background p-1.5 rounded border">
+                            <Input
+                              className="h-7 text-xs flex-1"
+                              value={chg.label}
+                              onChange={e => {
+                                const list = [...((editing as any).extraCharges || [])];
+                                list[cIdx] = { ...list[cIdx], label: e.target.value };
+                                setEditing({ ...editing, extraCharges: list } as T);
+                              }}
+                              placeholder="Charge name"
+                            />
+                            <Input
+                              className="h-7 w-28 text-xs text-right font-mono"
+                              type="number"
+                              step="0.01"
+                              value={chg.amount || ""}
+                              onChange={e => {
+                                const list = [...((editing as any).extraCharges || [])];
+                                list[cIdx] = { ...list[cIdx], amount: Number(e.target.value) || 0 };
+                                setEditing({ ...editing, extraCharges: list } as T);
+                              }}
+                            />
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => removeExtraCharge(cIdx)}>
+                              <Trash2 className="h-3 w-3 text-destructive" />
+                            </Button>
                           </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs font-semibold">GST Mode</Label>
+                        ))}
+                        <div className="flex gap-2 pt-1">
+                          <Input
+                            className="h-8 text-xs flex-1"
+                            placeholder="Charge description (e.g. Transportation, Loading)"
+                            value={chargeName}
+                            onChange={e => setChargeName(e.target.value)}
+                          />
+                          <Input
+                            className="h-8 w-28 text-xs text-right font-mono"
+                            type="number"
+                            step="0.01"
+                            placeholder="Amount ₹"
+                            value={chargeAmount || ""}
+                            onChange={e => setChargeAmount(Number(e.target.value) || 0)}
+                          />
+                          <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={addExtraCharge}>
+                            <Plus className="h-3 w-3" /> Add
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-border/50 flex flex-col md:flex-row items-start justify-between gap-4">
+                        <div className="p-3 rounded-lg border bg-muted/20 max-w-md w-full space-y-2">
+                          <Label className="text-xs font-bold text-foreground">GST Calculation Mode</Label>
+                          <div className="flex items-center gap-2 pt-1">
                             <Select
                               value={(editing as any).gstCalculationMode || "overall"}
-                              onValueChange={v => setEditing({ ...editing, gstCalculationMode: v } as T)}
+                              onValueChange={(val: "item_wise" | "overall") => {
+                                setEditing({ ...editing, gstCalculationMode: val, overallGstRate: (editing as any).overallGstRate ?? 18 } as T);
+                              }}
                             >
-                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className="w-36 h-8 text-xs font-semibold">
+                                <SelectValue placeholder="GST Mode" />
+                              </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="overall">Overall GST Rate</SelectItem>
+                                <SelectItem value="overall">Overall GST</SelectItem>
                                 <SelectItem value="item_wise">Item-wise GST</SelectItem>
                               </SelectContent>
                             </Select>
+                            {(editing as any).gstCalculationMode === "overall" && (
+                              <div className="flex items-center gap-1.5">
+                                <Select
+                                  value={String((editing as any).overallGstRate ?? 18)}
+                                  onValueChange={(val) => setEditing({ ...editing, overallGstRate: Number(val) } as T)}
+                                >
+                                  <SelectTrigger className="w-24 h-8 text-xs font-mono font-bold">
+                                    <SelectValue placeholder="Rate" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="0">0%</SelectItem>
+                                    <SelectItem value="5">5%</SelectItem>
+                                    <SelectItem value="12">12%</SelectItem>
+                                    <SelectItem value="18">18% (Standard)</SelectItem>
+                                    <SelectItem value="28">28%</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <span className="text-xs text-muted-foreground font-medium">Rate</span>
+                              </div>
+                            )}
                           </div>
-                          {((editing as any).gstCalculationMode !== "item_wise") && (
-                            <div className="space-y-1">
-                              <Label className="text-xs font-semibold">Overall GST Rate</Label>
-                              <Select
-                                value={String((editing as any).overallGstRate ?? 18)}
-                                onValueChange={v => setEditing({ ...editing, overallGstRate: Number(v) } as T)}
-                              >
-                                <SelectTrigger className="h-8 text-xs font-mono font-bold"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="0">0% (Nil / Exempt)</SelectItem>
-                                  <SelectItem value="5">5% GST</SelectItem>
-                                  <SelectItem value="12">12% GST</SelectItem>
-                                  <SelectItem value="18">18% GST (Standard)</SelectItem>
-                                  <SelectItem value="28">28% GST</SelectItem>
-                                </SelectContent>
-                              </Select>
+                        </div>
+
+                        <div className="max-w-md w-full rounded-md border bg-muted/30 p-4 text-xs space-y-1.5 font-mono">
+                          <div className="flex justify-between text-muted-foreground">
+                            <span>Subtotal:</span>
+                            <span>{formatMoney((editing as any).subtotal || 0)}</span>
+                          </div>
+                          {((editing as any).discountTotal || 0) > 0 && (
+                            <div className="flex justify-between text-emerald-600">
+                              <span>Discount:</span>
+                              <span>- {formatMoney((editing as any).discountTotal || 0)}</span>
                             </div>
                           )}
+                          {enableGst && (
+                            <>
+                              <div className="flex justify-between text-muted-foreground">
+                                <span>Taxable Value:</span>
+                                <span>{formatMoney(Math.max(0, ((editing as any).subtotal || 0) - ((editing as any).discountTotal || 0)))}</span>
+                              </div>
+                              {(editing as unknown as Invoice).isIgst ? (
+                                <div className="flex justify-between text-muted-foreground">
+                                  <span>IGST:</span>
+                                  <span>{formatMoney((editing as any).igstTotal || 0)}</span>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="flex justify-between text-muted-foreground">
+                                    <span>CGST:</span>
+                                    <span>{formatMoney((editing as any).cgstTotal || 0)}</span>
+                                  </div>
+                                  <div className="flex justify-between text-muted-foreground">
+                                    <span>SGST:</span>
+                                    <span>{formatMoney((editing as any).sgstTotal || 0)}</span>
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          )}
+                          {((editing as any).extraChargesTotal || 0) > 0 && (
+                            <div className="flex justify-between text-muted-foreground">
+                              <span>Extra Charges:</span>
+                              <span>{formatMoney((editing as any).extraChargesTotal || 0)}</span>
+                            </div>
+                          )}
+                          {((editing as any).roundOff || 0) !== 0 && (
+                            <div className="flex justify-between text-muted-foreground">
+                              <span>Round Off:</span>
+                              <span>{formatMoney((editing as any).roundOff || 0)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between font-bold text-sm text-foreground pt-1 border-t">
+                            <span>Grand Total:</span>
+                            <span>{formatMoney((editing as any).grandTotal || 0)}</span>
+                          </div>
+                          <div className="flex justify-between text-muted-foreground pt-1">
+                            <span>Amount Paid:</span>
+                            <span className="text-emerald-600 font-bold">{formatMoney((editing as any).amountPaid || 0)}</span>
+                          </div>
+                          <div className="flex justify-between font-bold text-amber-600">
+                            <span>Balance:</span>
+                            <span>{formatMoney((editing as any).balance || 0)}</span>
+                          </div>
                         </div>
                       </div>
-                    )}
-                    <div className="space-y-1 sm:col-span-2">
-                      <Label className="text-xs">Load from Quotation (Preserves items, specs, terms)</Label>
-                      <Select value="" onValueChange={applyQuotationToInvoice}>
-                        <SelectTrigger className="h-9 text-xs">
-                          <SelectValue placeholder="Select an approved quotation to copy into invoice…" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {quotations.length === 0 && <SelectItem value="__none__" disabled>No quotations available</SelectItem>}
-                          {quotations.map(item => (
-                            <SelectItem key={item.id} value={item.id}>
-                              {item.number} · {partyById(item.customerId)?.name ?? item.customerSnapshot?.name ?? "Customer"} · {formatMoney(item.grandTotal)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </div>
-              )}
+                    </Card>
+                  </TabsContent>
 
-              {kind === "purchase" && (
+                  {/* ============ GENERAL INFO ============ */}
+                  <TabsContent value="general-info">
+                    <Card className="p-4">
+                      <GeneralInformationEditor
+                        enabled={(editing as any).includeGeneralInfo !== false}
+                        onEnabledChange={(enabled) => {
+                          setEditing(prev => {
+                            if (!prev) return prev;
+                            return {
+                              ...prev,
+                              includeGeneralInfo: enabled,
+                              visibilitySnapshot: {
+                                ...((prev as any).visibilitySnapshot || {}),
+                                showGeneralInfo: enabled,
+                              },
+                            } as T;
+                          });
+                        }}
+                        rows={invoiceGenInfoRows}
+                        onChange={(rows) => {
+                          const newFields: GeneralInfoField[] = rows.map(r => ({ label: r.label, value: r.value }));
+                          const cabinRow = rows.find(r => isCabinConfigurationRow(r.label));
+                          const isCustom = Boolean(cabinRow && derivedCabinConfig && cabinRow.value !== derivedCabinConfig);
+                          setEditing(prev => {
+                            if (!prev) return prev;
+                            return {
+                              ...prev,
+                              generalInformationSnapshot: newFields,
+                              generalInfoSnapshot: newFields,
+                              isCabinConfigCustom: isCustom ? true : (prev as any).isCabinConfigCustom,
+                              cabinConfigurationOverride: isCustom ? cabinRow?.value : (prev as any).cabinConfigurationOverride,
+                            } as T;
+                          });
+                        }}
+                        templates={genTemplates}
+                        onApplyTemplate={applyInvoiceGeneralInfoTemplate}
+                        selectedTemplateId={(editing as any).generalInfoTemplateId}
+                        derivedCabinConfig={derivedCabinConfig}
+                        isCabinConfigCustom={(editing as any).isCabinConfigCustom}
+                        onResetCabinConfig={handleResetInvoiceCabinConfig}
+                        onCabinConfigCustomChange={(custom) => setEditing({ ...editing, isCabinConfigCustom: custom } as T)}
+                      />
+                    </Card>
+                  </TabsContent>
+
+                  {/* ============ TECHNICAL SPECIFICATIONS ============ */}
+                  <TabsContent value="tech-specs">
+                    <Card className="p-4">
+                      <TechnicalSpecificationsEditor
+                        enabled={(editing as any).includeTechSpecs !== false}
+                        onEnabledChange={(enabled) => {
+                          setEditing(prev => {
+                            if (!prev) return prev;
+                            return {
+                              ...prev,
+                              includeTechSpecs: enabled,
+                              visibilitySnapshot: {
+                                ...((prev as any).visibilitySnapshot || {}),
+                                showTechSpecs: enabled,
+                              },
+                            } as T;
+                          });
+                        }}
+                        sections={(editing as any).structuredSections || []}
+                        onChange={(sections) => {
+                          const canonicalSnapshots: TechSpecSection[] = sections.map(s => ({
+                            title: s.title,
+                            subtitle: s.subtitle,
+                            rows: (s.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
+                          }));
+                          setEditing(prev => {
+                            if (!prev) return prev;
+                            return {
+                              ...prev,
+                              structuredSections: sections,
+                              technicalSpecificationSnapshot: canonicalSnapshots,
+                              techSpecSnapshot: canonicalSnapshots,
+                            } as T;
+                          });
+                        }}
+                        templates={techTemplates}
+                        onApplyTemplate={applyInvoiceTechSpecTemplate}
+                      />
+                    </Card>
+                  </TabsContent>
+
+                  {/* ============ TERMS & CONDITIONS ============ */}
+                  <TabsContent value="terms">
+                    <Card className="p-4">
+                      <StructuredTermsEditor
+                        enabled={(editing as any).includeTerms !== false}
+                        onEnabledChange={(enabled) => {
+                          setEditing(prev => {
+                            if (!prev) return prev;
+                            return {
+                              ...prev,
+                              includeTerms: enabled,
+                              visibilitySnapshot: {
+                                ...((prev as any).visibilitySnapshot || {}),
+                                showTerms: enabled,
+                              },
+                            } as T;
+                          });
+                        }}
+                        terms={(editing as any).structuredTerms || []}
+                        onChange={(terms) => {
+                          const lines = terms.map(t => t.text);
+                          setEditing(prev => {
+                            if (!prev) return prev;
+                            return {
+                              ...prev,
+                              structuredTerms: terms,
+                              termsSnapshot: lines,
+                              terms: terms.map((t, i) => `${i + 1}. ${t.text}`).join("\n"),
+                              structuredTermsSnapshot: [{ title: "Terms & Conditions", format: "numbered", items: terms }],
+                            } as T;
+                          });
+                        }}
+                        templates={termsTemplates}
+                        onApplyTemplate={applyInvoiceTermsTemplate}
+                        documentType="invoice"
+                      />
+                    </Card>
+                  </TabsContent>
+                </Tabs>
+              ) : (
+                <>
+                  {kind === "purchase" && (
                 <div className="space-y-4">
                   <Card className="p-4 border-border/70 shadow-xs space-y-3">
                     <div className="text-xs font-bold uppercase tracking-wider text-primary border-b pb-2">
@@ -2234,10 +2983,10 @@ export function DocumentListPage<T extends AnyDoc>({
                 items={editing.items}
                 onChange={(items) => setEditing({ ...editing, items } as T)}
                 mode={kind === "purchase" ? "purchase" : "sales"}
-                isIgst={kind === "invoice" ? (editing as unknown as Invoice).isIgst : false}
+                isIgst={false}
                 enableGst={enableGst}
                 gstCalculationMode={(editing as any).gstCalculationMode || (kind === "purchase" ? "item_wise" : "overall")}
-                customerId={kind === "invoice" || kind === "quotation" ? (editing as any).customerId : undefined}
+                customerId={kind === "quotation" ? (editing as any).customerId : undefined}
               />
 
               {/* Additional Charges Section (Transportation, Freight, Installation) */}
@@ -2280,23 +3029,8 @@ export function DocumentListPage<T extends AnyDoc>({
                 </div>
               </div>
 
-
-              {kind === "invoice" && (
-                <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
-                  <div>
-                    <div className="text-xs font-semibold text-foreground">Terms & Bank Details: Managed in Company Settings</div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">
-                      Invoice Terms & Conditions and Bank Settlement Details are centrally managed and automatically included based on company defaults.
-                    </div>
-                  </div>
-                  <Button variant="outline" size="sm" asChild className="text-xs shrink-0">
-                    <a href="/settings" target="_blank" rel="noreferrer">Company Settings</a>
-                  </Button>
-                </div>
-              )}
-
               <div className="space-y-1">
-                <Label className="text-xs">Notes {kind === "invoice" ? "& Remarks" : "& Payment Terms"}</Label>
+                <Label className="text-xs">Notes & Payment Terms</Label>
                 <Textarea rows={2} value={(editing as AnyDoc).notes ?? ""} onChange={e => setEditing({ ...editing, notes: e.target.value } as T)} />
               </div>
 
@@ -2393,7 +3127,8 @@ export function DocumentListPage<T extends AnyDoc>({
                   </div>
                 )}
               </div>
-            </div>
+                </>
+              )}</div>
           )}
           <DialogFooter className="shrink-0 gap-2 border-t bg-background px-3 py-3 sm:px-6">
             <Button type="button" variant="ghost" onClick={closeDocument} disabled={savingDoc} className="w-full sm:w-auto">Cancel</Button>

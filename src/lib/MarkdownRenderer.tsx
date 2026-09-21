@@ -1,5 +1,5 @@
 import React from "react";
-import { parseMarkdownToBlocks, type InlineSpan } from "./markdownDoc";
+import { parseMarkdownToBlocks, parseInlineSpans, type InlineSpan } from "./markdownDoc";
 
 /**
  * React Component to render parsed Markdown cleanly with Tailwind CSS styling.
@@ -122,7 +122,12 @@ export function MarkdownRenderer({ content, className = "" }: { content: string;
   );
 }
 
-function RenderSpans({ spans }: { spans: InlineSpan[] }) {
+export function InlineMarkdown({ text, className = "" }: { text: string; className?: string }) {
+  const spans = React.useMemo(() => parseInlineSpans(text || ""), [text]);
+  return <span className={className}><RenderSpans spans={spans} /></span>;
+}
+
+export function RenderSpans({ spans }: { spans: InlineSpan[] }) {
   return (
     <>
       {spans.map((s, idx) => {

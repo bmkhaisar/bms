@@ -118,10 +118,15 @@ export function TechnicalSpecificationsEditor({
             Detailed engineering, materials, and fabrication specs organized into titled tables.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="include-tech-specs" className="text-xs font-medium text-foreground">
-            Include in Quotation
-          </Label>
+        <div className="flex items-center gap-2.5 bg-muted/40 px-3 py-1.5 rounded-lg border border-border/70 shrink-0">
+          <div className="text-right">
+            <Label htmlFor="include-tech-specs" className="text-xs font-semibold text-foreground cursor-pointer block">
+              {enabled ? "Included in Quotation" : "Excluded from Quotation"}
+            </Label>
+            <p className="text-[10px] text-muted-foreground">
+              {enabled ? "Visible in document & PDF" : "Hidden from document & PDF"}
+            </p>
+          </div>
           <Switch
             id="include-tech-specs"
             checked={enabled}

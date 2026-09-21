@@ -11,6 +11,7 @@ import { Plus, Trash2, ArrowUp, ArrowDown, List, AlignLeft, Type, RefreshCw, Pen
 import type { SectionRow, ValueType, GeneralInfoTemplate } from "@/lib/db";
 import { uid } from "@/lib/db";
 import { isCabinConfigurationRow } from "@/lib/cabinConfiguration";
+import { InlineMarkdown } from "@/lib/MarkdownRenderer";
 
 interface GeneralInformationEditorProps {
   enabled: boolean;
@@ -85,10 +86,15 @@ export function GeneralInformationEditor({
             Client site specifications, configuration details, and delivery requirements. Excluded from invoices.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="include-gen-info" className="text-xs font-medium text-foreground">
-            Include in Quotation
-          </Label>
+        <div className="flex items-center gap-2.5 bg-muted/40 px-3 py-1.5 rounded-lg border border-border/70 shrink-0">
+          <div className="text-right">
+            <Label htmlFor="include-gen-info" className="text-xs font-semibold text-foreground cursor-pointer block">
+              {enabled ? "Included in Quotation" : "Excluded from Quotation"}
+            </Label>
+            <p className="text-[10px] text-muted-foreground">
+              {enabled ? "Visible in document & PDF" : "Hidden from document & PDF"}
+            </p>
+          </div>
           <Switch
             id="include-gen-info"
             checked={enabled}
@@ -287,6 +293,13 @@ export function GeneralInformationEditor({
                       onChange={(e) => updateRow(idx, { value: e.target.value })}
                       className="h-8 text-xs bg-card"
                     />
+                  )}
+
+                  {row.value && (row.value.includes("**") || row.value.includes("*")) && (
+                    <div className="text-[11px] text-muted-foreground px-1.5 py-0.5 bg-background/60 rounded border border-border/40">
+                      <span className="text-[10px] uppercase font-semibold text-primary/70 mr-1.5">Formatted:</span>
+                      <InlineMarkdown text={row.value} />
+                    </div>
                   )}
                 </div>
               ))}

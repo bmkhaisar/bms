@@ -33,6 +33,11 @@ import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYe
 import { normalizeQuotationRecord } from "@/modules/documents/quotationNormalization";
 import { useDocumentDeepLink, documentDeepLink } from "@/lib/useDocumentDeepLink";
 import { useNavigate } from "@tanstack/react-router";
+import {
+  parseMarkdownToStructuredTerms,
+  parseMarkdownToTechSpecSections,
+  parseMarkdownToGeneralInfoRows,
+} from "@/modules/documents/documentContentHydration";
 
 export function QuotationsPage() {
   const rawRowsState = useLiveState<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
@@ -136,10 +141,23 @@ export function QuotationsPage() {
       idToken,
       customPrefix: activeCompany?.quotationPrefix,
     });
+    const initialTerms = parseMarkdownToStructuredTerms(activeCompany?.quotationTermsMarkdown || activeCompany?.terms);
+    const initialTech = parseMarkdownToTechSpecSections(activeCompany?.quotationTechnicalSpecsMarkdown);
+    const initialGen = parseMarkdownToGeneralInfoRows(activeCompany?.quotationGeneralInfoMarkdown, [], undefined, false, (activeCompany as any)?.generalInfoFields);
     setEditing({
       id: uid(), number, date: Date.now(), customerId: "",
       items: [], subtotal: 0, discountTotal: 0, gstTotal: 0, roundOff: 0, grandTotal: 0,
       status: "draft", createdAt: Date.now(), financialYearId: financialYear.id, extraCharges: [],
+      includeTerms: activeCompany?.showQuotationTerms !== false,
+      includeTechSpecs: activeCompany?.showQuotationTechnicalSpecs !== false,
+      includeGeneralInfo: activeCompany?.showQuotationGeneralInfo !== false,
+      structuredTerms: initialTerms,
+      termsSnapshot: initialTerms.map(t => t.text),
+      terms: initialTerms.map((t, i) => `${i + 1}. ${t.text}`).join("\n"),
+      structuredSections: initialTech,
+      technicalSpecificationSnapshot: initialTech,
+      generalInformationSnapshot: initialGen.map(r => ({ label: r.label, value: r.value })),
+      generalInfoSnapshot: initialGen.map(r => ({ label: r.label, value: r.value })),
     });
   }
   async function duplicate(r: Quotation) {

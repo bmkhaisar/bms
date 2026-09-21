@@ -24,6 +24,8 @@ import type {
 } from "./db.ts";
 import type { CompanySnapshot, SignatorySnapshot } from "../modules/company/types.ts";
 import { resolveDocumentSignatory } from "../modules/company/signatoryHelper.ts";
+import { resolveTechSpecSections } from "./techSpecResolution.ts";
+import { resolveGeneralInfoFields } from "./cabinConfiguration.ts";
 
 export interface ResolvedPartyAddress {
   name: string;
@@ -338,15 +340,46 @@ export function resolveDocumentModel(
   const gstCalculationMode = doc.gstCalculationMode || "item_wise";
   const overallGstRate = doc.overallGstRate;
 
-  // 5. Supplementary Sections (Quotation Only)
-  const includeGeneralInfo = isQuotation && (
+  const isInvoice = doc.kind === "invoice" || !isQuotation;
+  const isPosted = (doc as any).postingStatus === "posted" || (doc as any).status === "posted" || Boolean((doc as any).voucherId) || ((doc as any).status && (doc as any).status !== "draft" && (doc as any).status !== "pending");
+
+  // 5. Supplementary Sections: General Information
+  const includeGeneralInfo = (isQuotation || isInvoice) && (
     doc.visibilitySnapshot?.showGeneralInfo !== undefined
       ? doc.visibilitySnapshot.showGeneralInfo
-      : doc.includeGeneralInfo !== false
+      : doc.includeGeneralInfo !== undefined
+        ? doc.includeGeneralInfo
+        : isInvoice
+          ? Boolean(comp?.showInvoiceGeneralInfo)
+          : doc.includeGeneralInfo !== false
   );
   let generalInfoRows: ResolvedGeneralInfoRow[] = [];
   if (includeGeneralInfo) {
-    if (doc.generalInformationSnapshot && doc.generalInformationSnapshot.length > 0) {
+    const resolved = resolveGeneralInfoFields({
+      companyFields: (comp as any).generalInfoFields || (comp as any).generalInformationFields,
+      companyMarkdown: isInvoice
+        ? ((comp as any).invoiceGeneralInfoMarkdown || (comp as any).quotationGeneralInfoMarkdown)
+        : (comp as any).quotationGeneralInfoMarkdown,
+      items: doc.items || [],
+      documentOverride: (doc.generalInformationSnapshot && doc.generalInformationSnapshot.length > 0)
+        ? doc.generalInformationSnapshot
+        : (doc.generalInfoSnapshot && doc.generalInfoSnapshot.length > 0)
+          ? doc.generalInfoSnapshot
+          : undefined,
+      cabinOverride: doc.cabinConfigurationOverride,
+      isCabinConfigCustom: doc.isCabinConfigCustom,
+      isIssuedOrFrozen: Boolean(isPosted),
+      frozenSnapshot: doc.generalInformationSnapshot || doc.generalInfoSnapshot,
+    });
+    if (resolved && resolved.length > 0) {
+      generalInfoRows = resolved.map((r) => ({
+        label: r.label,
+        value: r.value,
+        bullets: r.value && r.value.includes("•")
+          ? r.value.split("•").map((b: string) => b.trim()).filter(Boolean)
+          : undefined,
+      }));
+    } else if (doc.generalInformationSnapshot && doc.generalInformationSnapshot.length > 0) {
       const sec: any = doc.generalInformationSnapshot.find((s: any) => s.type === "GENERAL_INFO") || { rows: doc.generalInformationSnapshot };
       if (sec && sec.rows) {
         generalInfoRows = sec.rows.map((r: any) => ({
@@ -373,45 +406,34 @@ export function resolveDocumentModel(
     }
   }
 
-  const includeTechSpecs = isQuotation && (
+  const includeTechSpecs = (isQuotation || isInvoice) && (
     doc.visibilitySnapshot?.showTechSpecs !== undefined
       ? doc.visibilitySnapshot.showTechSpecs
-      : doc.includeTechSpecs !== false
+      : doc.includeTechSpecs !== undefined
+        ? doc.includeTechSpecs
+        : isInvoice
+          ? Boolean(comp?.showInvoiceTechnicalSpecs)
+          : doc.includeTechSpecs !== false
   );
   let techSpecSections: ResolvedTechSpecSection[] = [];
   if (includeTechSpecs) {
-    if (doc.technicalSpecificationSnapshot && doc.technicalSpecificationSnapshot.length > 0) {
-      const specs = doc.technicalSpecificationSnapshot.filter((s: any) => s.type === "SPEC_TABLE");
-      techSpecSections = specs.map((s: any) => ({
-        title: s.title,
-        subtitle: s.subtitle,
-        rows: (s.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
-      }));
-    } else if (doc.structuredSections) {
-      const specSecs = doc.structuredSections.filter((s: QuotationSection) => s.type === "SPEC_TABLE");
-      techSpecSections = specSecs.map((s: QuotationSection) => ({
-        title: s.title,
-        subtitle: s.subtitle,
-        rows: s.rows.map((r: SectionRow) => ({ label: r.label, value: r.value })),
-      }));
-    } else {
-      if (doc.techSpecSnapshot && doc.techSpecSnapshot.length > 0) {
-        techSpecSections.push(
-          ...doc.techSpecSnapshot.map((sec: any) => ({
-            title: sec.title || "Technical Specifications",
-            rows: (sec.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
-          }))
-        );
-      }
-      if (doc.electricalSnapshot && doc.electricalSnapshot.length > 0) {
-        techSpecSections.push(
-          ...doc.electricalSnapshot.map((sec: any) => ({
-            title: sec.title || "Electrical Specifications",
-            rows: (sec.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
-          }))
-        );
-      }
-    }
+    const resolved = resolveTechSpecSections({
+      companyMarkdown: isInvoice
+        ? (comp?.invoiceTechnicalSpecsMarkdown || comp?.quotationTechnicalSpecsMarkdown)
+        : comp?.quotationTechnicalSpecsMarkdown,
+      documentOverride: (doc.structuredSections && doc.structuredSections.length > 0)
+        ? doc.structuredSections
+        : (doc.technicalSpecificationSnapshot && doc.technicalSpecificationSnapshot.length > 0)
+          ? doc.technicalSpecificationSnapshot
+          : (doc.techSpecSnapshot || (doc as any).technicalSpecsMarkdown),
+      isIssuedOrFrozen: Boolean(isPosted),
+      frozenSnapshot: doc.technicalSpecificationSnapshot || doc.techSpecSnapshot,
+    });
+    techSpecSections = resolved.map((s) => ({
+      title: s.title,
+      subtitle: s.subtitle,
+      rows: s.rows.map((r) => ({ label: r.label, value: r.value })),
+    }));
   }
 
   // 6. Structured Terms & Conditions

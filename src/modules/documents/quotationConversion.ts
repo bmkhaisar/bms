@@ -10,6 +10,7 @@ import { ref, get, update, runTransaction } from "firebase/database";
 import { cacheEntity } from "@/modules/sync/dexieCache";
 import { applyQuotationToLinkedDraft, isInvoiceImmutable } from "./linkedDraftInvoice";
 import { resolveCreditDays, computeInvoiceDueDate } from "@/modules/documents/sharing/paymentInsightService";
+import { normalizeTechSpecSections } from "@/lib/techSpecResolution";
 export { applyQuotationToLinkedDraft, isInvoiceImmutable } from "./linkedDraftInvoice";
 
 export interface ConvertQuotationOptions {
@@ -208,17 +209,43 @@ export async function convertQuotationToInvoice(
       terms: quotation.terms,
       termsSnapshot: quotation.termsSnapshot,
       structuredTermsSnapshot: quotation.structuredTermsSnapshot,
+      structuredTerms: (quotation.structuredTerms || []).map(t => ({ ...t })),
       includeTerms: quotation.includeTerms !== false,
       bankAccountId: quotation.bankAccountId,
       bankSnapshot: quotation.bankSnapshot,
       bankDetailsSnapshot: quotation.bankDetailsSnapshot || quotation.bankSnapshot,
       includeBankDetails: quotation.includeBankDetails !== false,
-      generalInformationSnapshot: quotation.generalInformationSnapshot,
-      technicalSpecificationSnapshot: quotation.technicalSpecificationSnapshot,
+      generalInformationSnapshot: quotation.generalInformationSnapshot ? [...quotation.generalInformationSnapshot] : quotation.generalInfoSnapshot ? [...quotation.generalInfoSnapshot] : [],
+      generalInfoSnapshot: quotation.generalInfoSnapshot ? [...quotation.generalInfoSnapshot] : quotation.generalInformationSnapshot ? [...quotation.generalInformationSnapshot] : [],
+      structuredSections: (quotation.structuredSections || []).map(s => ({
+        ...s,
+        rows: (s.rows || []).map(r => ({ ...r })),
+      })),
+      technicalSpecificationSnapshot: normalizeTechSpecSections(
+        (quotation.technicalSpecificationSnapshot && quotation.technicalSpecificationSnapshot.length > 0)
+          ? quotation.technicalSpecificationSnapshot
+          : (quotation.structuredSections && quotation.structuredSections.length > 0)
+            ? quotation.structuredSections
+            : quotation.techSpecSnapshot
+      ),
+      techSpecSnapshot: normalizeTechSpecSections(
+        (quotation.technicalSpecificationSnapshot && quotation.technicalSpecificationSnapshot.length > 0)
+          ? quotation.technicalSpecificationSnapshot
+          : (quotation.structuredSections && quotation.structuredSections.length > 0)
+            ? quotation.structuredSections
+            : quotation.techSpecSnapshot
+      ),
+      includeTechSpecs: quotation.includeTechSpecs !== false,
       cabinConfigurationOverride: quotation.cabinConfigurationOverride,
       isCabinConfigCustom: quotation.isCabinConfigCustom,
-      includeGeneralInfo: quotation.includeGeneralInfo,
+      includeGeneralInfo: quotation.includeGeneralInfo !== false,
       includeDescriptions: quotation.includeDescriptions !== false,
+      visibilitySnapshot: {
+        showTerms: quotation.includeTerms !== false,
+        showGeneralInfo: quotation.includeGeneralInfo !== false,
+        showTechSpecs: quotation.includeTechSpecs !== false,
+        showBankDetails: quotation.includeBankDetails !== false,
+      },
       gstCalculationMode: quotation.gstCalculationMode || "item_wise",
       overallGstRate: quotation.overallGstRate,
       companySnapshot: quotation.companySnapshot,

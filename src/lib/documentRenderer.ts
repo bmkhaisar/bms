@@ -7,6 +7,8 @@ import type { LineItem, ExtraCharge, BankAccount, StructuredTermItem, GeneralInf
 import { formatCompanyAddress } from "@/lib/companyAddress";
 import { handleAutoTableMarkdownCell, drawMarkdownText } from "@/lib/markdownPdfRenderer";
 import { resolveGeneralInfoFields } from "@/lib/cabinConfiguration";
+import { resolveTechSpecSections } from "@/lib/techSpecResolution";
+import { renderPaginatedKeyValueTable } from "@/lib/pdfTablePagination";
 
 const PDF_CCY = "Rs. ";
 const money = (val: number) => formatMoney(val, PDF_CCY);
@@ -14,6 +16,7 @@ const money = (val: number) => formatMoney(val, PDF_CCY);
 export interface PdfRenderOptions {
   includeDescriptions?: boolean;
   includeGeneralInfo?: boolean;
+  includeTechSpecs?: boolean;
   includeTerms?: boolean;
   copyLabel?: DocumentCopyType;
   filename?: string;
@@ -118,10 +121,18 @@ export interface NormalizedDocument {
   generalInfoSnapshot?: GeneralInfoField[];
   technicalSpecificationSnapshot?: any[];
   techSpecsSnapshot?: any[];
+  structuredSections?: any[];
   cabinConfigurationOverride?: string;
   isCabinConfigCustom?: boolean;
   includeGeneralInfo?: boolean;
+  includeTechSpecs?: boolean;
   includeDescriptions?: boolean;
+  visibilitySnapshot?: {
+    showTerms?: boolean;
+    showBankDetails?: boolean;
+    showGeneralInfo?: boolean;
+    showTechSpecs?: boolean;
+  };
 }
 
 /**
@@ -685,7 +696,8 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
     head: [tableHeaders],
     body: tableRows,
     theme: "grid",
-    margin: { left: margin, right: margin },
+    margin: { left: margin, right: margin, top: 22, bottom: 20 },
+    rowPageBreak: "avoid",
     headStyles: {
       fillColor: [243, 244, 246],
       textColor: [31, 41, 55],
@@ -833,55 +845,112 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
   y += 6;
 
   // 6.5. General Information (rendered if enabled on invoice/document)
-  const showGeneralInfo = (options?.includeGeneralInfo ?? docData.includeGeneralInfo ?? (comp as any).showInvoiceGeneralInfo) === true;
-  if (showGeneralInfo && (docData.generalInformationSnapshot?.length || docData.generalInfoSnapshot?.length || (comp as any).generalInfoFields?.length)) {
+  const isPostedDoc = (docData as any).postingStatus === "posted" || (docData as any).status === "posted" || Boolean((docData as any).voucherId) || ((docData as any).status && (docData as any).status !== "draft" && (docData as any).status !== "pending");
+  const showGeneralInfo = docData.visibilitySnapshot?.showGeneralInfo !== undefined
+    ? docData.visibilitySnapshot.showGeneralInfo
+    : options?.includeGeneralInfo !== undefined
+      ? options.includeGeneralInfo
+      : docData.includeGeneralInfo !== undefined
+        ? docData.includeGeneralInfo
+        : (comp as any).showInvoiceGeneralInfo === true;
+
+  if (showGeneralInfo && (docData.generalInformationSnapshot?.length || docData.generalInfoSnapshot?.length || (comp as any).generalInfoFields?.length || (comp as any).quotationGeneralInfoMarkdown || (comp as any).invoiceGeneralInfoMarkdown)) {
     const resolvedGen = resolveGeneralInfoFields({
       companyFields: (comp as any).generalInfoFields,
+      companyMarkdown: (comp as any).invoiceGeneralInfoMarkdown || (comp as any).quotationGeneralInfoMarkdown,
       items: docData.items,
       documentOverride: docData.generalInformationSnapshot || docData.generalInfoSnapshot,
       cabinOverride: docData.cabinConfigurationOverride,
       isCabinConfigCustom: docData.isCabinConfigCustom,
-      isIssuedOrFrozen: docData.kind === "invoice",
+      isIssuedOrFrozen: Boolean(isPostedDoc),
       frozenSnapshot: docData.generalInformationSnapshot || docData.generalInfoSnapshot,
     });
 
     if (resolvedGen.length > 0) {
-      if (y > pageH - 45) {
-        doc.addPage();
-        renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
-        y = margin + 4;
-      }
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8);
-      doc.setTextColor(107, 114, 128);
-      doc.text("GENERAL INFORMATION", margin, y);
-      y += 3.5;
-
-      const genRows = resolvedGen.map(f => [f.label, f.value]);
-      autoTable(doc, {
-        head: [["Specification / Parameter", "Details / Value"]],
-        body: genRows,
+      y = renderPaginatedKeyValueTable({
+        doc,
+        rows: resolvedGen.map(f => ({ label: f.label, value: f.value })),
         startY: y,
-        margin: { left: margin, right: margin },
-        styles: { font: "helvetica", fontSize: 7.5, cellPadding: 2, lineColor: [229, 231, 235], lineWidth: 0.1 },
-        headStyles: { fillColor: [243, 244, 246], textColor: [31, 41, 55], fontStyle: "bold" },
-        columnStyles: { 0: { cellWidth: 55, fontStyle: "bold", textColor: [31, 41, 55] }, 1: { cellWidth: "auto" } },
-        theme: "grid",
-        didParseCell: (data) => {
-          handleAutoTableMarkdownCell("didParseCell", data, "helvetica", 7.5, [55, 65, 81]);
-        },
-        didDrawCell: (data) => {
-          handleAutoTableMarkdownCell("didDrawCell", data, "helvetica", 7.5, [55, 65, 81]);
+        pageW,
+        pageH,
+        margin,
+        bottomReserve: 20,
+        nextPageContentY: margin + 8,
+        labelColWidth: 55,
+        fontFamily: "helvetica",
+        fontSize: 7.5,
+        accentColor: [31, 41, 55],
+        sectionHeading: "GENERAL INFORMATION",
+        onNewPage: () => {
+          doc.addPage();
+          renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
+          return margin + 4;
         },
       });
-      y = (doc as any).lastAutoTable.finalY + 5;
+      y += 5;
+    }
+  }
+
+  // 6.6. Technical Specifications (rendered if enabled and present on invoice/document)
+  const showTechSpecs = (docData.visibilitySnapshot?.showTechSpecs !== undefined
+    ? docData.visibilitySnapshot.showTechSpecs
+    : options?.includeTechSpecs !== undefined
+      ? options.includeTechSpecs
+      : (docData as any).includeTechSpecs !== undefined
+        ? (docData as any).includeTechSpecs
+        : ((comp as any).showInvoiceTechnicalSpecs !== false)) &&
+    Boolean(
+      (docData as any).technicalSpecificationSnapshot?.length ||
+      (docData as any).techSpecSnapshot?.length ||
+      (docData as any).structuredSections?.length ||
+      (comp as any).invoiceTechnicalSpecsMarkdown ||
+      (comp as any).quotationTechnicalSpecsMarkdown
+    );
+  if (showTechSpecs) {
+    const resolvedSpecs = resolveTechSpecSections({
+      companyMarkdown: (comp as any).invoiceTechnicalSpecsMarkdown || (comp as any).quotationTechnicalSpecsMarkdown,
+      documentOverride: (docData as any).technicalSpecificationSnapshot || (docData as any).structuredSections || (docData as any).techSpecSnapshot,
+      isIssuedOrFrozen: Boolean(isPostedDoc),
+      frozenSnapshot: (docData as any).technicalSpecificationSnapshot || (docData as any).techSpecSnapshot,
+    });
+
+    for (const sec of resolvedSpecs) {
+      if (sec.rows.length > 0) {
+        y = renderPaginatedKeyValueTable({
+          doc,
+          rows: sec.rows.map(r => ({ label: r.label, value: r.value })),
+          startY: y,
+          pageW,
+          pageH,
+          margin,
+          bottomReserve: 20,
+          nextPageContentY: margin + 8,
+          labelColWidth: 55,
+          fontFamily: "helvetica",
+          fontSize: 7.5,
+          accentColor: [31, 41, 55],
+          sectionHeading: (sec.title || "TECHNICAL SPECIFICATIONS").toUpperCase(),
+          onNewPage: () => {
+            doc.addPage();
+            renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
+            return margin + 4;
+          },
+        });
+        y += 5;
+      }
     }
   }
 
   // 7. Terms & Conditions (Rendered before Bank Details, supports Markdown lists, hanging indent)
-  const showTerms = docData.kind !== "receipt" && (options?.includeTerms ?? docData.includeTerms ?? true) !== false &&
-    (docData.termsSnapshot?.length || (docData as any).showInvoiceTerms !== false && (comp as any).showInvoiceTerms !== false);
+  const showTerms = docData.kind !== "receipt" && (
+    docData.visibilitySnapshot?.showTerms !== undefined
+      ? docData.visibilitySnapshot.showTerms
+      : options?.includeTerms !== undefined
+        ? options.includeTerms
+        : docData.includeTerms !== undefined
+          ? docData.includeTerms
+          : ((comp as any).showInvoiceTerms !== false)
+  );
 
   if (showTerms && (docData.terms || docData.termsSnapshot?.length || (comp as any).invoiceTermsMarkdown || comp.terms)) {
     if (y > pageH - 25) {

@@ -18,9 +18,10 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  Plus, Trash2, Copy, GripVertical, Save, X,
+  Plus, Trash2, Copy, GripVertical, Save, X, Eye,
 } from "lucide-react";
 import { toast } from "sonner";
+import { QuotationQuickPreviewModal } from "./QuotationQuickPreviewModal";
 import { QuickCreateCustomerDrawer } from "./QuickCreateCustomerDrawer";
 import { QuickCreateProductModal } from "./QuickCreateProductModal";
 import { PartySearchSelect } from "./PartySearchSelect";
@@ -59,6 +60,12 @@ import { extractTableRowsFromMarkdown, extractTermsFromMarkdown } from "@/lib/ma
 import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
 import { normalizeQuotationRecord } from "@/modules/documents/quotationNormalization";
 import { buildCabinConfigurationFromItems, isCabinConfigurationRow } from "@/lib/cabinConfiguration";
+import {
+  parseMarkdownToGeneralInfoRows,
+  parseMarkdownToTechSpecSections,
+  parseMarkdownToStructuredTerms,
+} from "@/modules/documents/documentContentHydration";
+import { parseMarkdownToCanonicalTechSpecs } from "@/lib/techSpecResolution";
 
 interface Props {
   initial: Quotation;
@@ -87,12 +94,92 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
   const [insightCustomerId, setInsightCustomerId] = useState<string | null>(null);
   const [pendingGstMode, setPendingGstMode] = useState<"item_wise" | "overall" | null>(null);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
   const draftFlushRef = useRef<Quotation | null>(null);
 
   useEffect(() => {
-    setQ(normalizedInitial);
-    setRowIds(normalizedInitial.items.map(() => uid()));
-  }, [normalizedInitial]);
+    let initialQ = { ...normalizedInitial };
+    if (activeCompany) {
+      // 1. Terms & Conditions
+      const hasTerms = Boolean(initialQ.structuredTerms && initialQ.structuredTerms.length > 0) ||
+                        Boolean(initialQ.termsSnapshot && initialQ.termsSnapshot.length > 0);
+      if (!hasTerms) {
+        const rawTermsMd = activeCompany.quotationTermsMarkdown || activeCompany.terms;
+        const parsedTerms = parseMarkdownToStructuredTerms(rawTermsMd);
+        if (parsedTerms.length > 0) {
+          initialQ.structuredTerms = parsedTerms;
+          initialQ.termsSnapshot = parsedTerms.map(t => t.text);
+          initialQ.terms = parsedTerms.map((t, i) => `${i + 1}. ${t.text}`).join("\n");
+        }
+      }
+      if (initialQ.includeTerms === undefined) {
+        initialQ.includeTerms = activeCompany.showQuotationTerms !== false;
+      }
+
+      // 2. Technical Specifications
+      const existingTechSpecs = (initialQ.technicalSpecificationSnapshot && initialQ.technicalSpecificationSnapshot.length > 0)
+        ? initialQ.technicalSpecificationSnapshot
+        : (initialQ.techSpecSnapshot && initialQ.techSpecSnapshot.length > 0)
+          ? initialQ.techSpecSnapshot
+          : undefined;
+
+      if ((!initialQ.structuredSections || initialQ.structuredSections.length === 0) && existingTechSpecs && existingTechSpecs.length > 0) {
+        initialQ.structuredSections = existingTechSpecs.map((sec, idx) => ({
+          id: uid(),
+          type: "SPEC_TABLE" as const,
+          title: sec.title || "Technical Specifications",
+          order: idx + 1,
+          rows: (sec.rows || []).map((r: any, rIdx: number) => ({
+            id: uid(),
+            label: r.label,
+            value: r.value,
+            order: rIdx + 1,
+          })),
+        }));
+        initialQ.technicalSpecificationSnapshot = existingTechSpecs.map(s => ({
+          title: s.title,
+          rows: (s.rows || []).map(r => ({ label: r.label, value: r.value })),
+        }));
+        initialQ.techSpecSnapshot = initialQ.technicalSpecificationSnapshot;
+      } else if (!initialQ.structuredSections || initialQ.structuredSections.length === 0) {
+        const parsedSpecs = parseMarkdownToTechSpecSections(activeCompany.quotationTechnicalSpecsMarkdown);
+        if (parsedSpecs.length > 0) {
+          initialQ.structuredSections = parsedSpecs;
+          initialQ.technicalSpecificationSnapshot = parsedSpecs.map(s => ({
+            title: s.title,
+            rows: (s.rows || []).map(r => ({ label: r.label, value: r.value })),
+          }));
+          initialQ.techSpecSnapshot = initialQ.technicalSpecificationSnapshot;
+        }
+      }
+      if (initialQ.includeTechSpecs === undefined) {
+        initialQ.includeTechSpecs = activeCompany.showQuotationTechnicalSpecs !== false;
+      }
+
+      // 3. General Information
+      const hasGenInfo = Boolean(initialQ.generalInformationSnapshot && initialQ.generalInformationSnapshot.length > 0) ||
+                         Boolean(initialQ.generalInfoSnapshot && initialQ.generalInfoSnapshot.length > 0);
+      if (!hasGenInfo) {
+        const parsedGenRows = parseMarkdownToGeneralInfoRows(
+          activeCompany.quotationGeneralInfoMarkdown,
+          initialQ.items,
+          initialQ.cabinConfigurationOverride,
+          initialQ.isCabinConfigCustom,
+          (activeCompany as any).generalInfoFields,
+        );
+        if (parsedGenRows.length > 0) {
+          const rawFields: GeneralInfoField[] = parsedGenRows.map(r => ({ label: r.label, value: r.value }));
+          initialQ.generalInformationSnapshot = rawFields;
+          initialQ.generalInfoSnapshot = rawFields;
+        }
+      }
+      if (initialQ.includeGeneralInfo === undefined) {
+        initialQ.includeGeneralInfo = activeCompany.showQuotationGeneralInfo !== false;
+      }
+    }
+    setQ(initialQ);
+    setRowIds(initialQ.items.map(() => uid()));
+  }, [normalizedInitial, activeCompany]);
 
   useEffect(() => {
     setRowIds(ids => q.items.map((_, idx) => ids[idx] || uid()));
@@ -265,10 +352,36 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
   function applyTechSpec(id: string) {
     const t = techTemplates.find(x => x.id === id);
     if (!t) return;
+    const mappedSections: QuotationSection[] = t.sections.map((s, idx) => ({
+      id: uid(),
+      type: "SPEC_TABLE" as const,
+      title: s.title,
+      order: idx + 1,
+      rows: (s.rows || []).map((r, rIdx) => ({
+        id: uid(),
+        label: r.label,
+        value: r.value,
+        order: rIdx + 1,
+      })),
+    }));
+    const canonicalSnapshots: TechSpecSection[] = t.sections.map(s => ({
+      title: s.title,
+      rows: (s.rows || []).map(r => ({ label: r.label, value: r.value })),
+    }));
+
     if (t.kind === "electrical") {
-      setQ({ ...q, electricalSnapshot: t.sections.map(s => ({ title: s.title, rows: [...s.rows] })) });
+      setQ(prev => ({
+        ...prev,
+        electricalSnapshot: canonicalSnapshots,
+      }));
     } else {
-      setQ({ ...q, techSpecTemplateId: id, techSpecSnapshot: t.sections.map(s => ({ title: s.title, rows: [...s.rows] })) });
+      setQ(prev => ({
+        ...prev,
+        techSpecTemplateId: id,
+        structuredSections: mappedSections,
+        technicalSpecificationSnapshot: canonicalSnapshots,
+        techSpecSnapshot: canonicalSnapshots,
+      }));
     }
   }
 
@@ -399,23 +512,51 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
       grandTotal: grand,
       gstCalculationMode: q.gstCalculationMode || "item_wise",
       overallGstRate: q.overallGstRate,
-      includeGeneralInfo: q.includeGeneralInfo,
-      includeTechSpecs: q.includeTechSpecs,
-      includeTerms: q.includeTerms,
-      includeBankDetails: q.includeBankDetails,
+      includeGeneralInfo: q.includeGeneralInfo !== false,
+      includeTechSpecs: q.includeTechSpecs !== false,
+      includeTerms: q.includeTerms !== false,
+      includeBankDetails: q.includeBankDetails !== false,
       bankAccountId: q.bankAccountId,
       bankSnapshot: q.bankSnapshot,
       companySnapshot: q.companySnapshot,
       signatorySnapshot: q.signatorySnapshot,
       bankDetailsSnapshot: q.bankDetailsSnapshot,
-      termsSnapshot: q.termsSnapshot,
-      structuredTerms: q.structuredTerms,
-      structuredTermsSnapshot: q.structuredTermsSnapshot,
-      structuredSections: q.structuredSections,
+      termsSnapshot: (q.structuredTerms && q.structuredTerms.length > 0)
+        ? q.structuredTerms.map(t => t.text)
+        : (q.termsSnapshot && q.termsSnapshot.length > 0)
+          ? q.termsSnapshot
+          : parseMarkdownToStructuredTerms(activeCompany?.quotationTermsMarkdown || activeCompany?.terms).map(t => t.text),
+      structuredTerms: q.structuredTerms && q.structuredTerms.length > 0
+        ? q.structuredTerms
+        : parseMarkdownToStructuredTerms(activeCompany?.quotationTermsMarkdown || activeCompany?.terms),
+      structuredTermsSnapshot: [{
+        title: "Terms & Conditions",
+        format: "numbered",
+        items: q.structuredTerms && q.structuredTerms.length > 0
+          ? q.structuredTerms
+          : parseMarkdownToStructuredTerms(activeCompany?.quotationTermsMarkdown || activeCompany?.terms),
+      }],
+      structuredSections: q.structuredSections && q.structuredSections.length > 0
+        ? q.structuredSections
+        : parseMarkdownToTechSpecSections(activeCompany?.quotationTechnicalSpecsMarkdown),
       cabinConfigurationOverride: q.cabinConfigurationOverride,
       isCabinConfigCustom: q.isCabinConfigCustom,
-      generalInformationSnapshot: q.generalInformationSnapshot || q.generalInfoSnapshot,
-      technicalSpecificationSnapshot: q.technicalSpecificationSnapshot,
+      generalInformationSnapshot: (q.generalInformationSnapshot && q.generalInformationSnapshot.length > 0)
+        ? q.generalInformationSnapshot
+        : generalInfoRows.map(r => ({ label: r.label, value: r.value })),
+      generalInfoSnapshot: (q.generalInformationSnapshot && q.generalInformationSnapshot.length > 0)
+        ? q.generalInformationSnapshot
+        : generalInfoRows.map(r => ({ label: r.label, value: r.value })),
+      technicalSpecificationSnapshot: (q.structuredSections && q.structuredSections.length > 0)
+        ? q.structuredSections.map(s => ({ title: s.title, rows: (s.rows || []).map(r => ({ label: r.label, value: r.value })) }))
+        : (q.technicalSpecificationSnapshot && q.technicalSpecificationSnapshot.length > 0)
+          ? q.technicalSpecificationSnapshot
+          : parseMarkdownToCanonicalTechSpecs(activeCompany?.quotationTechnicalSpecsMarkdown),
+      techSpecSnapshot: (q.structuredSections && q.structuredSections.length > 0)
+        ? q.structuredSections.map(s => ({ title: s.title, rows: (s.rows || []).map(r => ({ label: r.label, value: r.value })) }))
+        : (q.technicalSpecificationSnapshot && q.technicalSpecificationSnapshot.length > 0)
+          ? q.technicalSpecificationSnapshot
+          : parseMarkdownToCanonicalTechSpecs(activeCompany?.quotationTechnicalSpecsMarkdown),
       visibilitySnapshot: (q as any).visibilitySnapshot,
     };
     const frozenQ = freezeQuotationSnapshots(finalQ, comp, banks);
@@ -850,7 +991,18 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
                 enabled={q.includeTechSpecs !== false}
                 onEnabledChange={(enabled) => setQ({ ...q, includeTechSpecs: enabled })}
                 sections={q.structuredSections || []}
-                onChange={(sections) => setQ({ ...q, structuredSections: sections })}
+                onChange={(sections) => {
+                  const canonicalSnapshots: TechSpecSection[] = sections.map(s => ({
+                    title: s.title,
+                    rows: (s.rows || []).map(r => ({ label: r.label, value: r.value })),
+                  }));
+                  setQ(prev => ({
+                    ...prev,
+                    structuredSections: sections,
+                    technicalSpecificationSnapshot: canonicalSnapshots,
+                    techSpecSnapshot: canonicalSnapshots,
+                  }));
+                }}
                 templates={techTemplates}
                 onApplyTemplate={applyTechSpec}
               />
@@ -864,7 +1016,16 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
                 enabled={q.includeTerms !== false}
                 onEnabledChange={(enabled) => setQ({ ...q, includeTerms: enabled })}
                 terms={q.structuredTerms || []}
-                onChange={(terms) => setQ({ ...q, structuredTerms: terms })}
+                onChange={(terms) => {
+                  const lines = terms.map(t => t.text);
+                  setQ(prev => ({
+                    ...prev,
+                    structuredTerms: terms,
+                    termsSnapshot: lines,
+                    terms: terms.map((t, i) => `${i + 1}. ${t.text}`).join("\n"),
+                    structuredTermsSnapshot: [{ title: "Terms & Conditions", format: "numbered", items: terms }],
+                  }));
+                }}
                 templates={termsTemplates}
                 onApplyTemplate={applyTermsTemplate}
                 documentType="quotation"

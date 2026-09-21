@@ -1,4 +1,5 @@
 import type { Invoice, Quotation } from "../../lib/db";
+import { normalizeTechSpecSections } from "../../lib/techSpecResolution.ts";
 
 export function isInvoiceImmutable(invoice: Invoice): boolean {
   return Boolean(invoice.voucherId) || invoice.postingStatus === "posted" || invoice.status !== "draft";
@@ -43,16 +44,41 @@ export function applyQuotationToLinkedDraft(quotation: Quotation, invoice: Invoi
     terms: quotation.terms,
     termsSnapshot: quotation.termsSnapshot,
     structuredTermsSnapshot: quotation.structuredTermsSnapshot,
-    generalInformationSnapshot: quotation.generalInformationSnapshot,
-    generalInfoSnapshot: quotation.generalInformationSnapshot,
-    technicalSpecificationSnapshot: quotation.technicalSpecificationSnapshot,
-    techSpecSnapshot: quotation.technicalSpecificationSnapshot,
+    structuredTerms: (quotation.structuredTerms || []).map(t => ({ ...t })),
+    includeTerms: quotation.includeTerms !== false,
+    generalInformationSnapshot: quotation.generalInformationSnapshot ? [...quotation.generalInformationSnapshot] : quotation.generalInfoSnapshot ? [...quotation.generalInfoSnapshot] : [],
+    generalInfoSnapshot: quotation.generalInfoSnapshot ? [...quotation.generalInfoSnapshot] : quotation.generalInformationSnapshot ? [...quotation.generalInformationSnapshot] : [],
+    structuredSections: (quotation.structuredSections || []).map(s => ({
+      ...s,
+      rows: (s.rows || []).map(r => ({ ...r })),
+    })),
+    technicalSpecificationSnapshot: normalizeTechSpecSections(
+      (quotation.technicalSpecificationSnapshot && quotation.technicalSpecificationSnapshot.length > 0)
+        ? quotation.technicalSpecificationSnapshot
+        : (quotation.structuredSections && quotation.structuredSections.length > 0)
+          ? quotation.structuredSections
+          : quotation.techSpecSnapshot
+    ),
+    techSpecSnapshot: normalizeTechSpecSections(
+      (quotation.technicalSpecificationSnapshot && quotation.technicalSpecificationSnapshot.length > 0)
+        ? quotation.technicalSpecificationSnapshot
+        : (quotation.structuredSections && quotation.structuredSections.length > 0)
+          ? quotation.structuredSections
+          : quotation.techSpecSnapshot
+    ),
+    includeTechSpecs: quotation.includeTechSpecs !== false,
     cabinConfigurationOverride: quotation.cabinConfigurationOverride,
     isCabinConfigCustom: quotation.isCabinConfigCustom,
-    includeGeneralInfo: quotation.includeGeneralInfo,
-    includeDescriptions: quotation.includeDescriptions,
+    includeGeneralInfo: quotation.includeGeneralInfo !== false,
+    includeDescriptions: quotation.includeDescriptions !== false,
     bankSnapshot: quotation.bankSnapshot,
     bankDetailsSnapshot: quotation.bankDetailsSnapshot,
+    visibilitySnapshot: {
+      showTerms: quotation.includeTerms !== false,
+      showGeneralInfo: quotation.includeGeneralInfo !== false,
+      showTechSpecs: quotation.includeTechSpecs !== false,
+      showBankDetails: quotation.includeBankDetails !== false,
+    },
     gstCalculationMode: quotation.gstCalculationMode,
     overallGstRate: quotation.overallGstRate,
     status: "draft",

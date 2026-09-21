@@ -1,4 +1,5 @@
-import type { LineItem, SizeSnapshot, GeneralInfoField } from "./db";
+import type { LineItem, SizeSnapshot, GeneralInfoField } from "./db.ts";
+import { extractTableRowsFromMarkdown } from "./markdownDoc.ts";
 
 /**
  * Checks if a General Information row corresponds to "Configuration of Cabins".
@@ -94,6 +95,7 @@ export function buildCabinConfigurationFromItems(items: LineItem[]): string {
 
 export interface ResolveGeneralInfoParams {
   companyFields?: GeneralInfoField[];
+  companyMarkdown?: string;
   items?: LineItem[];
   documentOverride?: GeneralInfoField[];
   cabinOverride?: string;
@@ -110,6 +112,7 @@ export interface ResolveGeneralInfoParams {
 export function resolveGeneralInfoFields(params: ResolveGeneralInfoParams): GeneralInfoField[] {
   const {
     companyFields = [],
+    companyMarkdown,
     items = [],
     documentOverride,
     cabinOverride,
@@ -124,9 +127,16 @@ export function resolveGeneralInfoFields(params: ResolveGeneralInfoParams): Gene
   }
 
   // 2. Draft document: Start with document override fields if available, otherwise company settings
-  const baseFields = documentOverride && documentOverride.length > 0
+  let baseFields: GeneralInfoField[] = documentOverride && documentOverride.length > 0
     ? documentOverride
     : companyFields;
+
+  if ((!baseFields || baseFields.length === 0) && companyMarkdown && companyMarkdown.trim()) {
+    const rawRows = extractTableRowsFromMarkdown(companyMarkdown);
+    if (rawRows.length > 0) {
+      baseFields = rawRows.map(r => ({ label: r.label, value: r.value }));
+    }
+  }
 
   if (!baseFields || baseFields.length === 0) {
     // If company settings had no fields, check if items have sizes and if we should provide a default Configuration row

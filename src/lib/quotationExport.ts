@@ -17,7 +17,9 @@ import { resolveDocumentModel } from "./documentModel.ts";
 import { extractTableRowsFromMarkdown, extractTermsFromMarkdown, parseMarkdownToBlocks } from "./markdownDoc.ts";
 import { resolveDocumentSignatory, createTypedSignatureDataUrl } from "../modules/company/signatoryHelper.ts";
 import { resolveGeneralInfoFields } from "./cabinConfiguration.ts";
+import { resolveTechSpecSections } from "./techSpecResolution.ts";
 import { handleAutoTableMarkdownCell, cleanMarkdownForPdf } from "./markdownPdfRenderer.ts";
+import { renderPaginatedKeyValueTable } from "./pdfTablePagination.ts";
 
 const FOOTER_MARK = "Built by MMA";
 // jsPDF's built-in Helvetica lacks the ₹ glyph (renders as superscript 1).
@@ -56,7 +58,7 @@ interface PdfContext {
   margin: number;
 }
 
-async function pdfHeader(ctx: PdfContext, isCover = false): Promise<number> {
+function pdfHeader(ctx: PdfContext, isCover = false): number {
   const { doc, company, template, accent, logoData, companyLogoData, pageW, margin } = ctx;
 
   // Top Accent bar
@@ -332,7 +334,8 @@ async function drawCover(ctx: PdfContext): Promise<number> {
 
   autoTable(doc, {
     head, body, startY: y,
-    margin: { left: margin, right: margin },
+    margin: { left: margin, right: margin, top: 22, bottom: 16 },
+    rowPageBreak: "avoid",
     styles: { font: template.fontFamily, fontSize: 8, cellPadding: 2, lineColor: [220, 220, 220], lineWidth: 0.1 },
     headStyles: { fillColor: accent, textColor: 255, fontStyle: "bold", halign: "center" },
     bodyStyles: { textColor: 30 },
@@ -348,6 +351,11 @@ async function drawCover(ctx: PdfContext): Promise<number> {
     },
     didDrawCell: (data: any) => {
       handleAutoTableMarkdownCell("didDrawCell", data, template.fontFamily, 8);
+    },
+    didDrawPage: (data: any) => {
+      if (data.pageNumber > 1) {
+        pdfHeader(ctx, false);
+      }
     },
   });
 
@@ -449,60 +457,33 @@ async function drawSectionsPage(
   for (const s of sections) {
     if (!s.rows || s.rows.length === 0) continue;
 
-    // Orphan heading prevention: ensure space for heading + at least 2 rows (~35mm)
-    if (y > pageH - 45) {
-      doc.addPage();
-      y = (await pdfHeader(ctx, false)) + 6;
-    }
-
-    doc.setFont(template.fontFamily, "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(30, 30, 30);
-    doc.text(s.heading, margin, y + 4);
-    let topOffset = 6;
-    if (s.subtitle) {
-      doc.setFont(template.fontFamily, "normal");
-      doc.setFontSize(8);
-      doc.setTextColor(100, 100, 100);
-      doc.text(s.subtitle, margin, y + 8);
-      topOffset = 10;
-    }
-
-    const tableBody = s.rows.map(r => {
-      if (Array.isArray(r)) return [r[0], r[1]];
-      let val = r.value || "";
-      if (r.bullets && r.bullets.length > 0) {
-        val = r.bullets.map(b => `• ${b}`).join("\n");
-      }
-      return [r.label, val];
+    const formattedRows = s.rows.map(r => {
+      if (Array.isArray(r)) return { label: r[0], value: r[1] };
+      return { label: r.label, value: r.value, bullets: r.bullets };
     });
 
-    autoTable(doc, {
-      body: tableBody,
-      startY: y + topOffset,
-      margin: { left: margin, right: margin },
-      styles: {
-        font: template.fontFamily,
-        fontSize: 8.5,
-        cellPadding: 2.5,
-        lineColor: [220, 225, 230],
-        lineWidth: 0.1,
-        overflow: "linebreak",
-      },
-      columnStyles: {
-        0: { fontStyle: "bold", cellWidth: 55, fillColor: [248, 250, 252], textColor: [40, 40, 40] },
-        1: { textColor: [30, 30, 30] },
-      },
-      theme: "grid",
-      showHead: "everyPage",
-      didParseCell: (data: any) => {
-        handleAutoTableMarkdownCell("didParseCell", data, template.fontFamily, 8.5);
-      },
-      didDrawCell: (data: any) => {
-        handleAutoTableMarkdownCell("didDrawCell", data, template.fontFamily, 8.5);
+    y = renderPaginatedKeyValueTable({
+      doc,
+      rows: formattedRows,
+      startY: y,
+      pageW,
+      pageH,
+      margin,
+      bottomReserve: 16,
+      nextPageContentY: 22,
+      labelColWidth: 55,
+      fontFamily: template.fontFamily,
+      fontSize: 8.5,
+      accentColor: accent,
+      sectionHeading: s.heading,
+      sectionSubtitle: s.subtitle,
+      onNewPage: () => {
+        doc.addPage();
+        return pdfHeader(ctx, false);
       },
     });
-    y = (doc as any).lastAutoTable.finalY + 6;
+
+    y += 5;
   }
   return y;
 }
@@ -709,7 +690,8 @@ async function drawTermsPage(ctx: PdfContext, currentY?: number): Promise<number
       autoTable(doc, {
         body: bankRows,
         startY: y,
-        margin: { left: margin, right: margin + 35 },
+        margin: { left: margin, right: margin + 35, top: 22, bottom: 16 },
+        rowPageBreak: "avoid",
         styles: {
           font: template.fontFamily,
           fontSize: 8.5,
@@ -722,6 +704,11 @@ async function drawTermsPage(ctx: PdfContext, currentY?: number): Promise<number
           1: { textColor: [20, 20, 20] },
         },
         theme: "grid",
+        didDrawPage: (data: any) => {
+          if (data.pageNumber > 1) {
+            pdfHeader(ctx, false);
+          }
+        },
       });
       y = (doc as any).lastAutoTable.finalY + 8;
     }
@@ -836,6 +823,7 @@ export async function exportQuotationPDF(
 
     const resolved = resolveGeneralInfoFields({
       companyFields: (company as any).generalInfoFields || (company as any).generalInformationFields,
+      companyMarkdown: (company as any).quotationGeneralInfoMarkdown,
       items: quotation.items,
       documentOverride: quotation.generalInformationSnapshot,
       cabinOverride: quotation.cabinConfigurationOverride,
@@ -888,105 +876,29 @@ export async function exportQuotationPDF(
     : quotation.includeTechSpecs !== false &&
       ((quotation as any).showTechSpecs !== false) &&
       (isDraft
-        ? ((company as any).showQuotationTechnicalSpecs !== false || !!quotation.technicalSpecificationSnapshot?.length || !!quotation.techSpecSnapshot?.length || !!quotation.technicalSpecsMarkdown || !!(company as any).quotationTechnicalSpecsMarkdown)
-        : (!!quotation.technicalSpecificationSnapshot?.length || !!quotation.techSpecSnapshot?.length || !!quotation.technicalSpecsMarkdown));
+        ? ((company as any).showQuotationTechnicalSpecs !== false || !!quotation.technicalSpecificationSnapshot?.length || !!quotation.structuredSections?.length || !!quotation.techSpecSnapshot?.length || !!quotation.technicalSpecsMarkdown || !!(company as any).quotationTechnicalSpecsMarkdown)
+        : (!!quotation.technicalSpecificationSnapshot?.length || !!quotation.structuredSections?.length || !!quotation.techSpecSnapshot?.length || !!quotation.technicalSpecsMarkdown));
 
   if (showTechSpecs) {
     let specSections: Array<{ heading: string; subtitle?: string; rows: Array<{ label: string; value: string }> }> = [];
 
-    if (!isDraft) {
-      if (quotation.technicalSpecificationSnapshot?.length) {
-        const specs = quotation.technicalSpecificationSnapshot.filter((s: any) => s.type === "SPEC_TABLE");
-        specSections = specs.map((s: any) => ({
-          heading: s.title,
-          subtitle: s.subtitle,
-          rows: (s.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
-        }));
-      } else if (quotation.techSpecSnapshot?.length || quotation.electricalSnapshot?.length) {
-        if (quotation.techSpecSnapshot?.length) {
-          specSections.push(...quotation.techSpecSnapshot.map((sec: any) => ({
-            heading: sec.title,
-            rows: (sec.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
-          })));
-        }
-        if (quotation.electricalSnapshot?.length) {
-          specSections.push(...quotation.electricalSnapshot.map(sec => ({
-            heading: sec.title,
-            rows: sec.rows.map(r => ({ label: r.label, value: r.value })),
-          })));
-        }
-      } else if (quotation.technicalSpecsMarkdown) {
-        const blocks = parseMarkdownToBlocks(quotation.technicalSpecsMarkdown);
-        let currentSection: { heading: string; rows: Array<{ label: string; value: string }> } = {
-          heading: "Technical Specifications",
-          rows: [],
-        };
-        for (const b of blocks) {
-          if (b.type === "HEADING") {
-            if (currentSection.rows.length > 0) {
-              specSections.push(currentSection);
-            }
-            currentSection = { heading: b.text, rows: [] };
-          } else if (b.type === "TABLE") {
-            for (const r of b.rows) {
-              if (r.length >= 2) {
-                currentSection.rows.push({ label: r[0], value: r[1] });
-              }
-            }
-          } else if (b.type === "BULLET_LIST" || b.type === "NUMBERED_LIST") {
-            for (const item of (b as any).items) {
-              currentSection.rows.push({ label: "Specification", value: item.text });
-            }
-          }
-        }
-        if (currentSection.rows.length > 0) {
-          specSections.push(currentSection);
-        }
-      }
-    } else {
-      const techMd = quotation.technicalSpecsMarkdown || (company as any).quotationTechnicalSpecsMarkdown;
-      if (techMd) {
-        const blocks = parseMarkdownToBlocks(techMd);
-        let currentSection: { heading: string; rows: Array<{ label: string; value: string }> } = {
-          heading: "Technical Specifications",
-          rows: [],
-        };
-        for (const b of blocks) {
-          if (b.type === "HEADING") {
-            if (currentSection.rows.length > 0) {
-              specSections.push(currentSection);
-            }
-            currentSection = { heading: b.text, rows: [] };
-          } else if (b.type === "TABLE") {
-            for (const r of b.rows) {
-              if (r.length >= 2) {
-                currentSection.rows.push({ label: r[0], value: r[1] });
-              }
-            }
-          } else if (b.type === "BULLET_LIST" || b.type === "NUMBERED_LIST") {
-            for (const item of (b as any).items) {
-              currentSection.rows.push({ label: "Specification", value: item.text });
-            }
-          }
-        }
-        if (currentSection.rows.length > 0) {
-          specSections.push(currentSection);
-        }
-      } else if (quotation.technicalSpecificationSnapshot?.length) {
-        const specs = quotation.technicalSpecificationSnapshot.filter((s: any) => s.type === "SPEC_TABLE");
-        specSections = specs.map((s: any) => ({
-          heading: s.title,
-          subtitle: s.subtitle,
-          rows: (s.rows || []).map((r: any) => ({ label: r.label, value: r.value })),
-        }));
-      } else if (quotation.structuredSections) {
-        const specs = quotation.structuredSections.filter(s => s.type === "SPEC_TABLE");
-        specSections = specs.map(s => ({
-          heading: s.title,
-          subtitle: s.subtitle,
-          rows: s.rows.map((r: any) => ({ label: r.label, value: r.value })),
-        }));
-      }
+    const resolved = resolveTechSpecSections({
+      companyMarkdown: (company as any).quotationTechnicalSpecsMarkdown,
+      documentOverride: (quotation.structuredSections && quotation.structuredSections.length > 0)
+        ? quotation.structuredSections
+        : (quotation.technicalSpecificationSnapshot && quotation.technicalSpecificationSnapshot.length > 0)
+          ? quotation.technicalSpecificationSnapshot
+          : (quotation.technicalSpecsMarkdown || quotation.techSpecSnapshot),
+      isIssuedOrFrozen: !isDraft,
+      frozenSnapshot: quotation.technicalSpecificationSnapshot || quotation.techSpecSnapshot,
+    });
+
+    if (resolved && resolved.length > 0) {
+      specSections = resolved.map(s => ({
+        heading: s.title,
+        subtitle: s.subtitle,
+        rows: (s.rows || []).map(r => ({ label: r.label, value: r.value })),
+      }));
     }
 
     if (specSections.length > 0) {

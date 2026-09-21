@@ -24,10 +24,13 @@ export interface CompanySettings {
   quotationTechnicalSpecsMarkdown?: string;
   quotationTermsMarkdown?: string;
   invoiceTermsMarkdown?: string;
+  invoiceGeneralInfoMarkdown?: string;
+  invoiceTechnicalSpecsMarkdown?: string;
   quotationClosingMessage?: string;
   showQuotationGeneralInfo?: boolean;
   showInvoiceGeneralInfo?: boolean;
   showQuotationTechnicalSpecs?: boolean;
+  showInvoiceTechnicalSpecs?: boolean;
   showQuotationTerms?: boolean;
   showInvoiceTerms?: boolean;
   showQuotationBankDetails?: boolean;
@@ -436,9 +439,12 @@ export interface Invoice {
   structuredTerms?: StructuredTermItem[];
   structuredTermsSnapshot?: any[];
   termsTemplateId?: ID;
+  generalInfoTemplateId?: ID;
+  techSpecTemplateId?: ID;
   includeTerms?: boolean;
   includeBankDetails?: boolean;
   includeGeneralInfo?: boolean;
+  includeTechSpecs?: boolean;
   includeDescriptions?: boolean;
   cabinConfigurationOverride?: string;
   isCabinConfigCustom?: boolean;
@@ -448,6 +454,7 @@ export interface Invoice {
   /** Canonical Technical Specification snapshot. */
   technicalSpecificationSnapshot?: TechSpecSection[];
   techSpecSnapshot?: TechSpecSection[];
+  structuredSections?: QuotationSection[];
   bankAccountId?: ID;
   /** Canonical Bank snapshot. bankDetailsSnapshot is legacy read-alias. */
   bankSnapshot?: BankAccount;
@@ -456,7 +463,18 @@ export interface Invoice {
     showTerms?: boolean;
     showBankDetails?: boolean;
     showGeneralInfo?: boolean;
+    showTechSpecs?: boolean;
   };
+  paymentMode?: "cash" | "bank" | "cheque" | "credit";
+  deliveryNote?: string;
+  supplierRef?: string;
+  otherReferences?: string;
+  despatchDocNo?: string;
+  despatchedThrough?: string;
+  destination?: string;
+  billOfLadingNo?: string;
+  motorVehicleNo?: string;
+  eWayBillNo?: string;
   gstCalculationMode?: "item_wise" | "overall";
   overallGstRate?: number;
   status: "draft" | "unpaid" | "partial" | "paid" | "posted" | "cancelled" | "voided" | "deleted";
@@ -665,7 +683,7 @@ export interface GeneralInfoTemplate {
 }
 
 export interface TechSpecRow { label: string; value: string; }
-export interface TechSpecSection { title: string; rows: TechSpecRow[]; }
+export interface TechSpecSection { title: string; subtitle?: string; rows: TechSpecRow[]; }
 export interface TechSpecTemplate {
   id: ID; name: string; kind?: "technical" | "electrical"; isDefault?: boolean;
   sections: TechSpecSection[]; createdAt: number;

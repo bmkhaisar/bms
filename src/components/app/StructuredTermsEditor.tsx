@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Trash2, ArrowUp, ArrowDown, Copy, ListOrdered, List, AlignJustify } from "lucide-react";
 import type { StructuredTermItem, TermFormat, TermsTemplate } from "@/lib/db";
 import { uid } from "@/lib/db";
+import { InlineMarkdown } from "@/lib/MarkdownRenderer";
 
 interface StructuredTermsEditorProps {
   enabled: boolean;
@@ -85,10 +86,15 @@ export function StructuredTermsEditor({
             Commercial payment schedules, delivery conditions, and validity. Renders with hanging indents and page-break protection.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="include-terms" className="text-xs font-medium text-foreground">
-            Include in {documentType === "quotation" ? "Quotation" : "Invoice"}
-          </Label>
+        <div className="flex items-center gap-2.5 bg-muted/40 px-3 py-1.5 rounded-lg border border-border/70 shrink-0">
+          <div className="text-right">
+            <Label htmlFor="include-terms" className="text-xs font-semibold text-foreground cursor-pointer block">
+              {enabled ? `Included in ${documentType === "quotation" ? "Quotation" : "Invoice"}` : `Excluded from ${documentType === "quotation" ? "Quotation" : "Invoice"}`}
+            </Label>
+            <p className="text-[10px] text-muted-foreground">
+              {enabled ? "Visible in document & PDF" : "Hidden from document & PDF"}
+            </p>
+          </div>
           <Switch
             id="include-terms"
             checked={enabled}
@@ -144,13 +150,21 @@ export function StructuredTermsEditor({
                     {term.format === "BULLET" ? "•" : term.format === "PARAGRAPH" ? "§" : `${idx + 1}.`}
                   </div>
 
-                  <Textarea
-                    rows={2}
-                    value={term.text}
-                    onChange={(e) => updateTerm(idx, { text: e.target.value })}
-                    placeholder="Enter condition (e.g. Delivery within 3 weeks from receipt of advance PO...)"
-                    className="text-xs flex-1 min-h-[52px] bg-card"
-                  />
+                  <div className="flex-1 space-y-1">
+                    <Textarea
+                      rows={2}
+                      value={term.text}
+                      onChange={(e) => updateTerm(idx, { text: e.target.value })}
+                      placeholder="Enter condition (e.g. Delivery within 3 weeks from receipt of advance PO...)"
+                      className="text-xs w-full min-h-[52px] bg-card"
+                    />
+                    {term.text && (term.text.includes("**") || term.text.includes("*")) && (
+                      <div className="text-[11px] text-muted-foreground px-1.5 py-0.5 bg-background/60 rounded border border-border/40">
+                        <span className="text-[10px] uppercase font-semibold text-primary/70 mr-1.5">Formatted:</span>
+                        <InlineMarkdown text={term.text} />
+                      </div>
+                    )}
+                  </div>
 
                   <div className="flex flex-col gap-1 shrink-0">
                     <div className="flex items-center gap-1">
