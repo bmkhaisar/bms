@@ -26,6 +26,7 @@ export interface CompanySettings {
   invoiceTermsMarkdown?: string;
   quotationClosingMessage?: string;
   showQuotationGeneralInfo?: boolean;
+  showInvoiceGeneralInfo?: boolean;
   showQuotationTechnicalSpecs?: boolean;
   showQuotationTerms?: boolean;
   showInvoiceTerms?: boolean;
@@ -217,6 +218,7 @@ export interface Product {
   openingStock: number; currentStock: number; reorderLevel: number;
   trackInventory?: boolean; // When false, stock movements are omitted (services, digital goods)
   description?: string;
+  defaultDescription?: string;
   specifications?: string;
   defaultSizes?: string[];
   createdAt: number;
@@ -251,10 +253,51 @@ export interface LineItem {
   size?: string;
   /** Frozen structured dimensions used to produce `size`; historical documents never re-read product preferences. */
   sizeSnapshot?: SizeSnapshot;
+  productNameSnapshot?: string;
+  descriptionSnapshot?: string;
+  uomSnapshot?: string;
+  rateSnapshot?: number;
+  taxSnapshot?: TaxSnapshot;
   pricingBasis?: PricingBasis;
   measurements?: MeasurementEntry[];
   measurementSummary?: string;
   saveToMaster?: boolean;
+}
+
+export interface TaxSnapshot {
+  taxRegistrationMode?: string;
+  documentType?: string;
+  supplierGstin?: string;
+  customerGstin?: string;
+  companyStateCode?: string;
+  placeOfSupply?: string;
+  isInterState?: boolean;
+  grossLineValue?: number;
+  lineDiscount?: number;
+  documentDiscount?: number;
+  taxableValue?: number;
+  cgst?: number;
+  sgst?: number;
+  igst?: number;
+  cess?: number;
+  otherTax?: number;
+  taxableCharges?: number;
+  nonTaxableCharges?: number;
+  taxableAmountPaise?: number;
+  taxRate?: number;
+  cgstRate?: number;
+  sgstRate?: number;
+  igstRate?: number;
+  cessRate?: number;
+  cgstAmountPaise?: number;
+  sgstAmountPaise?: number;
+  igstAmountPaise?: number;
+  cessAmountPaise?: number;
+  taxAmountPaise?: number;
+  isIgst?: boolean;
+  isTaxInclusive?: boolean;
+  lines?: any[];
+  [key: string]: any;
 }
 
 export interface ExtraCharge {
@@ -295,13 +338,20 @@ export interface Quotation {
   billingAddressId?: string;
   billingAddress?: string;
   shippingAddress?: string;
-  // Snapshots at time of save
+  // Canonical Snapshots at time of save/finalization (PRD § 1, 15, 16)
   billingAddressSnapshot?: AddressSnapshot;
   shippingAddressSnapshot?: AddressSnapshot;
+  /** Canonical General Information snapshot. generalInfoSnapshot is legacy read-alias. */
+  generalInformationSnapshot?: GeneralInfoField[];
   generalInfoSnapshot?: GeneralInfoField[];
+  /** Canonical Technical Specification snapshot. techSpecSnapshot is legacy read-alias. */
+  technicalSpecificationSnapshot?: TechSpecSection[];
   techSpecSnapshot?: TechSpecSection[];
   electricalSnapshot?: TechSpecSection[];
+  /** Canonical Terms snapshot. structuredTermsSnapshot is legacy read-alias. */
   termsSnapshot?: string[];
+  structuredTermsSnapshot?: any[];
+  /** Canonical Bank snapshot. bankDetailsSnapshot is legacy read-alias. */
   bankSnapshot?: BankAccount;
   bankDetailsSnapshot?: BankAccount;
   templateId?: ID;
@@ -318,9 +368,6 @@ export interface Quotation {
   includeBankDetails?: boolean;
   structuredSections?: QuotationSection[];
   structuredTerms?: StructuredTermItem[];
-  structuredTermsSnapshot?: any[];
-  generalInformationSnapshot?: any[];
-  technicalSpecificationSnapshot?: any[];
   visibilitySnapshot?: {
     showGeneralInfo?: boolean;
     showTechSpecs?: boolean;
@@ -336,6 +383,9 @@ export interface Quotation {
   techSpecTemplateId?: ID;
   termsTemplateId?: ID;
   bankAccountId?: ID;
+  cabinConfigurationOverride?: string;
+  isCabinConfigCustom?: boolean;
+  includeDescriptions?: boolean;
 }
 
 export interface Invoice {
@@ -343,7 +393,7 @@ export interface Invoice {
   financialYearId?: ID;
   customerId: ID; customerSnapshot?: Partial<Customer>;
   companySnapshot?: any;
-  taxSnapshot?: any;
+  taxSnapshot?: TaxSnapshot;
   signatoryOverride?: any;
   signatorySnapshot?: any;
   placeOfSupply?: string;
@@ -388,12 +438,24 @@ export interface Invoice {
   termsTemplateId?: ID;
   includeTerms?: boolean;
   includeBankDetails?: boolean;
+  includeGeneralInfo?: boolean;
+  includeDescriptions?: boolean;
+  cabinConfigurationOverride?: string;
+  isCabinConfigCustom?: boolean;
+  /** Canonical General Information snapshot. generalInfoSnapshot is legacy read-alias. */
+  generalInformationSnapshot?: GeneralInfoField[];
+  generalInfoSnapshot?: GeneralInfoField[];
+  /** Canonical Technical Specification snapshot. */
+  technicalSpecificationSnapshot?: TechSpecSection[];
+  techSpecSnapshot?: TechSpecSection[];
   bankAccountId?: ID;
+  /** Canonical Bank snapshot. bankDetailsSnapshot is legacy read-alias. */
   bankSnapshot?: BankAccount;
   bankDetailsSnapshot?: BankAccount;
   visibilitySnapshot?: {
     showTerms?: boolean;
     showBankDetails?: boolean;
+    showGeneralInfo?: boolean;
   };
   gstCalculationMode?: "item_wise" | "overall";
   overallGstRate?: number;
@@ -597,7 +659,7 @@ export interface TermsTemplate {
   terms: TermItem[]; structuredTerms?: StructuredTermItem[]; createdAt: number;
 }
 
-export interface GeneralInfoField { key: string; label: string; value: string; }
+export interface GeneralInfoField { key?: string; label: string; value: string; }
 export interface GeneralInfoTemplate {
   id: ID; name: string; isDefault?: boolean; fields: GeneralInfoField[]; createdAt: number;
 }

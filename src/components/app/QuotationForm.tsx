@@ -58,6 +58,7 @@ import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 import { extractTableRowsFromMarkdown, extractTermsFromMarkdown } from "@/lib/markdownDoc";
 import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
 import { normalizeQuotationRecord } from "@/modules/documents/quotationNormalization";
+import { buildCabinConfigurationFromItems, isCabinConfigurationRow } from "@/lib/cabinConfiguration";
 
 interface Props {
   initial: Quotation;
@@ -277,6 +278,52 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
     setQ({ ...q, bankAccountId: id, bankSnapshot: b });
   }
 
+  const derivedCabinConfig = useMemo(() => buildCabinConfigurationFromItems(q.items), [q.items]);
+
+  const generalInfoRows: SectionRow[] = useMemo(() => {
+    const rawFields: GeneralInfoField[] =
+      q.generalInformationSnapshot ||
+      q.generalInfoSnapshot ||
+      ((activeCompany as any)?.generalInfoFields as GeneralInfoField[]) ||
+      [];
+    return rawFields.map((f, i) => {
+      let val = f.value;
+      if (isCabinConfigurationRow(f.label) && !q.isCabinConfigCustom && derivedCabinConfig) {
+        val = derivedCabinConfig;
+      }
+      return {
+        id: `gi-${i}`,
+        label: f.label,
+        value: val,
+        valueType: "TEXT",
+        order: i + 1,
+      };
+    });
+  }, [q.generalInformationSnapshot, q.generalInfoSnapshot, (activeCompany as any)?.generalInfoFields, q.isCabinConfigCustom, derivedCabinConfig]);
+
+  const handleResetCabinConfig = () => {
+    setQ(prev => {
+      const rawFields: GeneralInfoField[] =
+        prev.generalInformationSnapshot ||
+        prev.generalInfoSnapshot ||
+        ((activeCompany as any)?.generalInfoFields as GeneralInfoField[]) ||
+        [];
+      const updated = rawFields.map(f => {
+        if (isCabinConfigurationRow(f.label)) {
+          return { ...f, value: derivedCabinConfig };
+        }
+        return f;
+      });
+      return {
+        ...prev,
+        generalInformationSnapshot: updated,
+        generalInfoSnapshot: updated,
+        cabinConfigurationOverride: undefined,
+        isCabinConfigCustom: false,
+      };
+    });
+  };
+
   async function handleSave() {
     if (!q.customerId) { toast.error("Select a customer"); return; }
     if (!q.items.length) { toast.error("Add at least one item"); return; }
@@ -365,7 +412,9 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
       structuredTerms: q.structuredTerms,
       structuredTermsSnapshot: q.structuredTermsSnapshot,
       structuredSections: q.structuredSections,
-      generalInformationSnapshot: q.generalInformationSnapshot,
+      cabinConfigurationOverride: q.cabinConfigurationOverride,
+      isCabinConfigCustom: q.isCabinConfigCustom,
+      generalInformationSnapshot: q.generalInformationSnapshot || q.generalInfoSnapshot,
       technicalSpecificationSnapshot: q.technicalSpecificationSnapshot,
       visibilitySnapshot: (q as any).visibilitySnapshot,
     };
@@ -401,6 +450,9 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
               <TabsTrigger value="details">Details</TabsTrigger>
               <TabsTrigger value="items">Items</TabsTrigger>
               <TabsTrigger value="charges">Charges & Totals</TabsTrigger>
+              <TabsTrigger value="general-info">General Info</TabsTrigger>
+              <TabsTrigger value="tech-specs">Tech Specs</TabsTrigger>
+              <TabsTrigger value="terms">Terms</TabsTrigger>
             </TabsList>
           </div>
 
@@ -756,6 +808,67 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
                   </div>
                 </div>
               </div>
+            </Card>
+          </TabsContent>
+
+          {/* ============ GENERAL INFO ============ */}
+          <TabsContent value="general-info">
+            <Card className="p-4">
+              <GeneralInformationEditor
+                enabled={q.includeGeneralInfo !== false}
+                onEnabledChange={(enabled) => setQ({ ...q, includeGeneralInfo: enabled })}
+                rows={generalInfoRows}
+                onChange={(rows) => {
+                  const newFields: GeneralInfoField[] = rows.map(r => ({ label: r.label, value: r.value }));
+                  setQ(prev => {
+                    const cabinRow = rows.find(r => isCabinConfigurationRow(r.label));
+                    const isCustom = Boolean(cabinRow && derivedCabinConfig && cabinRow.value !== derivedCabinConfig);
+                    return {
+                      ...prev,
+                      generalInformationSnapshot: newFields,
+                      generalInfoSnapshot: newFields,
+                      isCabinConfigCustom: isCustom ? true : prev.isCabinConfigCustom,
+                      cabinConfigurationOverride: isCustom ? cabinRow?.value : prev.cabinConfigurationOverride,
+                    };
+                  });
+                }}
+                templates={genTemplates}
+                onApplyTemplate={applyGeneralInfo}
+                selectedTemplateId={q.generalInfoTemplateId}
+                derivedCabinConfig={derivedCabinConfig}
+                isCabinConfigCustom={q.isCabinConfigCustom}
+                onResetCabinConfig={handleResetCabinConfig}
+                onCabinConfigCustomChange={(custom) => setQ(prev => ({ ...prev, isCabinConfigCustom: custom }))}
+              />
+            </Card>
+          </TabsContent>
+
+          {/* ============ TECHNICAL SPECIFICATIONS ============ */}
+          <TabsContent value="tech-specs">
+            <Card className="p-4">
+              <TechnicalSpecificationsEditor
+                enabled={q.includeTechSpecs !== false}
+                onEnabledChange={(enabled) => setQ({ ...q, includeTechSpecs: enabled })}
+                sections={q.structuredSections || []}
+                onChange={(sections) => setQ({ ...q, structuredSections: sections })}
+                templates={techTemplates}
+                onApplyTemplate={applyTechSpec}
+              />
+            </Card>
+          </TabsContent>
+
+          {/* ============ TERMS & CONDITIONS ============ */}
+          <TabsContent value="terms">
+            <Card className="p-4">
+              <StructuredTermsEditor
+                enabled={q.includeTerms !== false}
+                onEnabledChange={(enabled) => setQ({ ...q, includeTerms: enabled })}
+                terms={q.structuredTerms || []}
+                onChange={(terms) => setQ({ ...q, structuredTerms: terms })}
+                templates={termsTemplates}
+                onApplyTemplate={applyTermsTemplate}
+                documentType="quotation"
+              />
             </Card>
           </TabsContent>
 

@@ -5,10 +5,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, ArrowUp, ArrowDown, List, AlignLeft, Type } from "lucide-react";
+import { Plus, Trash2, ArrowUp, ArrowDown, List, AlignLeft, Type, RefreshCw, Pencil } from "lucide-react";
 import type { SectionRow, ValueType, GeneralInfoTemplate } from "@/lib/db";
 import { uid } from "@/lib/db";
+import { isCabinConfigurationRow } from "@/lib/cabinConfiguration";
 
 interface GeneralInformationEditorProps {
   enabled: boolean;
@@ -18,6 +20,10 @@ interface GeneralInformationEditorProps {
   templates?: GeneralInfoTemplate[];
   onApplyTemplate?: (templateId: string) => void;
   selectedTemplateId?: string;
+  derivedCabinConfig?: string;
+  isCabinConfigCustom?: boolean;
+  onResetCabinConfig?: () => void;
+  onCabinConfigCustomChange?: (custom: boolean) => void;
 }
 
 export function GeneralInformationEditor({
@@ -28,6 +34,10 @@ export function GeneralInformationEditor({
   templates = [],
   onApplyTemplate,
   selectedTemplateId,
+  derivedCabinConfig,
+  isCabinConfigCustom,
+  onResetCabinConfig,
+  onCabinConfigCustomChange,
 }: GeneralInformationEditorProps) {
   function addRow() {
     const newRow: SectionRow = {
@@ -207,14 +217,60 @@ export function GeneralInformationEditor({
                     </div>
                   </div>
 
+                  {/* Cabin Configuration Auto vs Custom Controls */}
+                  {isCabinConfigurationRow(row.label) && (
+                    <div className="flex items-center justify-between gap-2 p-1.5 rounded-lg bg-background/60 border border-border/50">
+                      <div className="flex items-center gap-1.5">
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${
+                            isCabinConfigCustom
+                              ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                              : "bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30"
+                          }`}
+                        >
+                          {isCabinConfigCustom ? "Custom document configuration" : "Auto-generated from item sizes"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {isCabinConfigCustom ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-[10px] gap-1 text-primary hover:text-primary/80"
+                            onClick={onResetCabinConfig}
+                          >
+                            <RefreshCw className="h-3 w-3" /> Reset from Item Sizes
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-[10px] gap-1 text-muted-foreground hover:text-foreground"
+                            onClick={() => onCabinConfigCustomChange?.(true)}
+                          >
+                            <Pencil className="h-3 w-3" /> Edit Configuration
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Value Input depending on type */}
                   {row.valueType === "BULLET_LIST" ? (
                     <Textarea
                       rows={3}
                       placeholder={"Enter bullet points (one item per line)\n• Cabin 40'L x 10'W x 8.5'H\n• Cabin 20'L x 10'W x 8.5'H"}
-                      value={row.value}
-                      onChange={(e) => updateRow(idx, { value: e.target.value })}
-                      className="text-xs leading-relaxed bg-card"
+                      value={isCabinConfigurationRow(row.label) && !isCabinConfigCustom && derivedCabinConfig ? derivedCabinConfig : row.value}
+                      onChange={(e) => {
+                        if (isCabinConfigurationRow(row.label)) {
+                          onCabinConfigCustomChange?.(true);
+                        }
+                        updateRow(idx, { value: e.target.value });
+                      }}
+                      className="text-xs leading-relaxed bg-card font-mono"
                     />
                   ) : row.valueType === "MULTILINE" ? (
                     <Textarea

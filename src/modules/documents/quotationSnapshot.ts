@@ -1,7 +1,8 @@
-import type { Quotation, BankAccount } from "@/lib/db";
+import type { Quotation, BankAccount, TechSpecSection } from "@/lib/db";
 import { createCompanySnapshot } from "@/modules/company/types";
 import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 import { extractTableRowsFromMarkdown, extractTermsFromMarkdown } from "@/lib/markdownDoc";
+import { resolveGeneralInfoFields } from "@/lib/cabinConfiguration";
 
 /**
  * Freezes immutable master snapshots at Quotation Issue/Finalization (PRD §§ 7-9, 28, 78-82)
@@ -84,20 +85,22 @@ export function freezeQuotationSnapshots(
       ? [{ title: "Terms & Conditions", format: "numbered", items: quotation.structuredTerms }]
       : undefined);
 
-  const resolvedGeneralInfo =
-    quotation.generalInformationSnapshot ||
-    (quotation.structuredSections?.filter((s) => s.type === "GENERAL_INFO")?.length
-      ? quotation.structuredSections.filter((s) => s.type === "GENERAL_INFO")
-      : comp?.quotationGeneralInfoMarkdown
-      ? extractTableRowsFromMarkdown(comp.quotationGeneralInfoMarkdown)
-      : undefined);
+  const resolvedGeneralInfo = resolveGeneralInfoFields({
+    companyFields: comp?.generalInfoFields,
+    items: quotation.items,
+    documentOverride: quotation.generalInformationSnapshot || quotation.generalInfoSnapshot,
+    cabinOverride: quotation.cabinConfigurationOverride,
+    isCabinConfigCustom: quotation.isCabinConfigCustom,
+    isIssuedOrFrozen: true,
+    frozenSnapshot: quotation.generalInformationSnapshot || quotation.generalInfoSnapshot,
+  });
 
-  const resolvedTechSpecs =
+  const resolvedTechSpecs: TechSpecSection[] | undefined =
     quotation.technicalSpecificationSnapshot ||
     (quotation.structuredSections?.filter((s) => s.type === "SPEC_TABLE")?.length
-      ? quotation.structuredSections.filter((s) => s.type === "SPEC_TABLE")
+      ? (quotation.structuredSections.filter((s) => s.type === "SPEC_TABLE") as any)
       : comp?.quotationTechnicalSpecsMarkdown
-      ? extractTableRowsFromMarkdown(comp.quotationTechnicalSpecsMarkdown)
+      ? [{ title: "Technical Specifications", rows: extractTableRowsFromMarkdown(comp.quotationTechnicalSpecsMarkdown) }]
       : undefined);
 
   const resolvedVisibility =

@@ -693,6 +693,7 @@ export interface ComprehensiveReconciliation {
       supplierName: string;
       supplierId: string;
       total: number;
+      paid: number;
       balance: number;
       date: string;
     }>;
@@ -1044,13 +1045,16 @@ export function getComprehensiveFinancialReconciliation(params: {
     const bal = Number(pu.balance !== undefined ? pu.balance : pu.grandTotal);
     if (bal > 0.01) {
       totalPayablesOutstandingRupees += bal;
+      const grandTotal = Number(pu.grandTotal || 0);
+      const paidAmt = Number(pu.amountPaid !== undefined ? pu.amountPaid : Math.max(0, grandTotal - bal));
       openBills.push({
         id: pu.id,
         billNumber: pu.number || pu.id,
         supplierInvoiceNumber: pu.supplierInvoiceNumber,
         supplierName: partyMap.get(pu.supplierId) || (pu.supplierSnapshot as any)?.name || "Unknown Supplier",
         supplierId: pu.supplierId,
-        total: Number(pu.grandTotal || 0),
+        total: grandTotal,
+        paid: paidAmt,
         balance: bal,
         date: normalizeVoucherDate(pu.date || pu.createdAt),
       });

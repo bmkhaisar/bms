@@ -130,6 +130,16 @@ export async function convertQuotationToInvoice(
     // 4. Copy line items with full fidelity (description, size, HSN, specs, taxes)
     const items: LineItem[] = quotation.items.map((it) => ({
       ...it,
+      productId: it.productId,
+      productName: it.productName || it.name,
+      productNameSnapshot: it.productNameSnapshot || it.name,
+      description: it.description,
+      descriptionSnapshot: it.descriptionSnapshot || it.description,
+      size: it.size,
+      sizeSnapshot: it.sizeSnapshot,
+      uomSnapshot: it.uomSnapshot || it.unit,
+      rateSnapshot: it.rateSnapshot || it.rate,
+      taxSnapshot: it.taxSnapshot,
     }));
 
     // Resolve customer snapshot & credit terms
@@ -203,6 +213,12 @@ export async function convertQuotationToInvoice(
       bankSnapshot: quotation.bankSnapshot,
       bankDetailsSnapshot: quotation.bankDetailsSnapshot || quotation.bankSnapshot,
       includeBankDetails: quotation.includeBankDetails !== false,
+      generalInformationSnapshot: quotation.generalInformationSnapshot,
+      technicalSpecificationSnapshot: quotation.technicalSpecificationSnapshot,
+      cabinConfigurationOverride: quotation.cabinConfigurationOverride,
+      isCabinConfigCustom: quotation.isCabinConfigCustom,
+      includeGeneralInfo: quotation.includeGeneralInfo,
+      includeDescriptions: quotation.includeDescriptions !== false,
       gstCalculationMode: quotation.gstCalculationMode || "item_wise",
       overallGstRate: quotation.overallGstRate,
       companySnapshot: quotation.companySnapshot,

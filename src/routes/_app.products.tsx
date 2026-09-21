@@ -48,6 +48,7 @@ const empty: Product = {
   reorderLevel: 5,
   trackInventory: true,
   description: "",
+  defaultDescription: "",
   active: true,
   createdAt: 0,
 };
@@ -442,6 +443,11 @@ function ProductsPage() {
                           )}
                         </div>
                         {r.sku ? <div className="text-xs text-muted-foreground">{r.sku}</div> : null}
+                        {(r.defaultDescription || r.description) ? (
+                          <div className="text-[11px] text-muted-foreground/80 line-clamp-1 max-w-sm truncate" title={r.defaultDescription || r.description}>
+                            {r.defaultDescription || r.description}
+                          </div>
+                        ) : null}
                       </TableCell>
                       <TableCell className="font-mono text-xs">{r.hsn || "—"}</TableCell>
                       <TableCell className="text-right font-mono">{r.gstRate}%</TableCell>
@@ -634,12 +640,13 @@ function ProductsPage() {
               />
             </F>
             <div className="sm:col-span-2">
-              <F label="Description & Notes">
+              <F label="Default Technical Description (Auto-fills into Quotations & Invoices)">
                 <Textarea
-                  rows={2}
-                  value={editing.description ?? ""}
-                  onChange={(e) => setEditing({ ...editing, description: e.target.value })}
-                  placeholder="Technical details, specifications"
+                  rows={4}
+                  value={editing.defaultDescription ?? editing.description ?? ""}
+                  onChange={(e) => setEditing({ ...editing, defaultDescription: e.target.value, description: e.target.value })}
+                  placeholder="e.g. MS Portable Site Office Cabin with interior MDF board cladding, UPVC sliding two-track windows 3'x3'... with all necessary internal wiring and electrical fittings."
+                  className="text-xs leading-relaxed font-normal"
                 />
               </F>
             </div>

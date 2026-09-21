@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -55,6 +56,7 @@ export function QuickCreateProductModal({
     reorderLevel: 5,
     trackInventory: true,
     aliases: "",
+    defaultDescription: "",
   });
 
   useEffect(() => {
@@ -149,6 +151,8 @@ export function QuickCreateProductModal({
         reorderLevel: Number(form.reorderLevel) || 5,
         trackInventory: form.trackInventory,
         aliases: parsedAliases.length > 0 ? parsedAliases : undefined,
+        defaultDescription: form.defaultDescription?.trim() || undefined,
+        description: form.defaultDescription?.trim() || undefined,
         createdAt: Date.now(),
         active: true,
       };
@@ -343,6 +347,17 @@ export function QuickCreateProductModal({
               value={form.aliases}
               onChange={(e) => setForm({ ...form, aliases: e.target.value })}
               placeholder="e.g. GI Sheet, GI Plate, Galvanized Sheet"
+            />
+          </div>
+
+          <div className="space-y-1 sm:col-span-2">
+            <Label className="text-xs">Default Technical Description</Label>
+            <Textarea
+              rows={3}
+              value={form.defaultDescription}
+              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setForm({ ...form, defaultDescription: e.target.value })}
+              placeholder="e.g. MS Portable Site Office Cabin with interior MDF board cladding, UPVC sliding two-track windows..."
+              className="text-xs leading-relaxed"
             />
           </div>
 

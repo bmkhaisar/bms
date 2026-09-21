@@ -855,10 +855,10 @@ export function CAReviewWorkspace({
                       <TableCell className="font-mono font-semibold">{bill.billNumber}</TableCell>
                       <TableCell>{bill.supplierName}</TableCell>
                       <TableCell>{bill.date || "—"}</TableCell>
-                      <TableCell className="text-right font-mono">₹{bill.total.toFixed(2)}</TableCell>
-                      <TableCell className="text-right font-mono text-emerald-600">₹{bill.paid.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono">₹{(bill.total ?? 0).toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono text-emerald-600">₹{(bill.paid ?? (bill.total - bill.balance)).toFixed(2)}</TableCell>
                       <TableCell className="text-right font-mono font-bold text-rose-600">
-                        ₹{bill.balance.toFixed(2)}
+                        ₹{(bill.balance ?? 0).toFixed(2)}
                       </TableCell>
                       <TableCell className="text-right">
                         <Button

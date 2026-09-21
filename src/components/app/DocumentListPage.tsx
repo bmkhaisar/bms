@@ -103,6 +103,7 @@ export function DocumentListPage<T extends AnyDoc>({
   const [editing, setEditing] = useState<T | null>(null);
   const [preview, setPreview] = useState<T | null>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>("");
+  const [includeDescriptions, setIncludeDescriptions] = useState<boolean>(true);
   const [deleteTargetDoc, setDeleteTargetDoc] = useState<{ doc: T; isPosted: boolean } | null>(null);
   const [correctionTarget, setCorrectionTarget] = useState<T | null>(null);
   const [correctionReason, setCorrectionReason] = useState("");
@@ -329,6 +330,12 @@ export function DocumentListPage<T extends AnyDoc>({
       termsSnapshot: (doc as any).termsSnapshot,
       structuredTerms: (doc as any).structuredTerms,
       includeTerms: (doc as any).includeTerms,
+      generalInformationSnapshot: (doc as any).generalInformationSnapshot || (doc as any).generalInfoSnapshot,
+      technicalSpecificationSnapshot: (doc as any).technicalSpecificationSnapshot,
+      includeGeneralInfo: (doc as any).includeGeneralInfo,
+      includeDescriptions: (doc as any).includeDescriptions,
+      cabinConfigurationOverride: (doc as any).cabinConfigurationOverride,
+      isCabinConfigCustom: (doc as any).isCabinConfigCustom,
       bankAccountId: (doc as any).bankAccountId,
       bankSnapshot: (doc as any).bankSnapshot || (doc as any).bankDetailsSnapshot,
       bankDetailsSnapshot: (doc as any).bankDetailsSnapshot || (doc as any).bankSnapshot,
@@ -482,10 +489,11 @@ export function DocumentListPage<T extends AnyDoc>({
       setPreviewPdfUrl("");
       return;
     }
-    const url = generateDocumentPDFBlobUrl(getNormalizedDoc(preview));
+    const norm = getNormalizedDoc(preview);
+    const url = generateDocumentPDFBlobUrl(norm, { includeDescriptions });
     setPreviewPdfUrl(url);
     return () => URL.revokeObjectURL(url);
-  }, [preview, activeCompany?.id, company]);
+  }, [preview, includeDescriptions, activeCompany?.id, company]);
 
   async function openNew() {
     let idToken: string | undefined;
@@ -2447,6 +2455,17 @@ export function DocumentListPage<T extends AnyDoc>({
                     <Bell className="h-4 w-4" /> Send Reminder
                   </Button>
                 )}
+                {kind === "invoice" && (
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none bg-muted/40 px-2 py-1 rounded border hover:bg-muted/60">
+                    <input
+                      type="checkbox"
+                      checked={includeDescriptions}
+                      onChange={(e) => setIncludeDescriptions(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded"
+                    />
+                    <span className="font-medium text-foreground">Include Descriptions</span>
+                  </label>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -2467,7 +2486,7 @@ export function DocumentListPage<T extends AnyDoc>({
                   onClick={() => {
                     if (!preview) return;
                     const normDoc = getNormalizedDoc(preview);
-                    downloadDocumentPDF(normDoc, `${preview.number}.pdf`);
+                    downloadDocumentPDF(normDoc, `${preview.number}.pdf`, { includeDescriptions });
                     toast.success(`Selectable Vector PDF generated: ${preview.number}.pdf`);
                   }}
                 >
@@ -2647,6 +2666,7 @@ export function DocumentListPage<T extends AnyDoc>({
         open={Boolean(copyModalDoc)}
         onOpenChange={(o) => !o && setCopyModalDoc(null)}
         docData={copyModalDoc ? getNormalizedDoc(copyModalDoc) : null}
+        defaultIncludeDescriptions={includeDescriptions}
       />
 
       {/* Advance Payment Restriction Modal (PRD §§ 16-18) */}

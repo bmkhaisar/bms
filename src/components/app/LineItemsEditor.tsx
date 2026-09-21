@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -18,6 +19,8 @@ import { getPricingIntelligence, type PricingIntelligence } from "@/modules/pric
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { normalizeName, normalizeSearchToken } from "@/modules/sync/searchNormalization";
 import { rememberProductSize } from "@/modules/inventory/productSizeService";
+import { authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
+import { toast } from "sonner";
 
 export function LineItemsEditor({
   items,
@@ -79,23 +82,8 @@ export function LineItemsEditor({
     });
   }, [items.map((i) => i.productId).join(","), customerId, activeCompany?.id]);
 
-  function pickProduct(i: number, p: Product) {
-    const defaultRate = mode === "sales" ? p.sellingPrice : p.purchasePrice;
-    const basis: PricingBasis = p.pricingBasis || "per_unit";
-
-    update(i, {
-      productId: p.id,
-      name: p.name,
-      hsn: p.hsn,
-      unit: p.unit || "PCS",
-      rate: defaultRate,
-      gstRate: enableGst ? p.gstRate : 0,
-      pricingBasis: basis,
-      quantity: basis === "fixed" ? 1 : items[i].quantity || 1,
-    });
-    setActiveSearchIndex(null);
-    setSearchQuery("");
-  }
+  const [savingProductDescId, setSavingProductDescId] = useState<string | null>(null);
+  const [dismissedPrompts, setDismissedPrompts] = useState<Record<number, boolean>>({});
 
   function sizeOptions(productId: string): SizeSnapshot[] {
     if (!productId) return [];
@@ -108,6 +96,62 @@ export function LineItemsEditor({
     [...remembered, ...defaults].forEach((s) => unique.set(s.label.trim().toLowerCase(), s));
     return Array.from(unique.values()).slice(0, 8);
   }
+
+  function pickProduct(i: number, p: Product) {
+    const defaultRate = mode === "sales" ? p.sellingPrice : p.purchasePrice;
+    const basis: PricingBasis = p.pricingBasis || "per_unit";
+    const prodDesc = p.defaultDescription || p.description || "";
+    const sizes = sizeOptions(p.id);
+    const initialSize = sizes.length > 0 ? sizes[0] : undefined;
+
+    update(i, {
+      productId: p.id,
+      name: p.name,
+      productName: p.name,
+      productNameSnapshot: p.name,
+      description: prodDesc,
+      descriptionSnapshot: prodDesc,
+      hsn: p.hsn,
+      unit: p.unit || "PCS",
+      uomSnapshot: p.unit || "PCS",
+      rate: defaultRate,
+      rateSnapshot: defaultRate,
+      gstRate: enableGst ? p.gstRate : 0,
+      pricingBasis: basis,
+      quantity: basis === "fixed" ? 1 : items[i].quantity || 1,
+      ...(initialSize ? { size: initialSize.label, sizeSnapshot: initialSize } : {}),
+    });
+    setActiveSearchIndex(null);
+    setSearchQuery("");
+  }
+
+  async function handleUpdateProductDefault(productId: string, newDescription: string, rowIndex: number) {
+    if (!activeCompany?.id || !productId) return;
+    const p = products.find((prod) => prod.id === productId);
+    if (!p) return;
+
+    setSavingProductDescId(productId);
+    try {
+      const updated: Product = {
+        ...p,
+        defaultDescription: newDescription,
+      };
+      await authoritativeSaveEntity({
+        companyId: activeCompany.id,
+        kind: "product",
+        entity: updated,
+        action: "update",
+      });
+      toast.success("Product default description updated");
+      setDismissedPrompts((prev) => ({ ...prev, [rowIndex]: true }));
+    } catch (err: any) {
+      console.error("Failed to update product default description:", err);
+      toast.error(err?.message || "Failed to update product default description");
+    } finally {
+      setSavingProductDescId(null);
+    }
+  }
+
 
   async function applySize(i: number, size: SizeSnapshot) {
     update(i, { size: size.label, sizeSnapshot: { ...size } });
@@ -213,9 +257,47 @@ export function LineItemsEditor({
               <Input
                 className="h-8"
                 value={it.name}
-                onChange={(e) => update(i, { name: e.target.value })}
-                placeholder="Product description"
+                onChange={(e) => update(i, { name: e.target.value, productNameSnapshot: e.target.value })}
+                placeholder="Product name"
               />
+              <Textarea
+                className="min-h-[44px] text-xs py-1.5 resize-y bg-background font-normal"
+                value={it.description || ""}
+                onChange={(e) => update(i, { description: e.target.value, descriptionSnapshot: e.target.value })}
+                placeholder="Item description (specifications, features)..."
+              />
+              {(() => {
+                const linkedProduct = products.find((p) => p.id === it.productId);
+                const prodDefaultDesc = linkedProduct?.defaultDescription || linkedProduct?.description || "";
+                const hasChangedDesc = Boolean(it.description && it.description.trim() !== prodDefaultDesc.trim());
+                if (!hasChangedDesc || dismissedPrompts[i] || !it.productId) return null;
+                return (
+                  <div className="flex flex-wrap items-center justify-between gap-1 p-1.5 rounded bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-900 dark:text-amber-200">
+                    <span className="font-medium">Changed from Product default</span>
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-5 px-1.5 text-[10px] hover:bg-amber-500/20"
+                        onClick={() => setDismissedPrompts((prev) => ({ ...prev, [i]: true }))}
+                      >
+                        Document Only
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-5 px-2 text-[10px] bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600 font-medium"
+                        disabled={savingProductDescId === it.productId}
+                        onClick={() => handleUpdateProductDefault(it.productId, it.description || "", i)}
+                      >
+                        {savingProductDescId === it.productId ? "Updating..." : "Update Product Default"}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })()}
               <div>
                 <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Size</div>
                 <ProductSizeField
@@ -329,8 +411,8 @@ export function LineItemsEditor({
                           <Input
                             className="h-8 text-xs bg-background cursor-pointer"
                             value={it.name || ""}
-                            onChange={(e) => update(i, { name: e.target.value })}
-                            placeholder="Type to search or enter description…"
+                            onChange={(e) => update(i, { name: e.target.value, productNameSnapshot: e.target.value })}
+                            placeholder="Type to search or enter product name…"
                           />
                           {it.productId && (
                             <Button
@@ -412,6 +494,48 @@ export function LineItemsEditor({
                         </div>
                       </PopoverContent>
                     </Popover>
+
+                    {/* Multiline Expandable Item Description (PRD § 5) */}
+                    <Textarea
+                      className="min-h-[44px] max-h-[120px] text-xs py-1.5 resize-y bg-background font-normal"
+                      value={it.description || ""}
+                      onChange={(e) => update(i, { description: e.target.value, descriptionSnapshot: e.target.value })}
+                      placeholder="Item description (specifications, features)..."
+                    />
+
+                    {/* Changed from Product default banner (PRD § 3 & Correction #6, #7) */}
+                    {(() => {
+                      const linkedProduct = products.find((p) => p.id === it.productId);
+                      const prodDefaultDesc = linkedProduct?.defaultDescription || linkedProduct?.description || "";
+                      const hasChangedDesc = Boolean(it.description && it.description.trim() !== prodDefaultDesc.trim());
+                      if (!hasChangedDesc || dismissedPrompts[i] || !it.productId) return null;
+                      return (
+                        <div className="flex flex-wrap items-center justify-between gap-1 p-1.5 rounded bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-900 dark:text-amber-200">
+                          <span className="font-medium">Changed from Product default</span>
+                          <div className="flex items-center gap-1.5 ml-auto">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-5 px-1.5 text-[10px] hover:bg-amber-500/20"
+                              onClick={() => setDismissedPrompts((prev) => ({ ...prev, [i]: true }))}
+                            >
+                              Document Only
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-5 px-2 text-[10px] bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600 font-medium"
+                              disabled={savingProductDescId === it.productId}
+                              onClick={() => handleUpdateProductDefault(it.productId, it.description || "", i)}
+                            >
+                              {savingProductDescId === it.productId ? "Updating..." : "Update Product Default"}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Measurement Summary Badge / Multi-row details */}
                     {it.measurementSummary && (

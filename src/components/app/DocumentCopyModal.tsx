@@ -2,16 +2,18 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, Printer, Copy, FileText, CheckCircle2, ShieldCheck, Loader2 } from "lucide-react";
-import { downloadDocumentPDF, type NormalizedDocument, type DocumentCopyType } from "@/lib/documentRenderer";
+import { downloadDocumentPDF, type NormalizedDocument, type DocumentCopyType, type PdfRenderOptions } from "@/lib/documentRenderer";
 import { toast } from "sonner";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   docData: NormalizedDocument | null;
-  onPrint?: (copyLabel: DocumentCopyType) => void;
+  onPrint?: (copyLabel: DocumentCopyType, options?: PdfRenderOptions) => void;
+  defaultIncludeDescriptions?: boolean;
 }
 
 export const COPY_OPTIONS: Array<{ value: DocumentCopyType; label: string; description: string; color: string }> = [
@@ -23,8 +25,9 @@ export const COPY_OPTIONS: Array<{ value: DocumentCopyType; label: string; descr
   { value: "DRIVER COPY", label: "DRIVER COPY", description: "Delivery driver transit acknowledgment", color: "text-rose-700 bg-rose-50 border-rose-200" },
 ];
 
-export function DocumentCopyModal({ open, onOpenChange, docData, onPrint }: Props) {
+export function DocumentCopyModal({ open, onOpenChange, docData, onPrint, defaultIncludeDescriptions = true }: Props) {
   const [copyLabel, setCopyLabel] = useState<DocumentCopyType>("ORIGINAL");
+  const [includeDescriptions, setIncludeDescriptions] = useState(defaultIncludeDescriptions);
   const [downloading, setDownloading] = useState(false);
 
   if (!docData) return null;
@@ -35,6 +38,9 @@ export function DocumentCopyModal({ open, onOpenChange, docData, onPrint }: Prop
     try {
       downloadDocumentPDF({
         ...docData,
+        copyLabel,
+      }, undefined, {
+        includeDescriptions,
         copyLabel,
       });
       toast.success(`Generated ${copyLabel} for ${docData.number}`);
@@ -49,7 +55,7 @@ export function DocumentCopyModal({ open, onOpenChange, docData, onPrint }: Prop
 
   function handlePrint() {
     if (onPrint) {
-      onPrint(copyLabel);
+      onPrint(copyLabel, { includeDescriptions, copyLabel });
       onOpenChange(false);
     } else {
       handleDownload();
@@ -89,6 +95,18 @@ export function DocumentCopyModal({ open, onOpenChange, docData, onPrint }: Prop
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Document Rendering Options (PRD §§ 9, 28) */}
+          <div className="rounded-xl border p-3 bg-muted/20 space-y-2">
+            <div className="text-[11px] font-semibold text-foreground">Document Options</div>
+            <label className="flex items-center justify-between cursor-pointer select-none">
+              <span className="text-xs text-foreground">Include Item Descriptions</span>
+              <Switch
+                checked={includeDescriptions}
+                onCheckedChange={setIncludeDescriptions}
+              />
+            </label>
           </div>
 
           {/* Visual Preview Badge */}

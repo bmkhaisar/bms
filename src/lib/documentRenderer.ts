@@ -3,11 +3,21 @@ import autoTable from "jspdf-autotable";
 import { formatMoney, formatDate, numberToWordsIndian } from "@/lib/format";
 import type { CompanySnapshot, SignatoryConfig, SignatorySnapshot } from "@/modules/company/types";
 import { resolveDocumentSignatory, createTypedSignatureDataUrl } from "@/modules/company/signatoryHelper";
-import type { LineItem, ExtraCharge, BankAccount, StructuredTermItem } from "@/lib/db";
+import type { LineItem, ExtraCharge, BankAccount, StructuredTermItem, GeneralInfoField } from "@/lib/db";
 import { formatCompanyAddress } from "@/lib/companyAddress";
+import { handleAutoTableMarkdownCell, drawMarkdownText } from "@/lib/markdownPdfRenderer";
+import { resolveGeneralInfoFields } from "@/lib/cabinConfiguration";
 
 const PDF_CCY = "Rs. ";
 const money = (val: number) => formatMoney(val, PDF_CCY);
+
+export interface PdfRenderOptions {
+  includeDescriptions?: boolean;
+  includeGeneralInfo?: boolean;
+  includeTerms?: boolean;
+  copyLabel?: DocumentCopyType;
+  filename?: string;
+}
 
 export interface DocumentParty {
   name: string;
@@ -104,6 +114,14 @@ export interface NormalizedDocument {
     referenceNumber?: string;
     narration?: string;
   };
+  generalInformationSnapshot?: GeneralInfoField[];
+  generalInfoSnapshot?: GeneralInfoField[];
+  technicalSpecificationSnapshot?: any[];
+  techSpecsSnapshot?: any[];
+  cabinConfigurationOverride?: string;
+  isCabinConfigCustom?: boolean;
+  includeGeneralInfo?: boolean;
+  includeDescriptions?: boolean;
 }
 
 /**
@@ -157,7 +175,7 @@ function renderWatermark(
  * Guarantees crisp selectable text, multi-page stability, correct totals,
  * no text cut-off, and strict company identity preservation without BMS logo injection.
  */
-export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
+export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRenderOptions): jsPDF {
   const doc = new jsPDF({
     unit: "mm",
     format: "a4",
@@ -589,10 +607,13 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       6: { cellWidth: 26, halign: "right" },
     };
   } else if (isTaxDoc) {
+    const showDescriptions = options?.includeDescriptions ?? docData.includeDescriptions ?? true;
     tableHeaders = ["SL No.", "Particulars", "Size", "HSN/SAC", "Qty", "Unit", "Rate", "Discount", "GST", "Amount"];
     tableRows = effectiveItems.map((item, idx) => {
-      let desc = item.productName || item.name;
-      if (item.description && item.description !== desc) desc += `\n${item.description}`;
+      const pName = item.productNameSnapshot || item.productName || item.name;
+      const descText = item.descriptionSnapshot || item.description;
+      let desc = pName;
+      if (showDescriptions && descText && descText !== pName) desc += `\n${descText}`;
       if (item.measurementSummary && item.measurementSummary !== item.size) desc += `\n${item.measurementSummary}`;
       const disc = item.discountPercent ?? item.discountPct ?? 0;
       const rate = item.rate !== undefined ? item.rate : ((item.ratePaise || 0) / 100);
@@ -625,10 +646,13 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
     };
   } else {
     // Clean Commercial / Non-GST Table without empty GST columns
+    const showDescriptions = options?.includeDescriptions ?? docData.includeDescriptions ?? true;
     tableHeaders = ["SL No.", "Particulars", "Size", "Qty", "Unit", "Rate", "Discount", "Amount"];
     tableRows = effectiveItems.map((item, idx) => {
-      let desc = item.productName || item.name;
-      if (item.description && item.description !== desc) desc += `\n${item.description}`;
+      const pName = item.productNameSnapshot || item.productName || item.name;
+      const descText = item.descriptionSnapshot || item.description;
+      let desc = pName;
+      if (showDescriptions && descText && descText !== pName) desc += `\n${descText}`;
       if (item.measurementSummary && item.measurementSummary !== item.size) desc += `\n${item.measurementSummary}`;
       const disc = item.discountPercent ?? item.discountPct ?? 0;
       const rate = item.rate !== undefined ? item.rate : ((item.ratePaise || 0) / 100);
@@ -676,6 +700,12 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       textColor: [55, 65, 81],
       overflow: "linebreak",
     },
+    didParseCell: (data) => {
+      handleAutoTableMarkdownCell("didParseCell", data, "helvetica", 8, [55, 65, 81]);
+    },
+    didDrawCell: (data) => {
+      handleAutoTableMarkdownCell("didDrawCell", data, "helvetica", 8, [55, 65, 81]);
+    },
     didDrawPage: (data) => {
       // Re-apply watermark on every new page
       if (data.pageNumber > 1) {
@@ -705,10 +735,12 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
     y += 11;
   }
 
-  if (y > pageH - 60) {
+  // Smart page break for totals: Only break if totals block would overflow bottom margin
+  const totalsRequiredH = 34 + ((docData.extraCharges?.length || 0) * 4);
+  if (y + totalsRequiredH > pageH - margin) {
     doc.addPage();
     renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
-    y = margin;
+    y = margin + 4;
   }
 
   // 6. Totals & Tax Breakdown Block
@@ -800,15 +832,62 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   doc.text(`Amount in words: ${words}`, margin, y);
   y += 6;
 
+  // 6.5. General Information (rendered if enabled on invoice/document)
+  const showGeneralInfo = (options?.includeGeneralInfo ?? docData.includeGeneralInfo ?? (comp as any).showInvoiceGeneralInfo) === true;
+  if (showGeneralInfo && (docData.generalInformationSnapshot?.length || docData.generalInfoSnapshot?.length || (comp as any).generalInfoFields?.length)) {
+    const resolvedGen = resolveGeneralInfoFields({
+      companyFields: (comp as any).generalInfoFields,
+      items: docData.items,
+      documentOverride: docData.generalInformationSnapshot || docData.generalInfoSnapshot,
+      cabinOverride: docData.cabinConfigurationOverride,
+      isCabinConfigCustom: docData.isCabinConfigCustom,
+      isIssuedOrFrozen: docData.kind === "invoice",
+      frozenSnapshot: docData.generalInformationSnapshot || docData.generalInfoSnapshot,
+    });
+
+    if (resolvedGen.length > 0) {
+      if (y > pageH - 45) {
+        doc.addPage();
+        renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
+        y = margin + 4;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(107, 114, 128);
+      doc.text("GENERAL INFORMATION", margin, y);
+      y += 3.5;
+
+      const genRows = resolvedGen.map(f => [f.label, f.value]);
+      autoTable(doc, {
+        head: [["Specification / Parameter", "Details / Value"]],
+        body: genRows,
+        startY: y,
+        margin: { left: margin, right: margin },
+        styles: { font: "helvetica", fontSize: 7.5, cellPadding: 2, lineColor: [229, 231, 235], lineWidth: 0.1 },
+        headStyles: { fillColor: [243, 244, 246], textColor: [31, 41, 55], fontStyle: "bold" },
+        columnStyles: { 0: { cellWidth: 55, fontStyle: "bold", textColor: [31, 41, 55] }, 1: { cellWidth: "auto" } },
+        theme: "grid",
+        didParseCell: (data) => {
+          handleAutoTableMarkdownCell("didParseCell", data, "helvetica", 7.5, [55, 65, 81]);
+        },
+        didDrawCell: (data) => {
+          handleAutoTableMarkdownCell("didDrawCell", data, "helvetica", 7.5, [55, 65, 81]);
+        },
+      });
+      y = (doc as any).lastAutoTable.finalY + 5;
+    }
+  }
+
   // 7. Terms & Conditions (Rendered before Bank Details, supports Markdown lists, hanging indent)
-  const showTerms = docData.kind !== "receipt" && docData.includeTerms !== false &&
+  const showTerms = docData.kind !== "receipt" && (options?.includeTerms ?? docData.includeTerms ?? true) !== false &&
     (docData.termsSnapshot?.length || (docData as any).showInvoiceTerms !== false && (comp as any).showInvoiceTerms !== false);
 
   if (showTerms && (docData.terms || docData.termsSnapshot?.length || (comp as any).invoiceTermsMarkdown || comp.terms)) {
-    if (y > pageH - 35) {
+    if (y > pageH - 25) {
       doc.addPage();
       renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
-      y = margin;
+      y = margin + 4;
     }
 
     doc.setFont("helvetica", "bold");
@@ -829,20 +908,25 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
     for (let i = 0; i < termLines.length; i++) {
       const rawLine = termLines[i];
       const isBullet = rawLine.startsWith("- ") || rawLine.startsWith("* ");
-      const cleanText = rawLine.replace(/^(\d+[.)]|[-*])\s*/, "").replace(/\*\*(.+?)\*\*/g, "$1");
-      const lines = doc.splitTextToSize(cleanText, pageW - margin * 2 - 8);
+      const cleanText = rawLine.replace(/^(\d+[.)]|[-*])\s*/, "");
+      const plainText = cleanText.replace(/\*\*(.+?)\*\*/g, "$1");
+      const lines = doc.splitTextToSize(plainText, pageW - margin * 2 - 8);
       const termH = lines.length * 3.4 + 1.5;
 
-      if (y + termH > pageH - 25) {
+      if (y + termH > pageH - 18) {
         doc.addPage();
         renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
-        y = margin;
+        y = margin + 4;
       }
 
       doc.setFont("helvetica", "bold");
       doc.text(isBullet ? "•" : `${i + 1}.`, margin, y);
-      doc.setFont("helvetica", "normal");
-      doc.text(lines, margin + 6, y);
+      if (cleanText.includes("**")) {
+        drawMarkdownText(doc, cleanText, margin + 6, y, pageW - margin * 2 - 8, 3.4, "helvetica", 7.5, [107, 114, 128]);
+      } else {
+        doc.setFont("helvetica", "normal");
+        doc.text(lines, margin + 6, y);
+      }
       y += termH;
     }
     y += 2;
@@ -941,8 +1025,8 @@ function renderDocumentSignatoryBlock(
 ): number {
   let y = startY;
 
-  // If remaining space on page is too tight for the full signatory block (~42mm), add page
-  if (y > pageH - 46) {
+  // If remaining space on page is too tight for the full signatory block (~32mm), add page
+  if (y > pageH - 36) {
     doc.addPage();
     renderWatermark(doc, doc.internal.pageSize.getWidth(), pageH, watermarkMode, logoUrl, watermarkCustomText);
     y = margin + 8;
@@ -1070,25 +1154,55 @@ function renderDocumentSignatoryBlock(
 }
 
 /**
+ * Generates a vector PDF document Blob.
+ * Guaranteed: Preview, Download, and Print share the exact same generated Blob.
+ */
+export function generateDocumentPDFBlob(docData: NormalizedDocument, options?: PdfRenderOptions): Blob {
+  const doc = buildDocumentPDF(docData, options);
+  return doc.output("blob");
+}
+
+/**
  * Downloads the normalized vector PDF directly in browser.
  */
-export function downloadDocumentPDF(docData: NormalizedDocument, filename?: string): void {
-  const doc = buildDocumentPDF(docData);
+export function downloadDocumentPDF(
+  docData: NormalizedDocument,
+  filename?: string,
+  options?: PdfRenderOptions | Blob
+): void {
+  let blob: Blob;
+  if (options instanceof Blob) {
+    blob = options;
+  } else {
+    blob = generateDocumentPDFBlob(docData, options);
+  }
+
   let fname = filename;
   if (!fname) {
-    const copySuffix = docData.copyLabel
-      ? `-${docData.copyLabel.toLowerCase().replace(/\s+/g, "-")}`
+    const copyLabel = docData.copyLabel || (options && !(options instanceof Blob) ? options.copyLabel : "");
+    const copySuffix = copyLabel
+      ? `-${copyLabel.toLowerCase().replace(/\s+/g, "-")}`
       : "";
     const cleanNum = (docData.number || "document").replace(/[/\\?%*:|"<>]/g, "-");
     fname = `${cleanNum}${copySuffix}.pdf`;
   }
-  doc.save(fname);
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    if (document.body.contains(a)) document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 1000);
 }
 
 /**
  * Generates a Blob URL for instant responsive in-app preview.
  */
-export function generateDocumentPDFBlobUrl(docData: NormalizedDocument): string {
-  const doc = buildDocumentPDF(docData);
-  return URL.createObjectURL(doc.output("blob"));
+export function generateDocumentPDFBlobUrl(docData: NormalizedDocument, options?: PdfRenderOptions): string {
+  const blob = generateDocumentPDFBlob(docData, options);
+  return URL.createObjectURL(blob);
 }

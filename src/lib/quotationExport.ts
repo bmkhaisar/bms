@@ -16,6 +16,8 @@ import { formatCompanyAddress } from "./companyAddress.ts";
 import { resolveDocumentModel } from "./documentModel.ts";
 import { extractTableRowsFromMarkdown, extractTermsFromMarkdown, parseMarkdownToBlocks } from "./markdownDoc.ts";
 import { resolveDocumentSignatory, createTypedSignatureDataUrl } from "../modules/company/signatoryHelper.ts";
+import { resolveGeneralInfoFields } from "./cabinConfiguration.ts";
+import { handleAutoTableMarkdownCell, cleanMarkdownForPdf } from "./markdownPdfRenderer.ts";
 
 const FOOTER_MARK = "Built by MMA";
 // jsPDF's built-in Helvetica lacks the ₹ glyph (renders as superscript 1).
@@ -341,6 +343,12 @@ async function drawCover(ctx: PdfContext): Promise<number> {
       6: { halign: "right" }, 7: { halign: "right" }, 8: { halign: "right", fontStyle: "bold" },
     },
     theme: template.tableStyle === "plain" ? "plain" : "grid",
+    didParseCell: (data: any) => {
+      handleAutoTableMarkdownCell("didParseCell", data, template.fontFamily, 8);
+    },
+    didDrawCell: (data: any) => {
+      handleAutoTableMarkdownCell("didDrawCell", data, template.fontFamily, 8);
+    },
   });
 
   y = (doc as any).lastAutoTable.finalY + 4;
@@ -416,11 +424,17 @@ async function drawSectionsPage(
     heading: string;
     subtitle?: string;
     rows: Array<[string, string] | { label: string; value: string; bullets?: string[] }>;
-  }>
-) {
+  }>,
+  currentY?: number
+): Promise<number> {
   const { doc, template, accent, pageW, pageH, margin } = ctx;
-  doc.addPage();
-  let y = (await pdfHeader(ctx, false)) + 6;
+  let y: number;
+  if (currentY !== undefined && currentY > 0 && currentY + 55 < pageH - margin) {
+    y = currentY + 8;
+  } else {
+    doc.addPage();
+    y = (await pdfHeader(ctx, false)) + 6;
+  }
 
   doc.setFont(template.fontFamily, "bold");
   doc.setFontSize(13);
@@ -481,15 +495,27 @@ async function drawSectionsPage(
       },
       theme: "grid",
       showHead: "everyPage",
+      didParseCell: (data: any) => {
+        handleAutoTableMarkdownCell("didParseCell", data, template.fontFamily, 8.5);
+      },
+      didDrawCell: (data: any) => {
+        handleAutoTableMarkdownCell("didDrawCell", data, template.fontFamily, 8.5);
+      },
     });
     y = (doc as any).lastAutoTable.finalY + 6;
   }
+  return y;
 }
 
-async function drawTermsPage(ctx: PdfContext) {
+async function drawTermsPage(ctx: PdfContext, currentY?: number): Promise<number> {
   const { doc, template, accent, quotation, company, pageW, pageH, margin } = ctx;
-  doc.addPage();
-  let y = (await pdfHeader(ctx, false)) + 6;
+  let y: number;
+  if (currentY !== undefined && currentY > 0 && currentY + 65 < pageH - margin) {
+    y = currentY + 8;
+  } else {
+    doc.addPage();
+    y = (await pdfHeader(ctx, false)) + 6;
+  }
 
   doc.setFont(template.fontFamily, "bold");
   doc.setFontSize(13);
@@ -766,6 +792,7 @@ async function drawTermsPage(ctx: PdfContext) {
     doc.setTextColor(120, 120, 120);
     doc.text(`Date: ${resolved.signatureDateText}`, sigX, y + 34);
   }
+  return y + 36;
 }
 
 export async function exportQuotationPDF(
@@ -793,7 +820,7 @@ export async function exportQuotationPDF(
   };
 
   // 1. Compact Page 1: Header, Quotation Details, Bill To/Ship To, Line Items, Totals, Amount in Words
-  await drawCover(ctx);
+  let currentY = await drawCover(ctx);
 
   // 2. Supplementary Section: General Information (PRD §§ 8, 9, 81 — Quotation only)
   const showGenInfo = quotation.visibilitySnapshot?.showGeneralInfo !== undefined
@@ -807,60 +834,51 @@ export async function exportQuotationPDF(
   if (showGenInfo) {
     let genRows: Array<{ label: string; value: string; bullets?: string[] }> = [];
 
-    if (!isDraft) {
-      if (quotation.generalInformationSnapshot?.length) {
-        const sec: any = quotation.generalInformationSnapshot.find((s: any) => s.type === "GENERAL_INFO") || { rows: quotation.generalInformationSnapshot };
-        if (sec && sec.rows) {
-          genRows = sec.rows.map((r: any) => ({
-            label: r.label,
-            value: r.value,
-            bullets: r.bullets || (r.valueType === "BULLET_LIST" ? r.value.split(/\r?\n+/).map((b: string) => b.trim()).filter(Boolean) : undefined),
-          }));
-        }
-      } else if (quotation.generalInfoSnapshot?.length) {
-        genRows = quotation.generalInfoSnapshot.map((f: any) => ({
-          label: f.label,
-          value: f.value,
-          bullets: f.value && f.value.includes("•") ? f.value.split("•").map((b: string) => b.trim()).filter(Boolean) : undefined,
+    const resolved = resolveGeneralInfoFields({
+      companyFields: (company as any).generalInfoFields || (company as any).generalInformationFields,
+      items: quotation.items,
+      documentOverride: quotation.generalInformationSnapshot,
+      cabinOverride: quotation.cabinConfigurationOverride,
+      isCabinConfigCustom: quotation.isCabinConfigCustom,
+      isIssuedOrFrozen: !isDraft,
+      frozenSnapshot: quotation.generalInformationSnapshot || quotation.generalInfoSnapshot,
+    });
+
+    if (resolved && resolved.length > 0) {
+      genRows = resolved.map((r) => ({
+        label: r.label,
+        value: r.value,
+        bullets: r.value && r.value.includes("•")
+          ? r.value.split("•").map((b: string) => b.trim()).filter(Boolean)
+          : undefined,
+      }));
+    } else if ((quotation as any).generalInfoMarkdown || quotation.generalInformationMarkdown || (company as any).quotationGeneralInfoMarkdown) {
+      const genMd = (quotation as any).generalInfoMarkdown || quotation.generalInformationMarkdown || (company as any).quotationGeneralInfoMarkdown;
+      genRows = extractTableRowsFromMarkdown(genMd);
+    } else if (quotation.generalInformationSnapshot?.length) {
+      const sec: any = quotation.generalInformationSnapshot.find((s: any) => s.type === "GENERAL_INFO") || { rows: quotation.generalInformationSnapshot };
+      if (sec && sec.rows) {
+        genRows = sec.rows.map((r: any) => ({
+          label: r.label,
+          value: r.value,
+          bullets: r.bullets || (r.valueType === "BULLET_LIST" ? r.value.split(/\r?\n+/).map((b: string) => b.trim()).filter(Boolean) : undefined),
         }));
-      } else if ((quotation as any).generalInfoMarkdown) {
-        genRows = extractTableRowsFromMarkdown((quotation as any).generalInfoMarkdown);
       }
-    } else {
-      const genMd = (quotation as any).generalInfoMarkdown || (company as any).quotationGeneralInfoMarkdown;
-      if (genMd) {
-        genRows = extractTableRowsFromMarkdown(genMd);
-      } else if (quotation.generalInformationSnapshot?.length) {
-        const sec: any = quotation.generalInformationSnapshot.find((s: any) => s.type === "GENERAL_INFO") || { rows: quotation.generalInformationSnapshot };
-        if (sec && sec.rows) {
-          genRows = sec.rows.map((r: any) => ({
-            label: r.label,
-            value: r.value,
-            bullets: r.bullets || (r.valueType === "BULLET_LIST" ? r.value.split(/\r?\n+/).map((b: string) => b.trim()).filter(Boolean) : undefined),
-          }));
-        }
-      } else if (quotation.generalInfoSnapshot?.length) {
-        genRows = quotation.generalInfoSnapshot.map((f: any) => ({
-          label: f.label,
-          value: f.value,
-          bullets: f.value && f.value.includes("•") ? f.value.split("•").map((b: string) => b.trim()).filter(Boolean) : undefined,
+    } else if (quotation.structuredSections) {
+      const sec = quotation.structuredSections.find(s => s.type === "GENERAL_INFO");
+      if (sec && sec.rows) {
+        genRows = sec.rows.map(r => ({
+          label: r.label,
+          value: r.value,
+          bullets: r.bullets || (r.valueType === "BULLET_LIST" ? r.value.split(/\r?\n+/).map(b => b.trim()).filter(Boolean) : undefined),
         }));
-      } else if (quotation.structuredSections) {
-        const sec = quotation.structuredSections.find(s => s.type === "GENERAL_INFO");
-        if (sec && sec.rows) {
-          genRows = sec.rows.map(r => ({
-            label: r.label,
-            value: r.value,
-            bullets: r.bullets || (r.valueType === "BULLET_LIST" ? r.value.split(/\r?\n+/).map(b => b.trim()).filter(Boolean) : undefined),
-          }));
-        }
       }
     }
 
     if (genRows.length > 0) {
-      await drawSectionsPage(ctx, "General Information", [
+      currentY = await drawSectionsPage(ctx, "General Information", [
         { heading: "Commercial & Site Information", rows: genRows },
-      ]);
+      ], currentY);
     }
   }
 
@@ -972,12 +990,12 @@ export async function exportQuotationPDF(
     }
 
     if (specSections.length > 0) {
-      await drawSectionsPage(ctx, "Technical / Fabrication Specifications", specSections);
+      currentY = await drawSectionsPage(ctx, "Technical / Fabrication Specifications", specSections, currentY);
     }
   }
 
   // 4. Terms, Bank & Signatory Page (PRD §§ 78, 79, 80)
-  await drawTermsPage(ctx);
+  await drawTermsPage(ctx, currentY);
 
   // 5. Running page numbers & footer on all pages
   const total = doc.getNumberOfPages();
