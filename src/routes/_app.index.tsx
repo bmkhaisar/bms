@@ -10,6 +10,7 @@ import {
   type Supplier,
   type Quotation,
   type Receipt,
+  type Payment,
 } from "@/lib/db";
 import { useLive, useLiveState } from "@/lib/useLive";
 import { formatMoney, formatDate } from "@/lib/format";
@@ -98,6 +99,17 @@ function Dashboard() {
     return db().receipts.orderBy("createdAt").reverse().limit(300).toArray();
   }, [activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
 
+  const paymentsState = useLiveState<Payment>(() => {
+    if (activeFinancialYear?.startDate && activeFinancialYear?.endDate) {
+      return db().payments
+        .where("date")
+        .between(activeFinancialYear.startDate, activeFinancialYear.endDate, true, true)
+        .limit(300)
+        .toArray();
+    }
+    return db().payments.orderBy("createdAt").reverse().limit(300).toArray();
+  }, [activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
+
   const recentInvoices = useLive<Invoice>(() =>
     db().invoices.orderBy("createdAt").reverse().limit(5).toArray()
   );
@@ -107,6 +119,7 @@ function Dashboard() {
   const products = productsState.data;
   const customers = customersState.data;
   const receipts = receiptsState.data;
+  const payments = paymentsState.data;
 
   // Cloud Realtime Ledgers for authoritative accounting calculations
   const [ledgers, setLedgers] = useState<Ledger[]>([]);
@@ -145,7 +158,7 @@ function Dashboard() {
     };
   }, [activeCompany?.id]);
 
-  const isDataLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded && receiptsState.isLoaded && customersState.isLoaded && ledgersLoaded;
+  const isDataLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded && receiptsState.isLoaded && paymentsState.isLoaded && customersState.isLoaded && ledgersLoaded;
   const cacheKey = `${activeCompany?.id || "default"}_${activeFinancialYear?.id || "all"}`;
 
   // Compute authoritative metrics using formal double-entry and transaction data
@@ -159,6 +172,7 @@ function Dashboard() {
       purchases,
       products,
       receipts,
+      payments,
       financialYearStart: activeFinancialYear?.startDate,
       financialYearEnd: activeFinancialYear?.endDate,
       inventoryValuationMethod: (activeCompany as any)?.inventoryValuationMethod,
@@ -167,7 +181,7 @@ function Dashboard() {
       dashboardMetricsMemoryCache[cacheKey] = computed;
     }
     return computed;
-  }, [isDataLoaded, ledgers, invoices, purchases, products, receipts, activeFinancialYear?.startDate, activeFinancialYear?.endDate, (activeCompany as any)?.inventoryValuationMethod, cacheKey]);
+  }, [isDataLoaded, ledgers, invoices, purchases, products, receipts, payments, activeFinancialYear?.startDate, activeFinancialYear?.endDate, (activeCompany as any)?.inventoryValuationMethod, cacheKey]);
 
   // If data is still querying and no memory cache exists yet, show skeleton rather than flashing ₹0
   if (!isDataLoaded && !dashboardMetricsMemoryCache[cacheKey]) {
@@ -210,6 +224,14 @@ function Dashboard() {
       tint: "text-sky-600 dark:text-sky-400",
       subtext: "Raw materials & COGS",
       href: "/purchases",
+    },
+    {
+      label: "Payments Made",
+      value: formatMoney(metrics.totalPaymentsMade),
+      icon: ArrowUpRight,
+      tint: "text-rose-600 dark:text-rose-400",
+      subtext: "Disbursed to suppliers",
+      href: "/receipts",
     },
     {
       label: "Accounts Payable",
@@ -377,8 +399,16 @@ function Dashboard() {
               <div className="mt-1 text-xl font-bold font-mono tabular-nums text-foreground">
                 {formatMoney(metrics.inputGst)}
               </div>
-              <div className="mt-1 text-[10px] text-muted-foreground">
-                Eligible input tax credit from verified bills
+              <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                <span>CGST: {formatMoney(metrics.cgstInput)}</span>
+                <span>•</span>
+                <span>SGST: {formatMoney(metrics.sgstInput)}</span>
+                {metrics.igstInput > 0 && (
+                  <>
+                    <span>•</span>
+                    <span>IGST: {formatMoney(metrics.igstInput)}</span>
+                  </>
+                )}
               </div>
             </div>
 
@@ -481,6 +511,89 @@ function Dashboard() {
               </div>
               <div className="mt-1 text-base font-bold font-mono tabular-nums text-foreground">
                 {formatMoney(metrics.receivedByPaymentMode.card + metrics.receivedByPaymentMode.other)}
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Supplier Payments & Payment Mode Breakdown */}
+      <div className="mt-4">
+        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <ArrowUpRight className="h-5 w-5 text-rose-500" />
+                <h3 className="text-base font-semibold tracking-tight text-foreground">
+                  Supplier Payments & Disbursements
+                </h3>
+                <span className="rounded-full bg-rose-500/10 px-2.5 py-0.5 text-[11px] font-medium text-rose-600 dark:text-rose-400">
+                  Posted Payments Only
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Actual cash and bank outflows paid to suppliers and vendors for purchase bill settlements and advances.
+              </p>
+            </div>
+            <Link to="/receipts">
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+                Open Payment Register &rarr;
+              </Button>
+            </Link>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="rounded-xl border border-rose-500/25 bg-rose-500/5 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-rose-600 dark:text-rose-400">
+                Total Disbursed
+              </div>
+              <div className="mt-1 text-base sm:text-lg font-bold font-mono tabular-nums text-foreground">
+                {formatMoney(metrics.totalPaymentsMade)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Bank / Transfer
+              </div>
+              <div className="mt-1 text-base font-bold font-mono tabular-nums text-foreground">
+                {formatMoney(metrics.paidByPaymentMode.bank)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                UPI
+              </div>
+              <div className="mt-1 text-base font-bold font-mono tabular-nums text-foreground">
+                {formatMoney(metrics.paidByPaymentMode.upi)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Cash
+              </div>
+              <div className="mt-1 text-base font-bold font-mono tabular-nums text-foreground">
+                {formatMoney(metrics.paidByPaymentMode.cash)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Cheque
+              </div>
+              <div className="mt-1 text-base font-bold font-mono tabular-nums text-foreground">
+                {formatMoney(metrics.paidByPaymentMode.cheque)}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Card / Other
+              </div>
+              <div className="mt-1 text-base font-bold font-mono tabular-nums text-foreground">
+                {formatMoney(metrics.paidByPaymentMode.card + metrics.paidByPaymentMode.other)}
               </div>
             </div>
           </div>

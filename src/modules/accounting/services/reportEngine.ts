@@ -645,6 +645,9 @@ export interface ComprehensiveReconciliation {
     outputGstRupees: number;
     outputGstLedgerRupees: number;
     inputGstRupees: number;
+    cgstInputRupees: number;
+    sgstInputRupees: number;
+    igstInputRupees: number;
     netGstLiabilityRupees: number;
     isGstEqual: boolean;
     isLedgerMatched: boolean;
@@ -680,6 +683,19 @@ export interface ComprehensiveReconciliation {
   payables: {
     totalOutstandingRupees: number;
     openBillsCount: number;
+    supplierPaymentsRupees: number;
+    ledgerCreditorsRupees: number;
+    differenceRupees: number;
+    openBills: Array<{
+      id: string;
+      billNumber: string;
+      supplierInvoiceNumber?: string;
+      supplierName: string;
+      supplierId: string;
+      total: number;
+      balance: number;
+      date: string;
+    }>;
     status: "PASS" | "RECONCILED";
   };
 
@@ -741,6 +757,7 @@ export function getComprehensiveFinancialReconciliation(params: {
   invoices: any[];
   receipts: any[];
   purchases?: any[];
+  payments?: any[];
   products?: any[];
   parties?: any[];
   filter?: { fromDate?: string; toDate?: string; asOfDate?: string };
@@ -752,6 +769,7 @@ export function getComprehensiveFinancialReconciliation(params: {
     invoices = [],
     receipts = [],
     purchases = [],
+    payments = [],
     products = [],
     parties = [],
     filter = {},
@@ -851,9 +869,15 @@ export function getComprehensiveFinancialReconciliation(params: {
   const gstBalance = gstLedger ? balances.get(gstLedger.id) : null;
   const outputGstLedgerRupees = gstBalance ? (gstBalance.periodCrPaise - gstBalance.periodDrPaise) / 100 : 0;
 
+  let inputCgstRupees = 0;
+  let inputSgstRupees = 0;
+  let inputIgstRupees = 0;
   let inputGstRupees = 0;
   for (const pu of eligiblePurchases) {
     const taxes = resolveDocumentTaxes(pu);
+    inputCgstRupees += taxes.cgst || 0;
+    inputSgstRupees += taxes.sgst || 0;
+    inputIgstRupees += taxes.igst || 0;
     inputGstRupees += taxes.totalTax || 0;
   }
 
@@ -999,7 +1023,46 @@ export function getComprehensiveFinancialReconciliation(params: {
     customerReceiptsRupees += Number(r.amount || 0);
   }
 
+  const eligiblePayments = payments.filter((pay) => {
+    if (pay.postingStatus === "failed" || pay.postingStatus === "reversed" || (pay as any).status === "cancelled") return false;
+    const payDate = normalizeVoucherDate(pay.date || pay.createdAt);
+    if (fromDate && payDate < fromDate) return false;
+    if (toDate && payDate > toDate) return false;
+    return true;
+  });
+
   let supplierPaymentsRupees = 0;
+  for (const p of eligiblePayments) {
+    supplierPaymentsRupees += Number(p.amount || 0);
+  }
+
+  // Payables & Open Bills calculation
+  const openBills: ComprehensiveReconciliation["payables"]["openBills"] = [];
+  let totalPayablesOutstandingRupees = 0;
+
+  for (const pu of eligiblePurchases) {
+    const bal = Number(pu.balance !== undefined ? pu.balance : pu.grandTotal);
+    if (bal > 0.01) {
+      totalPayablesOutstandingRupees += bal;
+      openBills.push({
+        id: pu.id,
+        billNumber: pu.number || pu.id,
+        supplierInvoiceNumber: pu.supplierInvoiceNumber,
+        supplierName: partyMap.get(pu.supplierId) || (pu.supplierSnapshot as any)?.name || "Unknown Supplier",
+        supplierId: pu.supplierId,
+        total: Number(pu.grandTotal || 0),
+        balance: bal,
+        date: normalizeVoucherDate(pu.date || pu.createdAt),
+      });
+    }
+  }
+
+  const creditorLedgers = ledgers.filter((l) => l.partyType === "supplier" || l.groupId === "grp_sundry_creditors");
+  let creditorsLedgerRupees = 0;
+  for (const cl of creditorLedgers) {
+    const b = balances.get(cl.id);
+    if (b) creditorsLedgerRupees += (b.closingCrPaise - b.closingDrPaise) / 100;
+  }
 
   // 9. Profit & COGS
   let costOfGoodsSoldRupees = 0;
@@ -1342,6 +1405,9 @@ export function getComprehensiveFinancialReconciliation(params: {
       outputGstRupees,
       outputGstLedgerRupees,
       inputGstRupees,
+      cgstInputRupees: inputCgstRupees,
+      sgstInputRupees: inputSgstRupees,
+      igstInputRupees: inputIgstRupees,
       netGstLiabilityRupees: outputGstRupees - inputGstRupees,
       isGstEqual,
       isLedgerMatched: isGstLedgerMatched,
@@ -1361,8 +1427,12 @@ export function getComprehensiveFinancialReconciliation(params: {
       status: customerTraces.every((t) => t.isReconciled) ? "RECONCILED" : "ATTENTION",
     },
     payables: {
-      totalOutstandingRupees: 0,
-      openBillsCount: 0,
+      totalOutstandingRupees: totalPayablesOutstandingRupees,
+      openBillsCount: openBills.length,
+      supplierPaymentsRupees,
+      ledgerCreditorsRupees: Math.abs(creditorsLedgerRupees),
+      differenceRupees: Math.abs(totalPayablesOutstandingRupees - Math.abs(creditorsLedgerRupees)),
+      openBills,
       status: "PASS",
     },
     cashBank: {

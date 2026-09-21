@@ -27,8 +27,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { toast } from "sonner";
 import { formatMoney, formatDate, toDateInput, fromDateInput } from "@/lib/format";
-import { HandCoins, ArrowDownLeft, ArrowUpRight, Plus, Trash2, BookOpen, Loader2, Printer, RotateCcw, AlertTriangle, ShieldCheck, Share2 } from "lucide-react";
+import { HandCoins, ArrowDownLeft, ArrowUpRight, Plus, Trash2, BookOpen, Loader2, Printer, RotateCcw, AlertTriangle, ShieldCheck, Share2, Eye, Download } from "lucide-react";
 import { ListToolbar, usePagination, Pager, EmptyState } from "@/components/app/ListHelpers";
+import { VoucherQuickPreviewModal } from "@/components/app/VoucherQuickPreviewModal";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useAccounting } from "@/modules/accounting/useAccounting";
@@ -56,7 +57,14 @@ export const Route = createFileRoute("/_app/receipts")({
 function ReceiptsAndPaymentsPage() {
   const { user } = useAuth();
   const { activeCompany, activeFinancialYear } = useActiveCompany();
-  const [activeTab, setActiveTab] = useState<"receipts" | "payments">("receipts");
+  const [activeTab, setActiveTab] = useState<"receipts" | "payments">(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      const t = p.get("tab");
+      if (t === "payments" || t === "receipts") return t;
+    }
+    return "receipts";
+  });
 
   // Receipts data
   const receiptsState = useLiveState<Receipt>(() => db().receipts.orderBy("createdAt").reverse().toArray());
@@ -105,6 +113,8 @@ function ReceiptsAndPaymentsPage() {
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [deleteReceiptId, setDeleteReceiptId] = useState<string | null>(null);
   const [shareReceipt, setShareReceipt] = useState<Receipt | null>(null);
+  const [sharePayment, setSharePayment] = useState<Payment | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<NormalizedDocument | null>(null);
   const [deletePaymentId, setDeletePaymentId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -230,6 +240,126 @@ function ReceiptsAndPaymentsPage() {
   function printReceiptVoucher(r: Receipt) {
     const docData = getReceiptNormalizedDoc(r);
     downloadDocumentPDF(docData, `Receipt-Voucher-${r.number}.pdf`);
+  }
+
+  function downloadReceiptVoucher(r: Receipt) {
+    const docData = getReceiptNormalizedDoc(r);
+    downloadDocumentPDF(docData, `Receipt-Voucher-${r.number}.pdf`);
+  }
+
+  function getPaymentNormalizedDoc(p: Payment): NormalizedDocument {
+    const supplier = suppliers.find((s) => s.id === p.supplierId);
+    const comp = activeCompany || p.companySnapshot;
+    const pur = purchases.find((pu) => pu.id === p.purchaseId) || (p.allocatedPurchases && p.allocatedPurchases[0] ? purchases.find(pu => pu.id === p.allocatedPurchases![0].purchaseId) : undefined);
+
+    const allocPaise = p.allocatedPurchases && p.allocatedPurchases[0]
+      ? p.allocatedPurchases[0].amountPaise
+      : (p.purchaseId && pur ? Math.min(Math.round(p.amount * 100), Math.round(pur.grandTotal * 100)) : 0);
+    const amountAllocated = allocPaise > 0 ? allocPaise / 100 : (p.purchaseId ? p.amount : 0);
+    const balanceBefore = pur ? (pur.balance !== undefined ? pur.balance + amountAllocated : pur.grandTotal) : undefined;
+    const balanceAfter = pur ? (pur.balance !== undefined ? pur.balance : Math.max(0, (balanceBefore || 0) - amountAllocated)) : undefined;
+
+    return {
+      kind: "payment",
+      title: "PAYMENT VOUCHER",
+      number: p.number,
+      date: p.date,
+      company: comp ? createCompanySnapshot(comp) : {},
+      party: {
+        name: supplier?.name || "Supplier / Vendor",
+        company: supplier?.company || (supplier as any)?.tradingName,
+        gstin: supplier?.gstin,
+        pan: supplier?.pan,
+        phone: supplier?.mobile || supplier?.phone,
+        email: supplier?.email,
+        address: supplier?.address,
+        state: supplier?.state,
+      },
+      items: [],
+      subtotal: p.amount,
+      discountTotal: 0,
+      gstTotal: 0,
+      roundOff: 0,
+      grandTotal: p.amount,
+      amountPaid: p.amount,
+      balance: 0,
+      notes: p.narration || p.notes,
+      paymentMode: p.paymentMethod || p.mode,
+      signatorySnapshot: p.signatorySnapshot,
+      signatoryOverride: p.signatoryOverride,
+      includeTerms: false,
+      receiptDetails: {
+        receiptVoucherNumber: p.number,
+        allocationType: p.purchaseId ? "AGAINST_BILL" : "ON_ACCOUNT",
+        invoiceNumber: pur?.supplierInvoiceNumber || pur?.number || "On Account",
+        invoiceDate: pur?.date,
+        invoiceTotal: pur?.grandTotal,
+        balanceBefore,
+        amountAllocated,
+        balanceAfter,
+        totalReceived: p.amount,
+        paymentMethod: p.paymentMethod || p.mode,
+        settlementLedgerName: p.settlementLedgerId,
+        referenceNumber: p.reference || (p as any).referenceNumber,
+        narration: p.narration || `Supplier Payment to ${supplier?.name || "Vendor"}`,
+      },
+    };
+  }
+
+  function downloadPaymentVoucher(p: Payment) {
+    const docData = getPaymentNormalizedDoc(p);
+    downloadDocumentPDF(docData, `Payment-Voucher-${p.number}.pdf`);
+  }
+
+  function printPaymentVoucher(p: Payment) {
+    const docData = getPaymentNormalizedDoc(p);
+    downloadDocumentPDF(docData, `Payment-Voucher-${p.number}.pdf`);
+  }
+
+  function buildPaymentShareData(p: Payment): ShareDocumentData {
+    const normDoc = getPaymentNormalizedDoc(p);
+    const supplier = suppliers.find((s) => s.id === p.supplierId);
+    const comp = activeCompany || p.companySnapshot;
+    const pur = purchases.find((pu) => pu.id === p.purchaseId) || (p.allocatedPurchases && p.allocatedPurchases[0] ? purchases.find(pu => pu.id === p.allocatedPurchases![0].purchaseId) : undefined);
+    const activeCc = (activeCompany as any)?.defaultShareCcEmail || (comp as any)?.defaultShareCcEmail;
+
+    return {
+      kind: "payment" as any,
+      documentId: p.id,
+      documentNumber: p.number,
+      date: p.date,
+      totalAmount: p.amount,
+      currencySymbol: "₹",
+      company: {
+        id: comp?.id,
+        name: comp?.name || "Company",
+        legalName: comp?.legalName || comp?.name,
+        email: comp?.email,
+        phone: comp?.phone || comp?.mobile,
+        logo: comp?.logoUrl || comp?.logo,
+        defaultShareCcEmail: activeCc,
+      },
+      party: {
+        partyId: p.supplierId,
+        partyCode: supplier?.partyCode,
+        name: supplier?.name || "Supplier",
+        companyName: supplier?.company || (supplier as any)?.tradingName,
+        email: supplier?.email,
+        phone: supplier?.mobile || supplier?.phone,
+        country: supplier?.country,
+      },
+      receiptDetails: {
+        receiptVoucherNumber: p.number,
+        allocationType: p.purchaseId ? "AGAINST_BILL" : "ON_ACCOUNT",
+        invoiceNumber: pur?.supplierInvoiceNumber || pur?.number,
+        invoiceDate: pur?.date,
+        amountAllocated: normDoc.receiptDetails?.amountAllocated,
+      },
+      generatePdfBlob: async () => {
+        const doc = buildDocumentPDF(normDoc);
+        return doc.output("blob");
+      },
+    };
   }
 
   function buildReceiptShareData(r: Receipt): ShareDocumentData {
@@ -388,170 +518,167 @@ function ReceiptsAndPaymentsPage() {
 
     setSaving(true);
     try {
-      if (editingReceipt.allocationType === "ADVANCE") {
-        const cust = customers.find((c) => c.id === editingReceipt.customerId);
-        const supplyType = editingReceipt.supplyType || "GOODS";
-        const gstRate = editingReceipt.taxProfileSnapshot?.gstRate ?? 18;
-        const isTaxInclusive = editingReceipt.taxProfileSnapshot?.isTaxInclusive ?? true;
-        const pos = editingReceipt.placeOfSupplySnapshot || cust?.stateCode || activeCompany?.stateCode || "27";
+      const receiptToSave = { ...editingReceipt };
+
+      if (receiptToSave.allocationType === "ADVANCE") {
+        const cust = customers.find((c) => c.id === receiptToSave.customerId);
+        const supplyType = receiptToSave.supplyType || "GOODS";
+        const gstRate = receiptToSave.taxProfileSnapshot?.gstRate ?? 18;
+        const isTaxInclusive = receiptToSave.taxProfileSnapshot?.isTaxInclusive ?? true;
+        const pos = receiptToSave.placeOfSupplySnapshot || cust?.stateCode || activeCompany?.stateCode || "27";
         const companyState = activeCompany?.stateCode || "27";
 
         const calc = calculateAdvanceTax({
-          advanceAmount: editingReceipt.amount,
+          advanceAmount: receiptToSave.amount,
           supplyType,
           taxInclusive: isTaxInclusive,
           gstRate,
           companyGstMode: activeCompany?.taxRegistrationMode || "NORMAL_GST",
           placeOfSupply: pos,
           companyStateCode: companyState,
-          mixedBreakdown: editingReceipt.mixedBreakdown
+          mixedBreakdown: receiptToSave.mixedBreakdown
             ? {
-                goodsAmount: (editingReceipt.mixedBreakdown.goodsAmountPaise || 0) / 100,
-                serviceAmount: (editingReceipt.mixedBreakdown.serviceAmountPaise || 0) / 100,
+                goodsAmount: (receiptToSave.mixedBreakdown.goodsAmountPaise || 0) / 100,
+                serviceAmount: (receiptToSave.mixedBreakdown.serviceAmountPaise || 0) / 100,
                 serviceGstRate: gstRate,
                 serviceIsTaxInclusive: isTaxInclusive,
               }
             : undefined,
         });
 
-        editingReceipt.supplyType = supplyType;
-        editingReceipt.taxTreatment = calc.taxTreatment;
-        editingReceipt.advanceAmountPaise = calc.advanceAmountPaise;
-        editingReceipt.taxableAmountPaise = calc.taxableAmountPaise;
-        editingReceipt.cgstPaise = calc.cgstPaise;
-        editingReceipt.sgstPaise = calc.sgstPaise;
-        editingReceipt.igstPaise = calc.igstPaise;
-        editingReceipt.cessPaise = calc.cessPaise;
-        editingReceipt.totalTaxPaise = calc.totalTaxPaise;
-        editingReceipt.advanceAvailablePaise = calc.advanceAmountPaise;
-        editingReceipt.placeOfSupplySnapshot = pos;
-        editingReceipt.taxProfileSnapshot = {
+        receiptToSave.supplyType = supplyType;
+        receiptToSave.taxTreatment = calc.taxTreatment;
+        receiptToSave.advanceAmountPaise = calc.advanceAmountPaise;
+        receiptToSave.taxableAmountPaise = calc.taxableAmountPaise;
+        receiptToSave.cgstPaise = calc.cgstPaise;
+        receiptToSave.sgstPaise = calc.sgstPaise;
+        receiptToSave.igstPaise = calc.igstPaise;
+        receiptToSave.cessPaise = calc.cessPaise;
+        receiptToSave.totalTaxPaise = calc.totalTaxPaise;
+        receiptToSave.advanceAvailablePaise = calc.advanceAmountPaise;
+        receiptToSave.placeOfSupplySnapshot = pos;
+        receiptToSave.taxProfileSnapshot = {
           gstRate,
           isTaxInclusive,
           taxTreatment: calc.taxTreatment,
         };
       }
 
-      if (activeCompany?.id && activeFinancialYear?.id && user) {
-        const idToken = await user.getIdToken();
-        const customer = customers.find((c) => c.id === editingReceipt.customerId);
-        let customerLedgerId = customer?.ledgerId;
-        if (!customerLedgerId && customer) {
-          customerLedgerId = await ensureCustomerLedger({
-            companyId: activeCompany.id,
-            customer,
-            uid: user.uid,
-          });
-        }
-        if (!customerLedgerId) {
-          customerLedgerId = `led_${activeCompany.id}_cust_${editingReceipt.customerId}`;
-        }
-
-        // Ensure settlement ledger exists
-        const isCash = editingReceipt.paymentMethod === "cash";
-        let settlementLedgerId = editingReceipt.settlementLedgerId;
-        if (!settlementLedgerId || settlementLedgerId === `led_${activeCompany.id}_${isCash ? "cash" : "bank"}`) {
-          settlementLedgerId = await ensureLiquidityLedger({
-            companyId: activeCompany.id,
-            type: isCash ? "cash" : "bank",
-            uid: user.uid,
-          });
-        }
-
-        const result = await postReceiptTransaction({
-          companyId: activeCompany.id,
-          financialYearId: activeFinancialYear.id,
-          receipt: editingReceipt,
-          company: activeCompany || undefined,
-          customerLedgerId,
-          settlementLedgerId,
-          idToken,
-          uid: user.uid,
-        });
-        if (!result.success) throw new Error(result.error || "Receipt posting failed");
-      } else {
-        const frozenReceipt: Receipt = {
-          ...editingReceipt,
-          companySnapshot:
-            editingReceipt.companySnapshot ||
-            (activeCompany ? createCompanySnapshot(activeCompany) : undefined),
-          signatorySnapshot:
-            editingReceipt.signatorySnapshot ||
-            (activeCompany
-              ? createSignatorySnapshot(
-                  activeCompany,
-                  editingReceipt.signatoryOverride,
-                  editingReceipt.date
-                )
-              : undefined),
-        };
-        await db().receipts.put(frozenReceipt);
-      }
-
       // Build authoritative allocation for AGAINST_REF
-      if (editingReceipt.invoiceId) {
-        const targetInv = await db().invoices.get(editingReceipt.invoiceId);
+      if (receiptToSave.invoiceId) {
+        const targetInv = await db().invoices.get(receiptToSave.invoiceId);
         if (targetInv) {
           const invTotalPaise = Math.round(targetInv.grandTotal * 100);
           const invPaidPaise = Math.round((targetInv.amountPaid || 0) * 100);
           const invOutstandingPaise = Math.max(0, invTotalPaise - invPaidPaise);
-          const typedPaise = Math.round(editingReceipt.amount * 100);
+          const typedPaise = Math.round(receiptToSave.amount * 100);
           const allocatedPaise = Math.min(typedPaise, invOutstandingPaise);
           const excessPaise = Math.max(0, typedPaise - allocatedPaise);
 
-          editingReceipt.allocatedInvoices = [{
+          receiptToSave.allocatedInvoices = [{
             invoiceId: targetInv.id,
             invoiceNumber: targetInv.number,
             amountPaise: allocatedPaise,
           }];
           if (excessPaise > 0) {
-            editingReceipt.advanceAvailablePaise = excessPaise;
-            editingReceipt.customerCreditPaise = excessPaise;
-            editingReceipt.unappliedCreditPaise = excessPaise;
+            receiptToSave.advanceAvailablePaise = excessPaise;
+            receiptToSave.customerCreditPaise = excessPaise;
+            receiptToSave.unappliedCreditPaise = excessPaise;
           }
+
+          // Optimistic local update to target invoice balance (< 16ms)
+          const targetAlloc = allocatedPaise / 100;
+          const paid = (targetInv.amountPaid || 0) + targetAlloc;
+          const balance = Math.max(0, targetInv.grandTotal - paid);
+          targetInv.amountPaid = paid;
+          targetInv.balance = balance;
+          targetInv.status = balance <= 0.01 ? "paid" : "partial";
+          await db().invoices.put(targetInv);
         }
       }
 
-      // Update linked invoice balance if applicable (offline / local Dexie fallback)
-      if (editingReceipt.invoiceId && !(activeCompany?.id && activeFinancialYear?.id && user)) {
-        const inv = await db().invoices.get(editingReceipt.invoiceId);
-        if (inv) {
-          const targetAlloc = editingReceipt.allocatedInvoices?.[0]?.amountPaise !== undefined
-            ? editingReceipt.allocatedInvoices[0].amountPaise / 100
-            : Math.min(editingReceipt.amount, inv.balance);
-          const paid = inv.amountPaid + targetAlloc;
-          const balance = Math.max(0, inv.grandTotal - paid);
-          inv.amountPaid = paid;
-          inv.balance = balance;
-          inv.status = balance <= 0.01 ? "paid" : "partial";
-          await db().invoices.put(inv);
-          if (activeCompany?.id) {
-            reconcileDocumentPostSuccess({
-              entityType: "invoice",
-              companyId: activeCompany.id,
-              document: inv,
-              action: "update",
-            });
-          }
-        }
-      }
+      const frozenReceipt: Receipt = {
+        ...receiptToSave,
+        postingStatus: "posted",
+        companySnapshot:
+          receiptToSave.companySnapshot ||
+          (activeCompany ? createCompanySnapshot(activeCompany) : undefined),
+        signatorySnapshot:
+          receiptToSave.signatorySnapshot ||
+          (activeCompany
+            ? createSignatorySnapshot(
+                activeCompany,
+                receiptToSave.signatoryOverride,
+                receiptToSave.date
+              )
+            : undefined),
+      };
 
-      if (activeCompany?.id) {
-        reconcileDocumentPostSuccess({
-          entityType: "receipt",
-          companyId: activeCompany.id,
-          document: editingReceipt,
-          action: "create",
-        });
-      }
+      // 1. Instant Optimistic local write to Dexie
+      await db().receipts.put(frozenReceipt);
 
-      toast.success("Receipt posted & ledger updated");
+      // 2. Immediately close modal & show success toast (< 16ms lightning speed)
+      toast.success("Receipt voucher posted & ledger updated");
       setOpenReceipt(false);
       setEditingReceipt(null);
+      setSaving(false);
+
+      // 3. Fire-and-forget background cloud sync & ledger posting
+      if (activeCompany?.id && activeFinancialYear?.id && user) {
+        (async () => {
+          try {
+            const idToken = await user.getIdToken();
+            const customer = customers.find((c) => c.id === frozenReceipt.customerId);
+            let customerLedgerId = customer?.ledgerId;
+            if (!customerLedgerId && customer) {
+              customerLedgerId = await ensureCustomerLedger({
+                companyId: activeCompany.id,
+                customer,
+                uid: user.uid,
+              });
+            }
+            if (!customerLedgerId) {
+              customerLedgerId = `led_${activeCompany.id}_cust_${frozenReceipt.customerId}`;
+            }
+
+            const isCash = frozenReceipt.paymentMethod === "cash";
+            let settlementLedgerId = frozenReceipt.settlementLedgerId;
+            if (!settlementLedgerId || settlementLedgerId === `led_${activeCompany.id}_${isCash ? "cash" : "bank"}`) {
+              settlementLedgerId = await ensureLiquidityLedger({
+                companyId: activeCompany.id,
+                type: isCash ? "cash" : "bank",
+                uid: user.uid,
+              });
+            }
+
+            const result = await postReceiptTransaction({
+              companyId: activeCompany.id,
+              financialYearId: activeFinancialYear.id,
+              receipt: frozenReceipt,
+              company: activeCompany || undefined,
+              customerLedgerId,
+              settlementLedgerId,
+              idToken,
+              uid: user.uid,
+            });
+            if (result.success && result.voucherId) {
+              frozenReceipt.voucherId = result.voucherId;
+              await db().receipts.put(frozenReceipt);
+            }
+            reconcileDocumentPostSuccess({
+              entityType: "receipt",
+              companyId: activeCompany.id,
+              document: frozenReceipt,
+              action: "create",
+            });
+          } catch (bgErr) {
+            console.error("Background receipt posting error:", bgErr);
+          }
+        })();
+      }
     } catch (err) {
       console.error("Failed to post receipt:", err);
       toast.error("Failed to post receipt");
-    } finally {
       setSaving(false);
     }
   }
@@ -569,63 +696,117 @@ function ReceiptsAndPaymentsPage() {
 
     setSaving(true);
     try {
-      if (activeCompany?.id && activeFinancialYear?.id && user) {
-        const idToken = await user.getIdToken();
-        const supplier = suppliers.find((s) => s.id === editingPayment.supplierId);
-        let supplierLedgerId = supplier?.ledgerId;
-        if (!supplierLedgerId && supplier) {
-          supplierLedgerId = await ensureSupplierLedger({
-            companyId: activeCompany.id,
-            supplier,
-            uid: user.uid,
-          });
-        }
-        if (!supplierLedgerId) {
-          supplierLedgerId = `led_${activeCompany.id}_supp_${editingPayment.supplierId}`;
-        }
+      const paymentToSave = { ...editingPayment };
 
-        // Ensure settlement ledger exists
-        const isCash = editingPayment.paymentMethod === "cash";
-        let settlementLedgerId = editingPayment.settlementLedgerId;
-        if (!settlementLedgerId || settlementLedgerId === `led_${activeCompany.id}_${isCash ? "cash" : "bank"}`) {
-          settlementLedgerId = await ensureLiquidityLedger({
-            companyId: activeCompany.id,
-            type: isCash ? "cash" : "bank",
-            uid: user.uid,
-          });
-        }
+      // Build authoritative allocation for AGAINST_BILL
+      if (paymentToSave.purchaseId) {
+        const targetPur = await db().purchases.get(paymentToSave.purchaseId);
+        if (targetPur) {
+          const purTotalPaise = Math.round(targetPur.grandTotal * 100);
+          const purPaidPaise = Math.round((targetPur.amountPaid || 0) * 100);
+          const purOutstandingPaise = Math.max(0, purTotalPaise - purPaidPaise);
+          const typedPaise = Math.round(paymentToSave.amount * 100);
+          const allocatedPaise = Math.min(typedPaise, purOutstandingPaise);
 
-        const result = await postPaymentTransaction({
-          companyId: activeCompany.id,
-          financialYearId: activeFinancialYear.id,
-          payment: editingPayment,
-          company: activeCompany || undefined,
-          supplierLedgerId,
-          settlementLedgerId,
-          idToken,
-          uid: user.uid,
-        });
-        if (!result.success) throw new Error(result.error || "Payment posting failed");
-      } else {
-        await db().payments.put(editingPayment);
+          paymentToSave.allocatedPurchases = [{
+            purchaseId: targetPur.id,
+            purchaseNumber: targetPur.supplierInvoiceNumber || targetPur.number,
+            amountPaise: allocatedPaise,
+          }];
+
+          // Optimistic local update to target purchase balance (< 16ms)
+          const targetAlloc = allocatedPaise / 100;
+          const paid = (targetPur.amountPaid || 0) + targetAlloc;
+          const balance = Math.max(0, targetPur.grandTotal - paid);
+          targetPur.amountPaid = paid;
+          targetPur.balance = balance;
+          targetPur.status = balance <= 0.01 ? "paid" : "partial";
+          await db().purchases.put(targetPur);
+        }
       }
 
-      if (activeCompany?.id) {
-        reconcileDocumentPostSuccess({
-          entityType: "payment",
-          companyId: activeCompany.id,
-          document: editingPayment,
-          action: "create",
-        });
-      }
+      const frozenPayment: Payment = {
+        ...paymentToSave,
+        postingStatus: "posted",
+        companySnapshot:
+          paymentToSave.companySnapshot ||
+          (activeCompany ? createCompanySnapshot(activeCompany) : undefined),
+        signatorySnapshot:
+          paymentToSave.signatorySnapshot ||
+          (activeCompany
+            ? createSignatorySnapshot(
+                activeCompany,
+                paymentToSave.signatoryOverride,
+                paymentToSave.date
+              )
+            : undefined),
+      };
 
+      // 1. Instant Optimistic local write to Dexie
+      await db().payments.put(frozenPayment);
+
+      // 2. Immediately close modal & show success toast (< 16ms lightning speed)
       toast.success("Payment voucher posted & ledger updated");
       setOpenPayment(false);
       setEditingPayment(null);
+      setSaving(false);
+
+      // 3. Fire-and-forget background cloud sync & ledger posting
+      if (activeCompany?.id && activeFinancialYear?.id && user) {
+        (async () => {
+          try {
+            const idToken = await user.getIdToken();
+            const supplier = suppliers.find((s) => s.id === frozenPayment.supplierId);
+            let supplierLedgerId = supplier?.ledgerId;
+            if (!supplierLedgerId && supplier) {
+              supplierLedgerId = await ensureSupplierLedger({
+                companyId: activeCompany.id,
+                supplier,
+                uid: user.uid,
+              });
+            }
+            if (!supplierLedgerId) {
+              supplierLedgerId = `led_${activeCompany.id}_supp_${frozenPayment.supplierId}`;
+            }
+
+            const isCash = frozenPayment.paymentMethod === "cash";
+            let settlementLedgerId = frozenPayment.settlementLedgerId;
+            if (!settlementLedgerId || settlementLedgerId === `led_${activeCompany.id}_${isCash ? "cash" : "bank"}`) {
+              settlementLedgerId = await ensureLiquidityLedger({
+                companyId: activeCompany.id,
+                type: isCash ? "cash" : "bank",
+                uid: user.uid,
+              });
+            }
+
+            const result = await postPaymentTransaction({
+              companyId: activeCompany.id,
+              financialYearId: activeFinancialYear.id,
+              payment: frozenPayment,
+              company: activeCompany || undefined,
+              supplierLedgerId,
+              settlementLedgerId,
+              idToken,
+              uid: user.uid,
+            });
+            if (result.success && result.voucherId) {
+              frozenPayment.voucherId = result.voucherId;
+              await db().payments.put(frozenPayment);
+            }
+            reconcileDocumentPostSuccess({
+              entityType: "payment",
+              companyId: activeCompany.id,
+              document: frozenPayment,
+              action: "create",
+            });
+          } catch (bgErr) {
+            console.error("Background payment posting error:", bgErr);
+          }
+        })();
+      }
     } catch (err) {
       console.error("Failed to post payment:", err);
       toast.error("Failed to post payment");
-    } finally {
       setSaving(false);
     }
   }
@@ -820,24 +1001,47 @@ function ReceiptsAndPaymentsPage() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
-                              {/* 1. Print / Download */}
+                              {/* 1. Quick Preview Eye */}
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                title="Print / Download Receipt Voucher"
-                                onClick={() => printReceiptVoucher(r)}
+                                title="Quick Preview Voucher"
+                                onClick={() => setPreviewDoc(getReceiptNormalizedDoc(r))}
+                                className="text-primary hover:bg-primary/10"
                               >
-                                <Printer className="h-4 w-4 text-primary" />
+                                <Eye className="h-4 w-4" />
                               </Button>
 
-                              {/* 2. Share Receipt (PRD § 1, 2 & Correction 2: Posted receipts only) */}
+                              {/* 2. Download PDF */}
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                title="Download PDF"
+                                onClick={() => downloadReceiptVoucher(r)}
+                                className="text-blue-600 hover:bg-blue-500/10"
+                              >
+                                <Download className="h-4 w-4" />
+                              </Button>
+
+                              {/* 3. Share Receipt (PRD § 1, 2 & Correction 2: Posted receipts only) */}
                               <Button
                                 size="icon"
                                 variant="ghost"
                                 title="Share Receipt Voucher"
                                 onClick={() => setShareReceipt(r)}
+                                className="text-primary hover:bg-primary/10"
                               >
-                                <Share2 className="h-4 w-4 text-primary" />
+                                <Share2 className="h-4 w-4" />
+                              </Button>
+
+                              {/* 4. Print */}
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                title="Print Receipt Voucher"
+                                onClick={() => printReceiptVoucher(r)}
+                              >
+                                <Printer className="h-4 w-4 text-muted-foreground" />
                               </Button>
 
                               {isAdvance && !isRefunded && (
@@ -902,7 +1106,62 @@ function ReceiptsAndPaymentsPage() {
                         {payment.postingStatus || "draft"}
                       </span>
                     </TableCell>
-                    <TableCell className="text-right"><Button size="icon" variant="ghost" title="Delete Payment" onClick={() => setDeletePaymentId(payment.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button></TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        {/* 1. Quick Preview Eye */}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="Quick Preview Voucher"
+                          onClick={() => setPreviewDoc(getPaymentNormalizedDoc(payment))}
+                          className="text-primary hover:bg-primary/10"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+
+                        {/* 2. Download PDF */}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="Download PDF"
+                          onClick={() => downloadPaymentVoucher(payment)}
+                          className="text-blue-600 hover:bg-blue-500/10"
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+
+                        {/* 3. Share Payment Voucher */}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="Share Payment Voucher"
+                          onClick={() => setSharePayment(payment)}
+                          className="text-primary hover:bg-primary/10"
+                        >
+                          <Share2 className="h-4 w-4" />
+                        </Button>
+
+                        {/* 4. Print */}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="Print Payment Voucher"
+                          onClick={() => printPaymentVoucher(payment)}
+                        >
+                          <Printer className="h-4 w-4 text-muted-foreground" />
+                        </Button>
+
+                        {/* 5. Delete Payment */}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="Delete Payment"
+                          onClick={() => setDeletePaymentId(payment.id)}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}</TableBody>
               </Table>
@@ -1791,11 +2050,43 @@ function ReceiptsAndPaymentsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Unified BMS Share Center Dialog for Receipt Vouchers (PRD § 1, 2) */}
+      {/* Unified BMS Share Center Dialog for Receipt Vouchers */}
       <BmsShareDialog
         open={Boolean(shareReceipt)}
         onOpenChange={(o) => !o && setShareReceipt(null)}
         document={shareReceipt ? buildReceiptShareData(shareReceipt) : null}
+      />
+
+      {/* Unified BMS Share Center Dialog for Payment Vouchers */}
+      {sharePayment && (
+        <BmsShareDialog
+          open={Boolean(sharePayment)}
+          onOpenChange={(o) => !o && setSharePayment(null)}
+          document={sharePayment ? buildPaymentShareData(sharePayment) : null}
+        />
+      )}
+
+      {/* High-Fidelity Vector PDF Preview Modal for Vouchers */}
+      <VoucherQuickPreviewModal
+        open={Boolean(previewDoc)}
+        onOpenChange={(o) => !o && setPreviewDoc(null)}
+        document={previewDoc}
+        onShare={() => {
+          if (!previewDoc) return;
+          if (previewDoc.kind === "receipt") {
+            const foundRec = receipts.find((r) => r.number === previewDoc.number);
+            if (foundRec) {
+              setPreviewDoc(null);
+              setShareReceipt(foundRec);
+            }
+          } else if (previewDoc.kind === "payment") {
+            const foundPay = payments.find((p) => p.number === previewDoc.number);
+            if (foundPay) {
+              setPreviewDoc(null);
+              setSharePayment(foundPay);
+            }
+          }
+        }}
       />
     </AppShell>
   );

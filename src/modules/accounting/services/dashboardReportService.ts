@@ -1,5 +1,5 @@
 import type { Ledger } from "@/modules/accounting/types";
-import type { Invoice, Purchase, Product, Customer, Supplier, Receipt } from "@/lib/db";
+import type { Invoice, Purchase, Product, Customer, Supplier, Receipt, Payment } from "@/lib/db";
 
 export interface DashboardMetrics {
   totalSales: number;
@@ -9,6 +9,15 @@ export interface DashboardMetrics {
   totalPayables: number;
   totalAmountReceived: number;
   receivedByPaymentMode: {
+    cash: number;
+    bank: number;
+    upi: number;
+    cheque: number;
+    card: number;
+    other: number;
+  };
+  totalPaymentsMade: number;
+  paidByPaymentMode: {
     cash: number;
     bank: number;
     upi: number;
@@ -33,6 +42,9 @@ export interface DashboardMetrics {
   cgstOutput: number;
   sgstOutput: number;
   igstOutput: number;
+  cgstInput: number;
+  sgstInput: number;
+  igstInput: number;
   salesVsPurchasesTrend: Array<{ label: string; sales: number; purchases: number }>;
   agingReceivables: Array<{ range: string; amount: number }>;
   agingPayables: Array<{ range: string; amount: number }>;
@@ -94,11 +106,12 @@ export function computeDashboardMetrics(params: {
   purchases: Purchase[];
   products: Product[];
   receipts?: Receipt[];
+  payments?: Payment[];
   financialYearStart?: number;
   financialYearEnd?: number;
   inventoryValuationMethod?: "purchase_cost" | "standard_cost" | string;
 }): DashboardMetrics {
-  const { ledgers, invoices, purchases, products, receipts = [], financialYearStart, financialYearEnd, inventoryValuationMethod } = params;
+  const { ledgers, invoices, purchases, products, receipts = [], payments = [], financialYearStart, financialYearEnd, inventoryValuationMethod } = params;
 
   // 1. Filter documents by active Financial Year window if provided
   const fyInvoices = invoices.filter((inv) => {
@@ -147,6 +160,39 @@ export function computeDashboardMetrics(params: {
     else if (m === "cheque" || m === "check") receivedByPaymentMode.cheque += r.amount;
     else if (m === "card" || m === "debit" || m === "credit") receivedByPaymentMode.card += r.amount;
     else receivedByPaymentMode.other += r.amount;
+  }
+
+  // Authoritative posted supplier payments
+  const fyPayments = payments.filter((pay) => {
+    if (financialYearStart && pay.date < financialYearStart) return false;
+    if (financialYearEnd && pay.date > financialYearEnd) return false;
+    return true;
+  });
+
+  const postedPayments = fyPayments.filter((pay) => {
+    if (pay.postingStatus === "draft" || pay.postingStatus === "failed" || pay.postingStatus === "reversed") return false;
+    return true;
+  });
+
+  const totalPaymentsMade = postedPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  const paidByPaymentMode = {
+    cash: 0,
+    bank: 0,
+    upi: 0,
+    cheque: 0,
+    card: 0,
+    other: 0,
+  };
+
+  for (const p of postedPayments) {
+    const m = (p.mode || (p.paymentMethod as string) || "other").toLowerCase();
+    if (m === "cash") paidByPaymentMode.cash += p.amount;
+    else if (m === "bank" || m === "transfer" || m === "neft" || m === "rtgs" || m === "imps" || m === "bank_transfer") paidByPaymentMode.bank += p.amount;
+    else if (m === "upi") paidByPaymentMode.upi += p.amount;
+    else if (m === "cheque" || m === "check") paidByPaymentMode.cheque += p.amount;
+    else if (m === "card" || m === "debit" || m === "credit") paidByPaymentMode.card += p.amount;
+    else paidByPaymentMode.other += p.amount;
   }
 
   // 2. Authoritative Ledger Balances
@@ -253,6 +299,10 @@ export function computeDashboardMetrics(params: {
   const sgstOutput = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).sgst, 0);
   const igstOutput = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).igst, 0);
 
+  const cgstInput = fyPurchases.reduce((s, p) => s + resolveDocumentTaxes(p).cgst, 0);
+  const sgstInput = fyPurchases.reduce((s, p) => s + resolveDocumentTaxes(p).sgst, 0);
+  const igstInput = fyPurchases.reduce((s, p) => s + resolveDocumentTaxes(p).igst, 0);
+
   // 6. Monthly Trend Series (Last 6 Months)
   const trendMonths: Array<{ label: string; sales: number; purchases: number }> = [];
   const now = new Date();
@@ -315,6 +365,8 @@ export function computeDashboardMetrics(params: {
     totalPayables,
     totalAmountReceived,
     receivedByPaymentMode,
+    totalPaymentsMade,
+    paidByPaymentMode,
     cashInHand: cashPaise / 100,
     bankBalance: bankPaise / 100,
     totalLiquidity: (cashPaise + bankPaise) / 100,
@@ -332,6 +384,9 @@ export function computeDashboardMetrics(params: {
     cgstOutput,
     sgstOutput,
     igstOutput,
+    cgstInput,
+    sgstInput,
+    igstInput,
     salesVsPurchasesTrend: trendMonths,
     agingReceivables,
     agingPayables: [],

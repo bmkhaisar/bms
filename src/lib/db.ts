@@ -493,7 +493,7 @@ export interface Payment {
   companySnapshot?: any;
   signatoryOverride?: any;
   signatorySnapshot?: any;
-  reference?: string; notes?: string; createdAt: number;
+  reference?: string; notes?: string; narration?: string; createdAt: number;
   allocatedPurchases?: {
     purchaseId: string;
     purchaseNumber: string;

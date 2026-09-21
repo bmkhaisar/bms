@@ -55,6 +55,7 @@ interface CAReviewWorkspaceProps {
   invoices: any[];
   receipts: any[];
   purchases?: any[];
+  payments?: any[];
   products?: any[];
   parties?: any[];
   loading?: boolean;
@@ -67,6 +68,7 @@ export function CAReviewWorkspace({
   invoices = [],
   receipts = [],
   purchases = [],
+  payments = [],
   products = [],
   parties = [],
   loading = false,
@@ -128,6 +130,7 @@ export function CAReviewWorkspace({
       invoices,
       receipts,
       purchases,
+      payments,
       products,
       parties,
       filter: {
@@ -135,7 +138,7 @@ export function CAReviewWorkspace({
         toDate: dateRange.toDate,
       },
     });
-  }, [ledgers, accountGroups, vouchers, invoices, receipts, purchases, products, parties, dateRange]);
+  }, [ledgers, accountGroups, vouchers, invoices, receipts, purchases, payments, products, parties, dateRange]);
 
   const handleExportJson = () => {
     const data = {
@@ -382,11 +385,11 @@ export function CAReviewWorkspace({
               <span className="text-xs font-semibold text-muted-foreground">Payables (AP)</span>
               {getStatusBadge(recon.payables.status)}
             </div>
-            <div className="text-sm font-bold font-mono">
+            <div className="text-sm font-bold font-mono text-rose-600 dark:text-rose-400">
               ₹{recon.payables.totalOutstandingRupees.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </div>
             <p className="text-[11px] text-muted-foreground">
-              {recon.payables.openBillsCount} open bill(s)
+              {recon.payables.openBillsCount} open bill(s) · Paid: ₹{recon.payables.supplierPaymentsRupees.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </p>
           </Card>
 
@@ -608,6 +611,7 @@ export function CAReviewWorkspace({
           <TabsTrigger value="summary">Sales & Round-Off</TabsTrigger>
           <TabsTrigger value="credits">Customer Credits ({recon.customerCredits.traces.length})</TabsTrigger>
           <TabsTrigger value="receivables">Receivables ({recon.receivables.openInvoicesCount})</TabsTrigger>
+          <TabsTrigger value="payables">Payables & Payments ({recon.payables.openBillsCount})</TabsTrigger>
           <TabsTrigger value="gst">GST Position</TabsTrigger>
           <TabsTrigger value="cashbank">Cash & Bank</TabsTrigger>
           <TabsTrigger value="profit">Profit & COGS</TabsTrigger>
@@ -778,6 +782,102 @@ export function CAReviewWorkspace({
           </Card>
         </TabsContent>
 
+        {/* Tab: Payables & Supplier Payments */}
+        <TabsContent value="payables">
+          <Card className="p-4 card-soft space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-bold">Payables (Sundry Creditors) & Supplier Payments</h4>
+                <p className="text-xs text-muted-foreground">
+                  Supplier purchase bills and payment disbursements (F5 Payment Vouchers) reconciled against AP ledger.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {getStatusBadge(recon.payables.status)}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => navigate({ to: "/receipts" })}
+                >
+                  View Payments Register
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div className="p-3 rounded-lg border bg-rose-500/5 space-y-1">
+                <div className="text-muted-foreground">Total AP Outstanding</div>
+                <div className="text-sm font-bold font-mono text-rose-600 dark:text-rose-400">
+                  ₹{recon.payables.totalOutstandingRupees.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg border bg-emerald-500/5 space-y-1">
+                <div className="text-muted-foreground">Total Payments to Suppliers</div>
+                <div className="text-sm font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                  ₹{recon.payables.supplierPaymentsRupees.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg border bg-muted/10 space-y-1">
+                <div className="text-muted-foreground">Open Purchase Bills</div>
+                <div className="text-sm font-bold font-mono">{recon.payables.openBillsCount}</div>
+              </div>
+              <div className="p-3 rounded-lg border bg-muted/10 space-y-1">
+                <div className="text-muted-foreground">Sundry Creditors Ledger</div>
+                <div className="text-sm font-bold font-mono">
+                  ₹{recon.payables.ledgerCreditorsRupees.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            </div>
+
+            <Table>
+              <TableHeader className="bg-muted/40">
+                <TableRow>
+                  <TableHead>Bill / PO #</TableHead>
+                  <TableHead>Supplier / Vendor</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Bill Total</TableHead>
+                  <TableHead className="text-right">Paid</TableHead>
+                  <TableHead className="text-right">Balance Due</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {recon.payables.openBills.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-xs text-muted-foreground">
+                      Zero open payables. All supplier bills are settled.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  recon.payables.openBills.map((bill: any) => (
+                    <TableRow key={bill.id} className="text-xs">
+                      <TableCell className="font-mono font-semibold">{bill.billNumber}</TableCell>
+                      <TableCell>{bill.supplierName}</TableCell>
+                      <TableCell>{bill.date || "—"}</TableCell>
+                      <TableCell className="text-right font-mono">₹{bill.total.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono text-emerald-600">₹{bill.paid.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono font-bold text-rose-600">
+                        ₹{bill.balance.toFixed(2)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-xs gap-1"
+                          onClick={() => navigate({ to: "/purchases" })}
+                        >
+                          View <ArrowRight className="h-3 w-3" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+        </TabsContent>
+
         {/* Tab 4: GST Position */}
         <TabsContent value="gst">
           <Card className="p-4 card-soft space-y-4">
@@ -808,6 +908,39 @@ export function CAReviewWorkspace({
               </div>
             </div>
 
+            {/* Input Tax Credit (ITC) / GST Paid to Suppliers */}
+            <div className="border-t pt-3 space-y-2">
+              <div className="text-xs font-semibold text-sky-700 dark:text-sky-400">
+                Input Tax Credit (ITC) / GST Paid to Suppliers (Purchases)
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 rounded-lg border bg-sky-500/5 space-y-1">
+                  <div className="text-muted-foreground">Total Eligible ITC</div>
+                  <div className="text-sm font-bold font-mono text-sky-700 dark:text-sky-400">
+                    ₹{recon.gst.inputGstRupees.toFixed(2)}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg border bg-sky-500/5 space-y-1">
+                  <div className="text-muted-foreground">CGST Input (ITC)</div>
+                  <div className="text-sm font-bold font-mono">₹{recon.gst.cgstInputRupees.toFixed(2)}</div>
+                </div>
+                <div className="p-3 rounded-lg border bg-sky-500/5 space-y-1">
+                  <div className="text-muted-foreground">SGST Input (ITC)</div>
+                  <div className="text-sm font-bold font-mono">₹{recon.gst.sgstInputRupees.toFixed(2)}</div>
+                </div>
+                <div className="p-3 rounded-lg border bg-sky-500/5 space-y-1">
+                  <div className="text-muted-foreground">IGST Input (ITC)</div>
+                  <div className="text-sm font-bold font-mono">₹{recon.gst.igstInputRupees.toFixed(2)}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Net GST Position */}
+            <div className={`p-3 rounded-md border text-xs ${recon.gst.netGstLiabilityRupees >= 0 ? "bg-amber-500/10 border-amber-500/20 text-amber-900 dark:text-amber-200" : "bg-emerald-500/10 border-emerald-500/20 text-emerald-900 dark:text-emerald-200"}`}>
+              <span className="font-bold">Net Statutory GST Position: </span>
+              Output GST (₹{recon.gst.outputGstRupees.toFixed(2)}) - Eligible Input ITC (₹{recon.gst.inputGstRupees.toFixed(2)}) = {recon.gst.netGstLiabilityRupees >= 0 ? `Net GST Payable to Govt: ₹${recon.gst.netGstLiabilityRupees.toFixed(2)}` : `Net ITC Carry Forward: ₹${Math.abs(recon.gst.netGstLiabilityRupees).toFixed(2)}`}
+            </div>
+
             <div className="p-3 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-900 dark:text-emerald-200 text-xs">
               <span className="font-bold">Statutory Proof: </span>
               CGST (₹{recon.gst.cgstRupees.toFixed(2)}) + SGST (₹{recon.gst.sgstRupees.toFixed(2)}) + IGST (₹{recon.gst.igstRupees.toFixed(2)}) === Output GST (₹{recon.gst.outputGstRupees.toFixed(2)}) === Ledger Balance (₹{recon.gst.outputGstLedgerRupees.toFixed(2)}).
@@ -826,7 +959,7 @@ export function CAReviewWorkspace({
               {getStatusBadge(recon.cashBank.status)}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               <div className="p-3 rounded-lg border bg-muted/10 space-y-1">
                 <div className="text-muted-foreground">Cash in Hand Ledger</div>
                 <div className="text-sm font-bold font-mono">₹{recon.cashBank.cashLedgerRupees.toFixed(2)}</div>
@@ -837,7 +970,11 @@ export function CAReviewWorkspace({
               </div>
               <div className="p-3 rounded-lg border bg-muted/10 space-y-1">
                 <div className="text-muted-foreground">Total Customer Receipts</div>
-                <div className="text-sm font-bold font-mono">₹{recon.cashBank.customerReceiptsRupees.toFixed(2)}</div>
+                <div className="text-sm font-bold font-mono text-emerald-600">₹{recon.cashBank.customerReceiptsRupees.toFixed(2)}</div>
+              </div>
+              <div className="p-3 rounded-lg border bg-muted/10 space-y-1">
+                <div className="text-muted-foreground">Total Supplier Payments</div>
+                <div className="text-sm font-bold font-mono text-rose-600">₹{recon.cashBank.supplierPaymentsRupees.toFixed(2)}</div>
               </div>
             </div>
 

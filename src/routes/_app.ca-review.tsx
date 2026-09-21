@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell, PageHeader } from "@/components/app/AppShell";
-import { db, type Invoice, type Purchase, type Receipt, type Product, type Party } from "@/lib/db";
+import { db, type Invoice, type Purchase, type Receipt, type Payment, type Product, type Party } from "@/lib/db";
 import { useLiveState } from "@/lib/useLive";
 import { useAccounting } from "@/modules/accounting/useAccounting";
 import { CAReviewWorkspace } from "@/modules/accounting/components/CAReviewWorkspace";
@@ -18,10 +18,11 @@ function CAReviewPage() {
   const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
   const purchasesState = useLiveState<Purchase>(() => db().purchases.toArray());
   const receiptsState = useLiveState<Receipt>(() => db().receipts.toArray());
+  const paymentsState = useLiveState<Payment>(() => db().payments.toArray());
   const productsState = useLiveState<Product>(() => db().products.toArray());
   const partiesState = useLiveState<Party>(() => db().parties.toArray());
 
-  const isDexieLoaded = invoicesState.isLoaded && purchasesState.isLoaded && receiptsState.isLoaded && productsState.isLoaded && partiesState.isLoaded;
+  const isDexieLoaded = invoicesState.isLoaded && purchasesState.isLoaded && receiptsState.isLoaded && paymentsState.isLoaded && productsState.isLoaded && partiesState.isLoaded;
   const isLoading = accountingLoading || !isDexieLoaded;
 
   return (
@@ -39,6 +40,7 @@ function CAReviewPage() {
           invoices={invoicesState.data}
           receipts={receiptsState.data}
           purchases={purchasesState.data}
+          payments={paymentsState.data}
           products={productsState.data}
           parties={partiesState.data}
           loading={isLoading}

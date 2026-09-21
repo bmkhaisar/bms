@@ -224,6 +224,8 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
 
   const docTitle = docData.kind === "receipt"
     ? (docData.title || "RECEIPT VOUCHER").toUpperCase()
+    : docData.kind === "payment"
+    ? (docData.title || "PAYMENT VOUCHER").toUpperCase()
     : isTaxDoc
     ? docData.title.toUpperCase()
     : docData.kind === "invoice"
@@ -313,10 +315,10 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
   // 4. Party Details Box (Bill To & Ship To side-by-side per PRD §§ 31-36)
   const party = docData.party;
   const isInvoiceOrQuote = docData.kind === "invoice" || docData.kind === "quotation";
-  const hasShipping = isInvoiceOrQuote || Boolean(party.shippingAddress) || Boolean(party.shipToName) || docData.copyLabel === "DRIVER COPY" || docData.copyLabel === "TRANSPORT COPY";
+  const hasShipping = isInvoiceOrQuote || Boolean(party.shippingAddress) || Boolean(party.shipToName) || docData.copyLabel === "DRIVER COPY" || docData.copyLabel === "TRANSPORT COPY" || docData.kind === "receipt" || docData.kind === "payment";
 
   const partyLabel =
-    docData.kind === "purchase"
+    docData.kind === "purchase" || docData.kind === "payment"
       ? "SUPPLIER / VENDOR DETAILS"
       : isTaxDoc
       ? "BILL TO / TAXPAYER DETAILS"
@@ -338,7 +340,7 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
     doc.setTextColor(17, 24, 39);
-    doc.text(party.name || "Customer", margin, leftY, { maxWidth: colW });
+    doc.text(party.name || (docData.kind === "payment" ? "Supplier / Vendor" : "Customer"), margin, leftY, { maxWidth: colW });
     if (party.company && party.company !== party.name) {
       leftY += 4;
       doc.setFont("helvetica", "normal");
@@ -377,15 +379,16 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       leftY += 3.5;
     }
 
-    // Right Column: SHIP TO or PAYMENT DETAILS (for Receipt)
+    // Right Column: SHIP TO or PAYMENT DETAILS (for Receipt or Payment)
     const shipX = margin + colW + 6;
     let rightY = y;
 
-    if (docData.kind === "receipt") {
+    if (docData.kind === "receipt" || docData.kind === "payment") {
+      const isPayment = docData.kind === "payment";
       doc.setFont("helvetica", "bold");
       doc.setFontSize(8);
       doc.setTextColor(107, 114, 128);
-      doc.text("PAYMENT & SETTLEMENT DETAILS", shipX, rightY);
+      doc.text(isPayment ? "PAYMENT & DISBURSEMENT DETAILS" : "PAYMENT & SETTLEMENT DETAILS", shipX, rightY);
       rightY += 4.5;
 
       doc.setFont("helvetica", "normal");
@@ -395,16 +398,16 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       if (docData.receiptDetails?.invoiceNumber) {
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 64, 175);
-        doc.text(`Payment Against: ${docData.receiptDetails.invoiceNumber}`, shipX, rightY);
+        doc.text(isPayment ? `Payment Against: ${docData.receiptDetails.invoiceNumber}` : `Payment Against: ${docData.receiptDetails.invoiceNumber}`, shipX, rightY);
         doc.setFont("helvetica", "normal");
         doc.setTextColor(75, 85, 99);
         rightY += 4;
       }
-      const pMethod = docData.receiptDetails?.paymentMethod || docData.paymentMode || "Cash";
+      const pMethod = docData.receiptDetails?.paymentMethod || docData.paymentMode || (isPayment ? "Bank Transfer" : "Cash");
       doc.text(`Payment Method: ${pMethod}`, shipX, rightY);
       rightY += 3.5;
 
-      const sLedger = docData.receiptDetails?.settlementLedgerName || "Cash/Bank Account";
+      const sLedger = docData.receiptDetails?.settlementLedgerName || (isPayment ? "Bank/Cash Account" : "Cash/Bank Account");
       doc.text(`Settlement Ledger: ${sLedger}`, shipX, rightY);
       rightY += 3.5;
 
@@ -412,7 +415,7 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
         doc.text(`Ref / Cheque No: ${docData.receiptDetails.referenceNumber}`, shipX, rightY);
         rightY += 3.5;
       }
-      doc.text(`Receipt Date: ${formatDate(docData.date)}`, shipX, rightY);
+      doc.text(`${isPayment ? "Payment" : "Receipt"} Date: ${formatDate(docData.date)}`, shipX, rightY);
       rightY += 3.5;
     } else {
       // Driver Copy Highlight Box (PRD § 33: Display destination prominently)
@@ -528,10 +531,12 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
 
   const effectiveItems = (docData.items && docData.items.length > 0)
     ? docData.items
-    : docData.kind === "receipt"
+    : (docData.kind === "receipt" || docData.kind === "payment")
     ? [
         {
-          name: docData.receiptDetails?.natureOfSupply
+          name: docData.kind === "payment"
+            ? (docData.receiptDetails?.invoiceNumber ? `Payment against Bill ${docData.receiptDetails.invoiceNumber}` : "Supplier Payment / Disbursement")
+            : docData.receiptDetails?.natureOfSupply
             ? `Advance for ${docData.receiptDetails.natureOfSupply}`
             : "Customer Advance Receipt",
           quantity: 1,
@@ -544,10 +549,19 @@ export function buildDocumentPDF(docData: NormalizedDocument): jsPDF {
       ]
     : [];
 
-  if (docData.kind === "receipt" && !isTaxDoc) {
-    // Professional Receipt Voucher Allocation Table (PRD §§ 6, 20)
-    tableHeaders = ["SL No.", "Payment Against", "Invoice Date", "Invoice Amount", "Balance Before", "Allocated", "Balance After"];
-    const invNum = docData.receiptDetails?.invoiceNumber || (docData.number ? "Invoice Settlement" : "On Account");
+  if ((docData.kind === "receipt" || docData.kind === "payment") && !isTaxDoc) {
+    // Professional Voucher Allocation Table (PRD §§ 6, 20)
+    const isPayment = docData.kind === "payment";
+    tableHeaders = [
+      "SL No.",
+      isPayment ? "Payment Against Bill" : "Payment Against",
+      isPayment ? "Bill / PO Date" : "Invoice Date",
+      isPayment ? "Bill Amount" : "Invoice Amount",
+      "Balance Before",
+      isPayment ? "Paid Amount" : "Allocated",
+      "Balance After"
+    ];
+    const invNum = docData.receiptDetails?.invoiceNumber || (isPayment ? "Supplier Settlement" : docData.number ? "Invoice Settlement" : "On Account");
     const invDate = docData.receiptDetails?.invoiceDate ? formatDate(docData.receiptDetails.invoiceDate) : "—";
     const invTotal = docData.receiptDetails?.invoiceTotal !== undefined ? docData.receiptDetails.invoiceTotal : (docData.receiptDetails?.balanceBefore ?? docData.grandTotal);
     const balBefore = docData.receiptDetails?.balanceBefore !== undefined ? docData.receiptDetails.balanceBefore : docData.grandTotal;
