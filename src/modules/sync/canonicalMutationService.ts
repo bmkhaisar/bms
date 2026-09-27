@@ -35,7 +35,8 @@ export type EntityKind =
   | "payment"
   | "party"
   | "product"
-  | "address";
+  | "address"
+  | "size";
 
 function getCollectionName(kind: EntityKind): string {
   switch (kind) {
@@ -47,6 +48,7 @@ function getCollectionName(kind: EntityKind): string {
     case "party": return "parties";
     case "product": return "products";
     case "address": return "parties";
+    case "size": return "sizes";
     default: return `${kind}s`;
   }
 }
@@ -60,13 +62,14 @@ function getDexieTable(kind: EntityKind): any {
     case "payment": return db().payments;
     case "party": return db().parties;
     case "product": return db().products;
+    case "size": return db().sizes;
     default: return null;
   }
 }
 
 export interface AuthoritativeDeleteDraftParams {
   companyId: string;
-  kind: "invoice" | "quotation" | "purchase" | "receipt" | "payment" | "party" | "product";
+  kind: "invoice" | "quotation" | "purchase" | "receipt" | "payment" | "party" | "product" | "size";
   id: string;
   uid?: string;
   itemsToRevertStock?: any[];

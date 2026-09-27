@@ -4,6 +4,7 @@ import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
 import { extractTableRowsFromMarkdown, extractTermsFromMarkdown } from "@/lib/markdownDoc";
 import { resolveGeneralInfoFields } from "@/lib/cabinConfiguration";
 import { resolveTechSpecSections } from "@/lib/techSpecResolution";
+import { resolveItemSize, parseSizeSnapshot } from "@/lib/sizeResolution";
 
 /**
  * Freezes immutable master snapshots at Quotation Issue/Finalization (PRD §§ 7-9, 28, 78-82)
@@ -135,5 +136,23 @@ export function freezeQuotationSnapshots(
     generalInformationSnapshot: resolvedGeneralInfo,
     technicalSpecificationSnapshot: resolvedTechSpecs,
     visibilitySnapshot: resolvedVisibility,
+    items: (quotation.items || []).map((it) => {
+      const size = it.size || it.sizeSnapshot?.label || resolveItemSize(it) || undefined;
+      const sizeSnapshot = it.sizeSnapshot || (size ? parseSizeSnapshot(size) : undefined);
+      return {
+        ...it,
+        size,
+        sizeSnapshot,
+      };
+    }),
+    lineSnapshots: (quotation.items || []).map((it) => {
+      const size = it.size || it.sizeSnapshot?.label || resolveItemSize(it) || undefined;
+      const sizeSnapshot = it.sizeSnapshot || (size ? parseSizeSnapshot(size) : undefined);
+      return {
+        ...it,
+        size,
+        sizeSnapshot,
+      };
+    }),
   };
 }

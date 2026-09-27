@@ -1,5 +1,6 @@
 import type { LineItem, SizeSnapshot, GeneralInfoField } from "./db.ts";
 import { extractTableRowsFromMarkdown } from "./markdownDoc.ts";
+import { resolveItemSize } from "./sizeResolution.ts";
 
 /**
  * Checks if a General Information row corresponds to "Configuration of Cabins".
@@ -76,7 +77,7 @@ export function buildCabinConfigurationFromItems(items: LineItem[]): string {
   const seen = new Set<string>();
 
   for (const item of items) {
-    const sizeVal = item.sizeSnapshot || item.size;
+    const sizeVal = item.sizeSnapshot || item.size || resolveItemSize(item);
     if (!sizeVal) continue;
 
     const formatted = formatCabinDimension(sizeVal);

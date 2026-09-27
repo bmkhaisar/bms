@@ -9,6 +9,7 @@ import { handleAutoTableMarkdownCell, drawMarkdownText } from "@/lib/markdownPdf
 import { resolveGeneralInfoFields } from "@/lib/cabinConfiguration";
 import { resolveTechSpecSections } from "@/lib/techSpecResolution";
 import { renderPaginatedKeyValueTable } from "@/lib/pdfTablePagination";
+import { resolvePdfDisplaySize } from "@/lib/sizeResolution";
 
 const PDF_CCY = "Rs. ";
 const money = (val: number) => formatMoney(val, PDF_CCY);
@@ -633,7 +634,7 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
       return [
         idx + 1,
         desc,
-        item.size || item.sizeSnapshot?.label || "—",
+        resolvePdfDisplaySize(item),
         item.hsn || "—",
         item.quantity,
         item.unit || item.uomLabel || "NOS",
@@ -671,7 +672,7 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
       return [
         idx + 1,
         desc,
-        item.size || item.sizeSnapshot?.label || "—",
+        resolvePdfDisplaySize(item),
         item.quantity,
         item.unit || item.uomLabel || "NOS",
         money(rate),

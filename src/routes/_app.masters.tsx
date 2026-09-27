@@ -23,6 +23,9 @@ import {
 } from "@/lib/db";
 import { useLive } from "@/lib/useLive";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
+import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { useAuth } from "@/modules/auth/context/AuthContext";
+import { authoritativeSaveEntity, authoritativeDeleteDraft } from "@/modules/sync/canonicalMutationService";
 
 export const Route = createFileRoute("/_app/masters")({
   head: () => ({ meta: [{ title: "Masters — Business Management" }] }),
@@ -62,15 +65,30 @@ function MastersPage() {
 
 // ================== SIZES ==================
 function SizesMaster() {
+  const { activeCompany } = useActiveCompany();
+  const { user } = useAuth();
   const items = useLive<SizePreset>(() => db().sizes.orderBy("label").toArray());
   const [label, setLabel] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   async function add() {
-    if (!label.trim()) return;
-    await db().sizes.put({ id: uid(), label: label.trim(), createdAt: Date.now() });
-    setLabel(""); toast.success("Size added");
+    const clean = label.trim();
+    if (!clean) return;
+    const newSize: SizePreset = { id: uid(), label: clean, createdAt: Date.now() };
+    if (activeCompany?.id) {
+      await authoritativeSaveEntity({
+        companyId: activeCompany.id,
+        kind: "size",
+        entity: newSize,
+        uid: user?.uid,
+        action: "create",
+      });
+    } else {
+      await db().sizes.put(newSize);
+    }
+    setLabel("");
+    toast.success("Size added");
   }
   return (
     <Card className="p-4 card-soft">
@@ -100,7 +118,16 @@ function SizesMaster() {
           if (!deleteTarget) return;
           setIsDeleting(true);
           try {
-            await db().sizes.delete(deleteTarget.id);
+            if (activeCompany?.id) {
+              await authoritativeDeleteDraft({
+                companyId: activeCompany.id,
+                kind: "size",
+                id: deleteTarget.id,
+                uid: user?.uid,
+              });
+            } else {
+              await db().sizes.delete(deleteTarget.id);
+            }
             toast.success(`Size "${deleteTarget.label}" deleted`);
             setDeleteTarget(null);
           } finally {

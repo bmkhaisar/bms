@@ -20,6 +20,7 @@ import { resolveGeneralInfoFields } from "./cabinConfiguration.ts";
 import { resolveTechSpecSections } from "./techSpecResolution.ts";
 import { handleAutoTableMarkdownCell, cleanMarkdownForPdf } from "./markdownPdfRenderer.ts";
 import { renderPaginatedKeyValueTable } from "./pdfTablePagination.ts";
+import { resolvePdfDisplaySize } from "./sizeResolution.ts";
 
 const FOOTER_MARK = "Built by MMA";
 // jsPDF's built-in Helvetica lacks the ₹ glyph (renders as superscript 1).
@@ -323,7 +324,7 @@ async function drawCover(ctx: PdfContext): Promise<number> {
   const body = quotation.items.map((it, i) => [
     String(i + 1),
     it.name + (it.description ? `\n${it.description}` : ""),
-    it.size || "-",
+    resolvePdfDisplaySize(it),
     String(it.quantity),
     it.unit,
     formatMoney(it.rate, ""),
@@ -342,6 +343,7 @@ async function drawCover(ctx: PdfContext): Promise<number> {
     alternateRowStyles: template.tableStyle === "striped" ? { fillColor: [248, 250, 252] } : undefined,
     columnStyles: {
       0: { halign: "center", cellWidth: 8 },
+      2: { halign: "center", cellWidth: 24 },
       3: { halign: "right" }, 5: { halign: "right" },
       6: { halign: "right" }, 7: { halign: "right" }, 8: { halign: "right", fontStyle: "bold" },
     },
@@ -1148,7 +1150,7 @@ export async function exportQuotationDOCX(
           ...(it.description ? [P(it.description, { size: 16, color: "555555" })] : []),
         ],
       }),
-      cell(it.size || "-"),
+      cell(resolvePdfDisplaySize(it)),
       cell(String(it.quantity), { align: AlignmentType.RIGHT }),
       cell(it.unit),
       cell(formatMoney(it.rate, ""), { align: AlignmentType.RIGHT }),

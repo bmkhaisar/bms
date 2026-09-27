@@ -25,6 +25,8 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+import { parseSizeSnapshot } from "@/lib/sizeResolution";
+
 export function computeLine(item: Partial<LineItem>): LineItem {
   let quantity = Number(item.quantity) || 0;
   const rate = Number(item.rate) || 0;
@@ -72,11 +74,16 @@ export function computeLine(item: Partial<LineItem>): LineItem {
   const gstPaise = gstRate > 0 ? Math.round((taxablePaise * gstRate) / 100) : 0;
   const totalPaise = taxablePaise + gstPaise;
 
+  const resolvedSize = item.size || item.sizeSnapshot?.label;
+  const resolvedSizeSnapshot = item.sizeSnapshot || (resolvedSize ? parseSizeSnapshot(resolvedSize) : undefined);
+
   return {
+    ...item,
     productId: item.productId || "",
     name: item.name || "",
     hsn: item.hsn,
-    size: item.size,
+    size: resolvedSize,
+    sizeSnapshot: resolvedSizeSnapshot,
     description: item.description,
     quantity,
     unit: item.unit || (pricingBasis === "per_area" ? "Sq Ft" : "pcs"),

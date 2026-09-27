@@ -38,6 +38,7 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     { name: "products", table: db().products, entityType: "product" },
     { name: "categories", table: db().categories, entityType: "category" },
     { name: "productSizes", table: db().productSizes, entityType: "productSize" },
+    { name: "sizes", table: db().sizes, entityType: "size" },
     { name: "termsTemplates", table: db().termsTemplates, entityType: "termsTemplate" },
     { name: "generalInfoTemplates", table: db().generalInfoTemplates, entityType: "generalInfoTemplate" },
     { name: "techSpecTemplates", table: db().techSpecTemplates, entityType: "techSpecTemplate" },
@@ -56,7 +57,7 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     if (Number(localStorage.getItem(markerKey) || 0) >= resetAt) return;
     await Promise.all([
       db().invoices.clear(), db().quotations.clear(), db().purchases.clear(), db().receipts.clear(), db().payments.clear(),
-      db().parties.clear(), db().customers.clear(), db().suppliers.clear(), db().productSizes.clear(),
+      db().parties.clear(), db().customers.clear(), db().suppliers.clear(), db().productSizes.clear(), db().sizes.clear(),
     ]);
     await purgeCompanyCacheAndOutbox(companyId);
     localStorage.setItem(markerKey, String(resetAt));

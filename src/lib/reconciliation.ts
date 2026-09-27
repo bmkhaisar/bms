@@ -1,7 +1,7 @@
 import { appQueryClient } from "./queryClient";
 
 export interface ReconcileDocumentOptions {
-  entityType: "invoice" | "quotation" | "purchase" | "receipt" | "payment" | "party" | "product";
+  entityType: "invoice" | "quotation" | "purchase" | "receipt" | "payment" | "party" | "product" | "size";
   document?: any;
   companyId?: string;
   action?: "create" | "update" | "void" | "delete";

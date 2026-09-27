@@ -22,6 +22,7 @@ import {
 } from "@/modules/tax/canonicalCalculation";
 import { recordInvoicePriceHistory, recordPurchasePriceHistory } from "@/modules/pricing/priceHistoryService";
 import { recordStockMovement } from "@/modules/inventory/stockMovementService";
+import { resolveItemSize, parseSizeSnapshot } from "@/lib/sizeResolution";
 
 export interface PostingResult {
   success: boolean;
@@ -262,6 +263,9 @@ export async function postInvoiceTransaction(params: {
         const taxTreatment = it.taxTreatment || (taxRate > 0 ? "taxable" : "exempt");
         const lineAmount = it.total !== undefined ? it.total : Math.round((it.quantity * it.rate * (1 - discount / 100)) * 100) / 100;
 
+        const size = it.size || it.sizeSnapshot?.label || resolveItemSize(it) || "";
+        const sizeSnapshot = it.sizeSnapshot || (size ? parseSizeSnapshot(size) : undefined);
+
         return {
           ...it,
           productId: it.productId,
@@ -274,7 +278,8 @@ export async function postInvoiceTransaction(params: {
           uomLabel,
           unit: uomLabel,
           quantity: it.quantity,
-          size: it.size,
+          size: size || undefined,
+          sizeSnapshot,
           measurementSummary: it.measurementSummary,
           pricingBasis: it.pricingBasis,
           rate: it.rate,
@@ -492,6 +497,9 @@ export async function postPurchaseTransaction(params: {
         const taxTreatment = it.taxTreatment || (taxRate > 0 ? "taxable" : "exempt");
         const lineAmount = it.total !== undefined ? it.total : Math.round((it.quantity * it.rate * (1 - discount / 100)) * 100) / 100;
 
+        const size = it.size || it.sizeSnapshot?.label || resolveItemSize(it) || "";
+        const sizeSnapshot = it.sizeSnapshot || (size ? parseSizeSnapshot(size) : undefined);
+
         return {
           ...it,
           productId: it.productId,
@@ -504,7 +512,8 @@ export async function postPurchaseTransaction(params: {
           uomLabel,
           unit: uomLabel,
           quantity: it.quantity,
-          size: it.size,
+          size: size || undefined,
+          sizeSnapshot,
           measurementSummary: it.measurementSummary,
           pricingBasis: it.pricingBasis,
           rate: it.rate,
