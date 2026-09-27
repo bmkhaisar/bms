@@ -50,6 +50,7 @@ import { useEffect, useState, useMemo } from "react";
 import { firebaseDb } from "@/config/firebase";
 import { ref, onValue, off } from "firebase/database";
 import { DashboardSkeleton } from "@/components/app/Skeletons";
+import { DashboardSalesVsPurchasesCard } from "@/components/app/DashboardSalesVsPurchasesCard";
 
 // In-memory module cache so navigating back to dashboard never flashes skeletons or fake zeroes (PRD #22, #23)
 const dashboardMetricsMemoryCache: Record<string, any> = {};
@@ -62,27 +63,27 @@ export const Route = createFileRoute("/_app/")({
 function Dashboard() {
   const { activeCompany, activeFinancialYear } = useActiveCompany();
 
-  // Local Dexie collections with bounded financial year queries for scale
+  // Local Dexie collections with bounded financial year queries + 45-day lookback for MTD vs LMTD cross-FY comparisons
   const invoicesState = useLiveState<Invoice>(() => {
     if (activeFinancialYear?.startDate && activeFinancialYear?.endDate) {
+      const queryStart = activeFinancialYear.startDate - 45 * 24 * 60 * 60 * 1000;
       return db().invoices
         .where("date")
-        .between(activeFinancialYear.startDate, activeFinancialYear.endDate, true, true)
-        .limit(300)
+        .between(queryStart, activeFinancialYear.endDate, true, true)
         .toArray();
     }
-    return db().invoices.orderBy("createdAt").reverse().limit(300).toArray();
+    return db().invoices.orderBy("date").reverse().toArray();
   }, [activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
 
   const purchasesState = useLiveState<Purchase>(() => {
     if (activeFinancialYear?.startDate && activeFinancialYear?.endDate) {
+      const queryStart = activeFinancialYear.startDate - 45 * 24 * 60 * 60 * 1000;
       return db().purchases
         .where("date")
-        .between(activeFinancialYear.startDate, activeFinancialYear.endDate, true, true)
-        .limit(300)
+        .between(queryStart, activeFinancialYear.endDate, true, true)
         .toArray();
     }
-    return db().purchases.orderBy("createdAt").reverse().limit(300).toArray();
+    return db().purchases.orderBy("date").reverse().toArray();
   }, [activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
 
   const productsState = useLiveState<Product>(() => db().products.toArray());
@@ -90,24 +91,24 @@ function Dashboard() {
   const suppliersState = useLiveState<Supplier>(() => db().suppliers.toArray());
   const receiptsState = useLiveState<Receipt>(() => {
     if (activeFinancialYear?.startDate && activeFinancialYear?.endDate) {
+      const queryStart = activeFinancialYear.startDate - 45 * 24 * 60 * 60 * 1000;
       return db().receipts
         .where("date")
-        .between(activeFinancialYear.startDate, activeFinancialYear.endDate, true, true)
-        .limit(300)
+        .between(queryStart, activeFinancialYear.endDate, true, true)
         .toArray();
     }
-    return db().receipts.orderBy("createdAt").reverse().limit(300).toArray();
+    return db().receipts.orderBy("date").reverse().toArray();
   }, [activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
 
   const paymentsState = useLiveState<Payment>(() => {
     if (activeFinancialYear?.startDate && activeFinancialYear?.endDate) {
+      const queryStart = activeFinancialYear.startDate - 45 * 24 * 60 * 60 * 1000;
       return db().payments
         .where("date")
-        .between(activeFinancialYear.startDate, activeFinancialYear.endDate, true, true)
-        .limit(300)
+        .between(queryStart, activeFinancialYear.endDate, true, true)
         .toArray();
     }
-    return db().payments.orderBy("createdAt").reverse().limit(300).toArray();
+    return db().payments.orderBy("date").reverse().toArray();
   }, [activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
 
   const recentInvoices = useLive<Invoice>(() =>
@@ -602,58 +603,19 @@ function Dashboard() {
 
       {/* Charts Section */}
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        {/* Sales vs Purchases 6-Month Trend */}
-        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <div>
-              <CardTitle className="text-base font-semibold">Sales vs Purchases Trend</CardTitle>
-              <CardDescription className="text-xs">
-                Monthly revenue and procurement comparison (Real data only)
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-4">
-            {!renderCharts ? (
-              <div className="h-[280px] w-full animate-pulse rounded-xl bg-muted/20" />
-            ) : hasChartData ? (
-              <div className="h-[280px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={metrics.salesVsPurchasesTrend} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                    <XAxis dataKey="label" fontSize={12} tickLine={false} axisLine={false} />
-                    <YAxis
-                      fontSize={11}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(v) => `₹${v >= 1000 ? `${Math.round(v / 1000)}k` : v}`}
-                    />
-                    <Tooltip
-                      formatter={(val: any) => [formatMoney(Number(val)), ""]}
-                      contentStyle={{
-                        borderRadius: "12px",
-                        border: "1px solid var(--border)",
-                        backgroundColor: "var(--card)",
-                        color: "var(--foreground)",
-                        boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-                      }}
-                    />
-                    <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
-                    <Bar dataKey="sales" name="Sales Revenue" fill="var(--mint, #2C7B52)" radius={[6, 6, 0, 0]} />
-                    <Bar dataKey="purchases" name="Purchases" fill="#3B82F6" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="flex h-[260px] flex-col items-center justify-center gap-2 text-center">
-                <Calendar className="h-8 w-8 text-muted-foreground/40" />
-                <p className="text-sm font-medium text-foreground">No transaction data yet</p>
-                <p className="text-xs text-muted-foreground max-w-sm">
-                  Create tax invoices or purchase vouchers to see monthly sales trends.
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {/* Sales vs Purchases 6-Month Trend & MTD vs LMTD Analytics */}
+        <DashboardSalesVsPurchasesCard
+          invoices={invoices}
+          purchases={purchases}
+          receipts={receipts}
+          isLoaded={isDataLoaded}
+          activeCompanyName={activeCompany?.name}
+          activeFinancialYearName={activeFinancialYear?.name}
+          financialYearStart={activeFinancialYear?.startDate}
+          financialYearEnd={activeFinancialYear?.endDate}
+          timezone={(activeCompany as any)?.timezone || "Asia/Kolkata"}
+          className="lg:col-span-2"
+        />
 
         {/* Receivables Aging */}
         <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">

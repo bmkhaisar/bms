@@ -1,5 +1,6 @@
 import type { Ledger } from "@/modules/accounting/types";
 import type { Invoice, Purchase, Product, Customer, Supplier, Receipt, Payment } from "@/lib/db";
+import { computeMonthlyTrend } from "./dashboardAnalyticsService";
 
 export interface DashboardMetrics {
   totalSales: number;
@@ -303,28 +304,15 @@ export function computeDashboardMetrics(params: {
   const sgstInput = fyPurchases.reduce((s, p) => s + resolveDocumentTaxes(p).sgst, 0);
   const igstInput = fyPurchases.reduce((s, p) => s + resolveDocumentTaxes(p).igst, 0);
 
-  // 6. Monthly Trend Series (Last 6 Months)
-  const trendMonths: Array<{ label: string; sales: number; purchases: number }> = [];
+  // 6. Monthly Trend Series (Last 6 Months using canonical posted net revenue and procurement)
   const now = new Date();
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const start = d.getTime();
-    const nextD = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-    const end = nextD.getTime();
-
-    const mSales = fyInvoices
-      .filter((x) => x.date >= start && x.date < end)
-      .reduce((s, i) => s + i.grandTotal, 0);
-    const mPurch = fyPurchases
-      .filter((x) => x.date >= start && x.date < end)
-      .reduce((s, p) => s + p.grandTotal, 0);
-
-    trendMonths.push({
-      label: d.toLocaleString("en-IN", { month: "short" }),
-      sales: mSales,
-      purchases: mPurch,
-    });
-  }
+  const trendMonths = computeMonthlyTrend({
+    invoices: fyInvoices,
+    purchases: fyPurchases,
+    referenceDate: now,
+    financialYearStart,
+    financialYearEnd,
+  });
 
   // 7. Receivables Aging Buckets
   const nowMs = Date.now();
