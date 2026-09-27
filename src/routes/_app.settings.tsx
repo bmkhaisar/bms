@@ -22,6 +22,7 @@ import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb } from "@/config/firebase";
 import { ref, update } from "firebase/database";
 import { cacheEntity, getCachedEntity } from "@/modules/sync/dexieCache";
+import { db } from "@/lib/db";
 import type { Company, TypedSignatureStyle } from "@/modules/company/types";
 import { TYPED_SIGNATURE_STYLES } from "@/modules/company/signatoryHelper";
 import { SignatoryBlock } from "@/components/app/SignatoryBlock";
@@ -249,6 +250,17 @@ function SettingsPage() {
         data: updatedData,
       });
 
+      // 3. Immediately reconcile Dexie companySettings table for local reactive hooks
+      await db().companySettings.put({ ...updatedData, id: activeCompany.id } as any);
+      await db().companySettings.put({ ...updatedData, id: "singleton" } as any);
+
+      // 4. Notify all components & invalidate cached PDF data
+      window.dispatchEvent(
+        new CustomEvent("bms:company-settings-updated", {
+          detail: { companyId: activeCompany.id, company: updatedData },
+        })
+      );
+
       toast.success("Company settings saved");
     } catch (err: unknown) {
       console.error("Failed to save company settings:", err);
@@ -314,7 +326,16 @@ function SettingsPage() {
               <Input
                 value={form.name ?? ""}
                 disabled={!canEdit}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => {
+                  const newName = e.target.value;
+                  const prevName = form.name ?? "";
+                  const shouldSyncLegal = !form.legalName || form.legalName === prevName;
+                  setForm({
+                    ...form,
+                    name: newName,
+                    ...(shouldSyncLegal ? { legalName: newName } : {}),
+                  });
+                }}
                 placeholder="MMA Trading Co."
               />
             </Field>

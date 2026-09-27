@@ -2,6 +2,7 @@ import type { CompanySettings, Invoice, Quotation, Purchase, Receipt, Customer, 
 import { formatDate, formatMoney, numberToWordsIndian } from "@/lib/format";
 import { SignatoryBlock } from "@/components/app/SignatoryBlock";
 import { formatCompanyAddress } from "@/lib/companyAddress";
+import { resolveEffectiveCompany, resolveCanonicalBankDetails, isDocumentFinalized } from "@/lib/documentModel";
 
 export type DocumentKind = "invoice" | "quotation" | "purchase" | "receipt";
 
@@ -13,19 +14,22 @@ interface Props {
 }
 
 export function DocumentPrint({ company, kind, doc, party }: Props) {
+  const effComp = resolveEffectiveCompany(doc, company, null);
   const title = kind === "invoice" ? "TAX INVOICE" : kind === "quotation" ? "QUOTATION" : kind === "purchase" ? "PURCHASE BILL" : "RECEIPT";
   const isReceipt = kind === "receipt";
   const isInv = kind === "invoice";
   const anyDoc = doc as Invoice; // for shared field access with fallback
   const items = "items" in doc ? doc.items : [];
   const grandTotal = (doc as Invoice).grandTotal ?? (doc as Receipt).amount;
-  const compAddr = formatCompanyAddress(company);
+  const compAddr = formatCompanyAddress(effComp);
+  const isFinalized = isDocumentFinalized(doc);
+  const bankResult = resolveCanonicalBankDetails(doc, effComp, isFinalized);
 
   return (
     <div id="print-doc" className="mx-auto max-w-[210mm] bg-white p-6 text-[12px] text-black print:p-0">
       <header className="flex items-start justify-between border-b-2 border-black pb-3">
         <div className="flex items-start gap-3">
-          {company.logo && <img src={company.logo} alt="Logo" className="h-16 w-16 object-contain" />}
+          {(effComp.logo || (effComp as any).logoUrl) && <img src={effComp.logo || (effComp as any).logoUrl} alt="Logo" className="h-16 w-16 object-contain" />}
           <div>
             <div className="text-xl font-bold">{compAddr.companyName}</div>
             {compAddr.addressLines.map((line, i) => (
@@ -108,7 +112,7 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
         <section className="mt-4">
           <div className="rounded border p-4">
             <div className="text-[11px] text-gray-500">Received with thanks</div>
-            <div className="mt-1 text-lg font-bold">{formatMoney((doc as Receipt).amount, company.currencySymbol)}</div>
+            <div className="mt-1 text-lg font-bold">{formatMoney((doc as Receipt).amount, effComp.currencySymbol)}</div>
             <div className="mt-1 italic">{numberToWordsIndian((doc as Receipt).amount)}</div>
             <div className="mt-2 text-[11px]">Mode: <b>{(doc as Receipt).mode.toUpperCase()}</b>{(doc as Receipt).reference ? ` · Ref: ${(doc as Receipt).reference}` : ""}</div>
             {(doc as Receipt).notes && <div className="mt-1 text-[11px]">Notes: {(doc as Receipt).notes}</div>}
@@ -157,24 +161,24 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
             <div>
               <table className="w-full text-[11px]">
                 <tbody>
-                  <TotalRow label="Subtotal" v={formatMoney(anyDoc.subtotal, company.currencySymbol)} />
-                  <TotalRow label="Discount" v={"- " + formatMoney(anyDoc.discountTotal, company.currencySymbol)} />
+                  <TotalRow label="Subtotal" v={formatMoney(anyDoc.subtotal, effComp.currencySymbol)} />
+                  <TotalRow label="Discount" v={"- " + formatMoney(anyDoc.discountTotal, effComp.currencySymbol)} />
                   {isInv && (doc as Invoice).isIgst ? (
-                    <TotalRow label={`IGST`} v={formatMoney((doc as Invoice).igstTotal, company.currencySymbol)} />
+                    <TotalRow label={`IGST`} v={formatMoney((doc as Invoice).igstTotal, effComp.currencySymbol)} />
                   ) : isInv ? (
                     <>
-                      <TotalRow label="CGST" v={formatMoney((doc as Invoice).cgstTotal, company.currencySymbol)} />
-                      <TotalRow label="SGST" v={formatMoney((doc as Invoice).sgstTotal, company.currencySymbol)} />
+                      <TotalRow label="CGST" v={formatMoney((doc as Invoice).cgstTotal, effComp.currencySymbol)} />
+                      <TotalRow label="SGST" v={formatMoney((doc as Invoice).sgstTotal, effComp.currencySymbol)} />
                     </>
                   ) : (
-                    <TotalRow label="GST" v={formatMoney(anyDoc.gstTotal, company.currencySymbol)} />
+                    <TotalRow label="GST" v={formatMoney(anyDoc.gstTotal, effComp.currencySymbol)} />
                   )}
-                  <TotalRow label="Round Off" v={formatMoney(anyDoc.roundOff, company.currencySymbol)} />
-                  <tr><td className="pt-1 font-bold">Grand Total</td><td className="pt-1 text-right font-mono font-bold">{formatMoney(grandTotal, company.currencySymbol)}</td></tr>
+                  <TotalRow label="Round Off" v={formatMoney(anyDoc.roundOff, effComp.currencySymbol)} />
+                  <tr><td className="pt-1 font-bold">Grand Total</td><td className="pt-1 text-right font-mono font-bold">{formatMoney(grandTotal, effComp.currencySymbol)}</td></tr>
                   {isInv && (
                     <>
-                      <TotalRow label="Paid" v={formatMoney((doc as Invoice).amountPaid, company.currencySymbol)} />
-                      <TotalRow label="Balance" v={formatMoney((doc as Invoice).balance, company.currencySymbol)} />
+                      <TotalRow label="Paid" v={formatMoney((doc as Invoice).amountPaid, effComp.currencySymbol)} />
+                      <TotalRow label="Balance" v={formatMoney((doc as Invoice).balance, effComp.currencySymbol)} />
                     </>
                   )}
                 </tbody>
@@ -187,48 +191,66 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
       {/* Document Section Order: Terms & Conditions -> Bank Settlement -> Signatory */}
       <footer className="mt-6 space-y-3 border-t pt-3 text-[10px]">
         {/* 1. Terms & Conditions */}
-        {!isReceipt && ((doc as any).terms || company.terms || (company as any).invoiceTermsMarkdown) && (
+        {!isReceipt && ((doc as any).terms || effComp.terms || (effComp as any).invoiceTermsMarkdown) && (
           <div className="rounded border border-gray-200 p-2 bg-gray-50/50">
             <div className="font-semibold text-gray-900 mb-1">Terms & Conditions</div>
             <div className="text-gray-700 whitespace-pre-line text-[11px]">
-              {(doc as any).terms || (company as any).invoiceTermsMarkdown || company.terms}
+              {(doc as any).terms || (effComp as any).invoiceTermsMarkdown || effComp.terms}
             </div>
           </div>
         )}
 
         {/* 2. Bank Settlement Details */}
-        {(company.bankName || (doc as any).bankSnapshot || (doc as any).bankDetailsSnapshot) && (
+        {bankResult.includeBankDetails && bankResult.bankDetails && (
           <div className="rounded border border-gray-200 p-2">
             <div className="font-semibold text-gray-900 mb-1">Payment / Bank Settlement Details</div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-gray-700">
               <div>
                 <span className="text-gray-500">Account Holder:</span>{" "}
                 <span className="font-medium">
-                  {(doc as any).bankDetailsSnapshot?.accountHolderName || (doc as any).bankSnapshot?.accountHolderName || (doc as any).bankDetailsSnapshot?.accountName || (doc as any).bankSnapshot?.accountName || (company as any).accountHolderName || company.bankAccountHolderName || compAddr.companyName}
+                  {bankResult.bankDetails.accountHolderName}
                 </span>
               </div>
               <div>
                 <span className="text-gray-500">Bank Name:</span>{" "}
                 <span className="font-medium">
-                  {(doc as any).bankDetailsSnapshot?.bankName || (doc as any).bankSnapshot?.bankName || company.bankName}
+                  {bankResult.bankDetails.bankName}
                 </span>
               </div>
               <div>
                 <span className="text-gray-500">Account Number:</span>{" "}
                 <span className="font-mono font-medium">
-                  {(doc as any).bankDetailsSnapshot?.accountNo || (doc as any).bankSnapshot?.accountNo || company.bankAccount}
+                  {bankResult.bankDetails.accountNumber}
                 </span>
               </div>
               <div>
                 <span className="text-gray-500">IFSC Code:</span>{" "}
                 <span className="font-mono font-medium">
-                  {(doc as any).bankDetailsSnapshot?.ifscCode || (doc as any).bankSnapshot?.ifscCode || company.bankIfsc}
+                  {bankResult.bankDetails.ifsc}
                 </span>
               </div>
-              {company.upiId && (
+              {bankResult.bankDetails.branch && (
+                <div>
+                  <span className="text-gray-500">Branch:</span>{" "}
+                  <span className="font-medium">{bankResult.bankDetails.branch}</span>
+                </div>
+              )}
+              {bankResult.bankDetails.accountType && (
+                <div>
+                  <span className="text-gray-500">Account Type:</span>{" "}
+                  <span className="font-medium">{bankResult.bankDetails.accountType}</span>
+                </div>
+              )}
+              {bankResult.bankDetails.swift && (
+                <div>
+                  <span className="text-gray-500">SWIFT Code:</span>{" "}
+                  <span className="font-mono font-medium">{bankResult.bankDetails.swift}</span>
+                </div>
+              )}
+              {bankResult.bankDetails.upi && (
                 <div>
                   <span className="text-gray-500">UPI ID:</span>{" "}
-                  <span className="font-mono font-medium">{company.upiId}</span>
+                  <span className="font-mono font-medium">{bankResult.bankDetails.upi}</span>
                 </div>
               )}
             </div>
@@ -237,11 +259,11 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
 
         <div className="grid grid-cols-2 gap-4 items-end pt-1">
           <div>
-            {company.declaration && (<div><span className="font-semibold">Declaration: </span>{company.declaration}</div>)}
+            {effComp.declaration && (<div><span className="font-semibold">Declaration: </span>{effComp.declaration}</div>)}
           </div>
           <div className="flex justify-end">
             <SignatoryBlock
-              company={company as any}
+              company={effComp as any}
               signatoryOverride={(doc as any).signatoryOverride}
               signatorySnapshot={(doc as any).signatorySnapshot}
               documentDate={(doc as any).date}
@@ -252,6 +274,8 @@ export function DocumentPrint({ company, kind, doc, party }: Props) {
     </div>
   );
 }
+
+
 
 function TotalRow({ label, v }: { label: string; v: string }) {
   return <tr><td className="text-gray-600">{label}</td><td className="text-right font-mono">{v}</td></tr>;

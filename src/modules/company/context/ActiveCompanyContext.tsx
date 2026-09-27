@@ -13,6 +13,7 @@ import { useAuth } from "@/modules/auth/context/AuthContext";
 import type { Company, Membership, FinancialYear } from "../types";
 import { hasCapability, type Capability } from "@/modules/auth/permissions";
 import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYearFn";
+import { db } from "@/lib/db";
 
 export interface CompanySummary {
   id: string;
@@ -178,6 +179,15 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
         if (c.currentFinancialYearId) {
           setActiveFinancialYearId(c.currentFinancialYearId);
         }
+        if (typeof window !== "undefined") {
+          db().companySettings.put({ ...c, id: activeCompanyId }).catch(() => {});
+          db().companySettings.put({ ...c, id: "singleton" }).catch(() => {});
+          window.dispatchEvent(
+            new CustomEvent("bms:company-settings-updated", {
+              detail: { companyId: activeCompanyId, company: c },
+            })
+          );
+        }
       } else {
         setActiveCompany(null);
       }
@@ -237,6 +247,13 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
     setFinancialYears([]);
     setActiveFinancialYearId(null);
     setActiveCompanyId(companyId);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("bms:company-settings-updated", {
+          detail: { companyId },
+        })
+      );
+    }
   }, []);
 
   const switchFinancialYear = useCallback((financialYearId: string) => {

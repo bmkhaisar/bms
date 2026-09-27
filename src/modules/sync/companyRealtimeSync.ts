@@ -64,6 +64,53 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
   });
   unsubs.push(resetUnsub);
 
+  // Central Company Settings Realtime Listener: Syncs company profile & bank details to Dexie
+  const companyProfileRef = ref(firebaseDb, `companies/${companyId}`);
+  const compProfileUnsub = onValue(companyProfileRef, async (snapshot) => {
+    if (!snapshot.exists()) return;
+    const companyData = snapshot.val();
+    if (!companyData) return;
+
+    try {
+      const normalizedSettings = {
+        ...companyData,
+        id: companyId,
+        updatedAt: companyData.updatedAt || Date.now(),
+      };
+
+      // 1. Update Dexie companySettings table for reactive useLive hooks
+      await db().companySettings.put(normalizedSettings);
+      await db().companySettings.put({
+        ...normalizedSettings,
+        id: "singleton",
+      });
+
+      // 2. Mirror into bms_cache_v1
+      await cacheEntitiesBulk([{
+        uid,
+        companyId,
+        financialYearId,
+        entityType: "company",
+        entityId: "profile",
+        data: normalizedSettings,
+        version: companyData.version || 1,
+        serverUpdatedAt: companyData.updatedAt || Date.now(),
+      }]);
+
+      // 3. Invalidate cached PDF data and notify all components on this device
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("bms:company-settings-updated", {
+            detail: { companyId, company: normalizedSettings },
+          })
+        );
+      }
+    } catch (err) {
+      console.warn("[companyRealtimeSync] Failed to reconcile company profile:", err);
+    }
+  });
+  unsubs.push(compProfileUnsub);
+
   for (const col of collections) {
     const colRef = ref(firebaseDb, `companyData/${companyId}/${col.name}`);
     const unsub = onValue(

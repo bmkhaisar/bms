@@ -15,7 +15,9 @@ import {
 import { convertQuotationToInvoice, updateLinkedDraftInvoiceFromQuotation, isInvoiceImmutable } from "@/modules/documents/quotationConversion";
 import { useLive, useLiveState } from "@/lib/useLive";
 import { formatDate, formatMoney } from "@/lib/format";
-import { downloadQuotationPDF, downloadQuotationDOCX, exportQuotationPDF } from "@/lib/quotationExport";
+import { downloadQuotationPDF, downloadQuotationDOCX, exportQuotationPDF, printQuotationPDF } from "@/lib/quotationExport";
+import { resolveEffectiveCompany } from "@/lib/documentModel";
+import { createCompanySnapshot } from "@/modules/company/types";
 import { QuotationForm } from "./QuotationForm";
 import { QuotationQuickPreviewModal } from "./QuotationQuickPreviewModal";
 import { ListToolbar, EmptyState, usePagination, Pager } from "./ListHelpers";
@@ -67,7 +69,12 @@ export function QuotationsPage() {
     onClose: () => setEditing(null),
   });
 
-  useEffect(() => { getCompany().then(setCompany); }, []);
+  useEffect(() => {
+    const loadComp = () => { getCompany(activeCompany?.id).then(setCompany); };
+    loadComp();
+    window.addEventListener("bms:company-settings-updated", loadComp);
+    return () => window.removeEventListener("bms:company-settings-updated", loadComp);
+  }, [activeCompany?.id]);
 
   // Deep-link support: auto-filter and open quotation editor/preview
   useEffect(() => {
@@ -151,6 +158,7 @@ export function QuotationsPage() {
       includeTerms: activeCompany?.showQuotationTerms !== false,
       includeTechSpecs: activeCompany?.showQuotationTechnicalSpecs !== false,
       includeGeneralInfo: activeCompany?.showQuotationGeneralInfo !== false,
+      includeBankDetails: activeCompany?.showQuotationBankDetails !== false,
       structuredTerms: initialTerms,
       termsSnapshot: initialTerms.map(t => t.text),
       terms: initialTerms.map((t, i) => `${i + 1}. ${t.text}`).join("\n"),
@@ -173,7 +181,26 @@ export function QuotationsPage() {
       idToken,
       customPrefix: activeCompany?.quotationPrefix,
     });
-    setEditing({ ...r, id: uid(), number, financialYearId: financialYear.id, createdAt: Date.now(), date: Date.now(), status: "draft" });
+
+    const {
+      companySnapshot: _cs,
+      signatorySnapshot: _ss,
+      bankSnapshot: _bs,
+      bankDetailsSnapshot: _bds,
+      ...restOfQuotation
+    } = r;
+    delete (restOfQuotation as any).companyOverride;
+
+    setEditing({
+      ...restOfQuotation,
+      id: uid(),
+      number,
+      financialYearId: financialYear.id,
+      createdAt: Date.now(),
+      date: Date.now(),
+      status: "draft",
+      companySnapshot: activeCompany ? createCompanySnapshot(activeCompany) : undefined,
+    });
   }
   async function saveQuotation(next: Quotation) {
     const comp = activeCompany || company;
@@ -214,7 +241,12 @@ export function QuotationsPage() {
   }
 
   async function saveQuotationDraft(next: Quotation) {
-    const draft: Quotation = { ...next, status: "draft", updatedAt: Date.now() };
+    const draft: Quotation = {
+      ...next,
+      status: "draft",
+      updatedAt: Date.now(),
+      companySnapshot: activeCompany ? createCompanySnapshot(activeCompany) : next.companySnapshot,
+    };
     if (activeCompany?.id) {
       await authoritativeSaveEntity({
         companyId: activeCompany.id,
@@ -292,11 +324,7 @@ export function QuotationsPage() {
   }
 
   function getEffectiveCompany(r: Quotation): CompanySettings | null {
-    const isDraft = !r.status || r.status === "draft";
-    const resolved = isDraft
-      ? (activeCompany || r.companySnapshot || company)
-      : (r.companySnapshot || activeCompany || company);
-    return (resolved as CompanySettings) || null;
+    return resolveEffectiveCompany(r, activeCompany, company);
   }
 
   async function exportPDF(r: Quotation) {
@@ -314,17 +342,11 @@ export function QuotationsPage() {
   async function printQuote(r: Quotation) {
     const effComp = getEffectiveCompany(r);
     if (!effComp) return;
-    const blob = await exportQuotationPDF(r, effComp, cust(r.customerId), tpl(r.templateId));
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url);
-    if (w) setTimeout(() => w.print(), 800);
+    await printQuotationPDF(r, effComp, cust(r.customerId), tpl(r.templateId));
   }
 
   function buildQuotationShareData(quotation: Quotation): ShareDocumentData {
-    const isDraft = !quotation.status || quotation.status === "draft";
-    const effComp = isDraft
-      ? (activeCompany || quotation.companySnapshot || company)
-      : (quotation.companySnapshot || activeCompany || company);
+    const effComp = getEffectiveCompany(quotation) || activeCompany || company || {};
     const customer = cust(quotation.customerId) || (quotation.customerSnapshot as any);
     const activeCc = (activeCompany as any)?.defaultShareCcEmail || (company as any)?.defaultShareCcEmail;
 

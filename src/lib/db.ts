@@ -3,10 +3,16 @@ import Dexie, { type Table } from "dexie";
 export type ID = string;
 
 export interface CompanySettings {
-  id: "singleton";
+  id: "singleton" | string;
   name: string;
+  legalName?: string;
   logo?: string; // data URL
+  logoUrl?: string;
   address: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  phone?: string;
   mobile: string;
   altMobile?: string;
   email: string;
@@ -16,6 +22,7 @@ export interface CompanySettings {
   cin?: string;
   bankName?: string;
   bankAccount?: string;
+  bankAccountNo?: string;
   bankIfsc?: string;
   bankBranch?: string;
   upiId?: string;
@@ -41,8 +48,21 @@ export interface CompanySettings {
   bankSwiftCode?: string;
   declaration?: string;
   authorizedSignatory?: string;
+  designation?: string;
   signature?: string; // data URL
+  signatureUrl?: string;
+  signatureMode?: any;
+  typedSignatureStyle?: any;
   stamp?: string; // data URL
+  stampUrl?: string;
+  stampMode?: any;
+  showSignature?: boolean;
+  showStamp?: boolean;
+  showSignatoryName?: boolean;
+  showDesignation?: boolean;
+  showSignatureDate?: boolean;
+  signatureDateMode?: any;
+  customSignatureDate?: any;
   currency: string;
   currencySymbol: string;
   invoicePrefix: string;
@@ -716,7 +736,7 @@ export interface QuotationTemplate {
 }
 
 class BizDB extends Dexie {
-  companySettings!: Table<CompanySettings, "singleton">;
+  companySettings!: Table<CompanySettings, string>;
   customers!: Table<Customer, ID>;
   suppliers!: Table<Supplier, ID>;
   categories!: Table<Category, ID>;
@@ -797,7 +817,11 @@ export const DEFAULT_COMPANY: CompanySettings = {
   declaration: "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.",
 };
 
-export async function getCompany(): Promise<CompanySettings> {
+export async function getCompany(companyId?: string): Promise<CompanySettings> {
+  if (companyId) {
+    const scoped = await db().companySettings.get(companyId);
+    if (scoped) return scoped;
+  }
   const existing = await db().companySettings.get("singleton");
   if (existing) return existing;
   await db().companySettings.put(DEFAULT_COMPANY);

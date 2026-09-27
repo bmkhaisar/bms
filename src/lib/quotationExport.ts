@@ -11,9 +11,9 @@ import type {
   QuotationSection, SectionRow, StructuredTermItem,
 } from "./db.ts";
 import { formatDate, formatMoney, numberToWordsIndian } from "./format.ts";
-import { getLogoDataUrl, getLogoBytes } from "./logoData.ts";
+import { getLogoDataUrl, getLogoBytes, safeResolveImageDataUrl } from "./logoData.ts";
 import { formatCompanyAddress } from "./companyAddress.ts";
-import { resolveDocumentModel } from "./documentModel.ts";
+import { resolveDocumentModel, resolveEffectiveCompany, resolveCanonicalBankDetails, isDocumentFinalized } from "./documentModel.ts";
 import { extractTableRowsFromMarkdown, extractTermsFromMarkdown, parseMarkdownToBlocks } from "./markdownDoc.ts";
 import { resolveDocumentSignatory, createTypedSignatureDataUrl } from "../modules/company/signatoryHelper.ts";
 import { resolveGeneralInfoFields } from "./cabinConfiguration.ts";
@@ -492,26 +492,9 @@ async function drawSectionsPage(
 
 async function drawTermsPage(ctx: PdfContext, currentY?: number): Promise<number> {
   const { doc, template, accent, quotation, company, pageW, pageH, margin } = ctx;
-  let y: number;
-  if (currentY !== undefined && currentY > 0 && currentY + 65 < pageH - margin) {
-    y = currentY + 8;
-  } else {
-    doc.addPage();
-    y = (await pdfHeader(ctx, false)) + 6;
-  }
-
-  doc.setFont(template.fontFamily, "bold");
-  doc.setFontSize(13);
-  doc.setTextColor(accent[0], accent[1], accent[2]);
-  doc.text("Terms, Conditions & Settlement", margin, y);
-  y += 3;
-  doc.setDrawColor(accent[0], accent[1], accent[2]);
-  doc.setLineWidth(0.4);
-  doc.line(margin, y, pageW - margin, y);
-  y += 6;
-
-  // 1. Terms & Conditions Section (Hanging Indent, Auto-Pagination, Markdown & Structured Support)
   const isDraft = !quotation.status || quotation.status === "draft";
+
+  // Pre-calculate visibility for terms and bank to compute required space accurately
   const showTerms = quotation.visibilitySnapshot?.showTerms !== undefined
     ? quotation.visibilitySnapshot.showTerms
     : quotation.includeTerms !== false &&
@@ -519,6 +502,43 @@ async function drawTermsPage(ctx: PdfContext, currentY?: number): Promise<number
       (isDraft
         ? ((company as any).showQuotationTerms !== false || !!quotation.structuredTermsSnapshot?.length || !!quotation.termsSnapshot?.length || !!quotation.termsMarkdown || !!(company as any).quotationTermsMarkdown || !!(company as any).termsMarkdown)
         : (!!quotation.structuredTermsSnapshot?.length || !!quotation.termsSnapshot?.length || !!quotation.termsMarkdown));
+
+  const isBankFinalized = isDocumentFinalized(quotation);
+  const bankResult = resolveCanonicalBankDetails(quotation, company, isBankFinalized);
+  const showBank = bankResult.includeBankDetails && Boolean(bankResult.bankDetails);
+
+  // Dynamic required space: avoids unnecessary blank pages when bank or terms are disabled
+  const requiredSpace = (showTerms ? 22 : 0) + (showBank ? 32 : 0) + 36;
+  let y: number;
+  if (currentY !== undefined && currentY > 0 && currentY + requiredSpace < pageH - margin) {
+    y = currentY + 8;
+  } else {
+    doc.addPage();
+    y = (await pdfHeader(ctx, false)) + 6;
+  }
+
+  // Dynamic Section Title
+  const sectionTitle = (showTerms && showBank)
+    ? "Terms, Conditions & Settlement"
+    : showTerms
+    ? "Terms & Conditions"
+    : showBank
+    ? "Bank Settlement Details"
+    : "";
+
+  if (sectionTitle) {
+    doc.setFont(template.fontFamily, "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(accent[0], accent[1], accent[2]);
+    doc.text(sectionTitle, margin, y);
+    y += 3;
+    doc.setDrawColor(accent[0], accent[1], accent[2]);
+    doc.setLineWidth(0.4);
+    doc.line(margin, y, pageW - margin, y);
+    y += 6;
+  }
+
+  // 1. Terms & Conditions Section (Hanging Indent, Auto-Pagination, Markdown & Structured Support)
 
   if (showTerms) {
     let termItems: Array<{ text: string; format?: string; title?: string }> = [];
@@ -641,79 +661,54 @@ async function drawTermsPage(ctx: PdfContext, currentY?: number): Promise<number
   }
 
   // 2. Bank Details Section (PRD §§ 8-9, 78, 79 — Clean bordered table)
-  const showBank = quotation.visibilitySnapshot?.showBankDetails !== undefined
-    ? quotation.visibilitySnapshot.showBankDetails
-    : quotation.includeBankDetails !== false &&
-      ((quotation as any).showBankDetails !== false) &&
-      (isDraft
-        ? ((company as any).showQuotationBankDetails !== false || !!quotation.bankDetailsSnapshot || !!quotation.bankSnapshot || !!company.bankName || !!(company as any).bankAccountNo || !!(company as any).bankAccount)
-        : (!!quotation.bankDetailsSnapshot || !!quotation.bankSnapshot));
-
-  if (showBank) {
-    const rawBank: any = !isDraft
-      ? (quotation.bankDetailsSnapshot || quotation.bankSnapshot)
-      : (quotation.bankDetailsSnapshot || quotation.bankSnapshot || (
-          (company.bankName || (company as any).bankAccount || (company as any).bankAccountNo) ? {
-            bankName: company.bankName,
-            accountHolderName: (company as any).accountHolderName || (company as any).bankAccountHolderName || (company as any).legalName || company.name,
-            accountName: (company as any).accountHolderName || (company as any).bankAccountHolderName || (company as any).legalName || company.name,
-            accountNo: company.bankAccount || (company as any).bankAccountNo,
-            ifsc: company.bankIfsc,
-            branch: (company as any).bankBranch,
-            accountType: (company as any).bankAccountType,
-            upi: (company as any).upiId,
-            swift: (company as any).bankSwiftCode,
-          } : null
-        ));
-
-    if (rawBank && (rawBank.bankName || rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || rawBank.bankAccount || rawBank.bankAccountNumber)) {
-      if (y > pageH - 45) {
-        doc.addPage();
-        y = (await pdfHeader(ctx, false)) + 6;
-      }
-
-      doc.setFont(template.fontFamily, "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(accent[0], accent[1], accent[2]);
-      doc.text("Bank Settlement Details", margin, y);
-      y += 3.5;
-
-      const bankRows: [string, string][] = [
-        ["Account Holder Name", rawBank.accountHolderName || rawBank.accountName || (company as any).accountHolderName || (company as any).bankAccountHolderName || (company as any).legalName || company.name || "Business Entity"],
-        ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || rawBank.bankAccount || rawBank.bankAccountNumber || (company as any).bankAccountNo || (company as any).bankAccount || "—"],
-        ["Bank Name", rawBank.bankName || "—"],
-        ["IFSC Code", rawBank.ifsc || rawBank.bankIfsc || "—"],
-      ];
-      if (rawBank.branch) bankRows.push(["Branch", rawBank.branch]);
-      if (rawBank.accountType || (company as any).bankAccountType) bankRows.push(["Account Type", rawBank.accountType || (company as any).bankAccountType]);
-      if (rawBank.upi || (company as any).upiId) bankRows.push(["UPI ID / VPA", rawBank.upi || (company as any).upiId]);
-      if (rawBank.swift || (company as any).bankSwiftCode) bankRows.push(["SWIFT Code", rawBank.swift || (company as any).bankSwiftCode]);
-
-      autoTable(doc, {
-        body: bankRows,
-        startY: y,
-        margin: { left: margin, right: margin + 35, top: 22, bottom: 16 },
-        rowPageBreak: "avoid",
-        styles: {
-          font: template.fontFamily,
-          fontSize: 8.5,
-          cellPadding: 2,
-          lineColor: [220, 225, 230],
-          lineWidth: 0.1,
-        },
-        columnStyles: {
-          0: { fontStyle: "bold", cellWidth: 44, fillColor: [248, 250, 252], textColor: [40, 40, 40] },
-          1: { textColor: [20, 20, 20] },
-        },
-        theme: "grid",
-        didDrawPage: (data: any) => {
-          if (data.pageNumber > 1) {
-            pdfHeader(ctx, false);
-          }
-        },
-      });
-      y = (doc as any).lastAutoTable.finalY + 8;
+  if (showBank && bankResult.bankDetails) {
+    const rawBank = bankResult.bankDetails;
+    if (y > pageH - 45) {
+      doc.addPage();
+      y = (await pdfHeader(ctx, false)) + 6;
     }
+
+    doc.setFont(template.fontFamily, "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(accent[0], accent[1], accent[2]);
+    doc.text("Bank Settlement Details", margin, y);
+    y += 3.5;
+
+    const bankRows: [string, string][] = [
+      ["Account Holder Name", rawBank.accountHolderName || (company as any).accountHolderName || (company as any).bankAccountHolderName || company.name || (company as any).legalName || "Business Entity"],
+      ["Bank Name", rawBank.bankName || "—"],
+      ["Account Number", rawBank.accountNumber || (company as any).bankAccountNo || (company as any).bankAccount || "—"],
+      ["IFSC Code", rawBank.ifsc || (company as any).bankIfsc || "—"],
+    ];
+    if (rawBank.branch || (company as any).bankBranch) bankRows.push(["Branch", rawBank.branch || (company as any).bankBranch]);
+    if (rawBank.accountType || (company as any).bankAccountType) bankRows.push(["Account Type", rawBank.accountType || (company as any).bankAccountType]);
+    if (rawBank.swift || (company as any).bankSwiftCode) bankRows.push(["SWIFT Code", rawBank.swift || (company as any).bankSwiftCode]);
+    if (rawBank.upi || (company as any).upiId) bankRows.push(["UPI ID / VPA", rawBank.upi || (company as any).upiId]);
+
+    autoTable(doc, {
+      body: bankRows,
+      startY: y,
+      margin: { left: margin, right: margin + 35, top: 22, bottom: 16 },
+      rowPageBreak: "avoid",
+      styles: {
+        font: template.fontFamily,
+        fontSize: 8.5,
+        cellPadding: 2,
+        lineColor: [220, 225, 230],
+        lineWidth: 0.1,
+      },
+      columnStyles: {
+        0: { fontStyle: "bold", cellWidth: 44, fillColor: [248, 250, 252], textColor: [40, 40, 40] },
+        1: { textColor: [20, 20, 20] },
+      },
+      theme: "grid",
+      didDrawPage: (data: any) => {
+        if (data.pageNumber > 1) {
+          pdfHeader(ctx, false);
+        }
+      },
+    });
+    y = (doc as any).lastAutoTable.finalY + 8;
   }
 
   // 3. Closing Message & Authorized Signatory Block (PRD § 80 — Non-destructive signature & stamp)
@@ -753,13 +748,19 @@ async function drawTermsPage(ctx: PdfContext, currentY?: number): Promise<number
         try { doc.addImage(typedUrl, "PNG", sigX, y + 2, 38, 14); } catch { /* ignore */ }
       }
     } else if (resolved.signatureUrl) {
-      try { doc.addImage(resolved.signatureUrl, "PNG", sigX, y + 2, 38, 14); } catch { /* ignore */ }
+      const sigData = await safeResolveImageDataUrl(resolved.signatureUrl, 2500);
+      if (sigData) {
+        try { doc.addImage(sigData, "PNG", sigX, y + 2, 38, 14); } catch { /* ignore */ }
+      }
     }
   }
 
   // Stamp rendering: respects showStamp and stampUrl
   if (resolved.showStamp && resolved.stampUrl) {
-    try { doc.addImage(resolved.stampUrl, "PNG", sigX + 38, y + 1, 20, 20); } catch { /* ignore */ }
+    const stampData = await safeResolveImageDataUrl(resolved.stampUrl, 2500);
+    if (stampData) {
+      try { doc.addImage(stampData, "PNG", sigX + 38, y + 1, 20, 20); } catch { /* ignore */ }
+    }
   }
 
   doc.setDrawColor(180, 180, 180);
@@ -793,12 +794,11 @@ export async function exportQuotationPDF(
   const jsPDFConstructor: any = typeof jsPDF === "function" ? jsPDF : (jsPDF as any).jsPDF || (jsPDF as any).default || jsPDF;
   const doc = new jsPDFConstructor({ unit: "mm", format: "a4", orientation: "portrait" });
   const tpl = template || defaultTemplate();
-  const isDraft = !quotation.status || quotation.status === "draft";
-  const effectiveCompany = isDraft
-    ? ({ ...quotation.companySnapshot, ...company } as CompanySettings)
-    : ((quotation.companySnapshot as CompanySettings) || company);
+  const effectiveCompany = resolveEffectiveCompany(quotation, company, null);
+  const isDraft = !isDocumentFinalized(quotation);
   const logoData = await getLogoDataUrl();
-  const companyLogoData = effectiveCompany.logo || null;
+  const rawLogo = effectiveCompany.logo || (effectiveCompany as any)?.logoUrl || null;
+  const companyLogoData = await safeResolveImageDataUrl(rawLogo, 2500);
   const ctx: PdfContext = {
     doc, company: effectiveCompany, quotation, customer, template: tpl,
     accent: hexToRgb(tpl.accent),
@@ -924,16 +924,24 @@ export async function exportQuotationPDF(
 export const generateQuotationPdfBlob = exportQuotationPDF;
 
 export async function downloadQuotationPDF(
-  quotation: Quotation, company: CompanySettings, customer?: Customer, template?: QuotationTemplate,
+  quotation: Quotation,
+  company: CompanySettings,
+  customer?: Customer,
+  template?: QuotationTemplate,
+  existingBlob?: Blob | null,
 ) {
-  const blob = await exportQuotationPDF(quotation, company, customer, template);
+  const blob = existingBlob || await exportQuotationPDF(quotation, company, customer, template);
   triggerDownload(blob, `${quotation.number}.pdf`);
 }
 
 export async function printQuotationPDF(
-  quotation: Quotation, company: CompanySettings, customer?: Customer, template?: QuotationTemplate,
+  quotation: Quotation,
+  company: CompanySettings,
+  customer?: Customer,
+  template?: QuotationTemplate,
+  existingBlob?: Blob | null,
 ) {
-  const blob = await exportQuotationPDF(quotation, company, customer, template);
+  const blob = existingBlob || await exportQuotationPDF(quotation, company, customer, template);
   const url = URL.createObjectURL(blob);
   const iframe = document.createElement("iframe");
   iframe.style.display = "none";
@@ -996,9 +1004,7 @@ export async function exportQuotationDOCX(
   company: CompanySettings,
   customer?: Customer,
 ): Promise<Blob> {
-  const effectiveCompany = quotation.companySnapshot
-    ? ({ ...company, ...quotation.companySnapshot } as CompanySettings)
-    : company;
+  const effectiveCompany = resolveEffectiveCompany(quotation, company, null);
   const logoBytes = (effectiveCompany.logo?.startsWith("data:")
     ? Uint8Array.from(atob(effectiveCompany.logo.split(",")[1]), c => c.charCodeAt(0))
     : await getLogoBytes());

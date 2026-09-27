@@ -22,7 +22,8 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { Copy, Download, FileText, Pencil, Plus, Printer, Trash2, UserPlus, Truck, HandCoins, Loader2, AlertTriangle, Share2, Bell, Calendar } from "lucide-react";
 import { ListToolbar, EmptyState, usePagination, Pager } from "./ListHelpers";
 import { cn } from "@/lib/utils";
-import { downloadDocumentPDF, generateDocumentPDFBlobUrl, buildDocumentPDF, type NormalizedDocument } from "@/lib/documentRenderer";
+import { downloadDocumentPDF, generateDocumentPDFBlob, generateDocumentPDFBlobUrl, buildDocumentPDF, type NormalizedDocument } from "@/lib/documentRenderer";
+import { resolveEffectiveCompany } from "@/lib/documentModel";
 import { BmsShareDialog, InvoicePaymentStatusPanel, type ShareDocumentData, resolveCreditDays, computeInvoiceDueDate } from "./share";
 import { ListSkeleton } from "./Skeletons";
 import { useInitialLoading } from "@/lib/useInitialLoading";
@@ -37,6 +38,7 @@ import { QuickCreateSupplierDrawer } from "./QuickCreateSupplierDrawer";
 import { determineInterState } from "@/modules/tax/taxEngine";
 import { createCompanySnapshot } from "@/modules/company/types";
 import { createSignatorySnapshot } from "@/modules/company/signatoryHelper";
+import { isDocumentFinalized } from "@/lib/documentModel";
 import { PartySearchSelect } from "./PartySearchSelect";
 import { CustomerInsightDrawer } from "./CustomerInsightDrawer";
 import { SupplierInsightDrawer } from "./SupplierInsightDrawer";
@@ -89,6 +91,7 @@ export function DocumentListPage<T extends AnyDoc>({
   tableFor: "customer" | "supplier";
 }) {
   const navigate = useNavigate();
+  const { activeCompany, activeFinancialYear } = useActiveCompany();
   const rowsState = useLiveState<T>(async () => {
     const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
     return (await table.orderBy("createdAt").reverse().toArray()) as unknown as T[];
@@ -241,13 +244,18 @@ export function DocumentListPage<T extends AnyDoc>({
   const [shareTargetDoc, setShareTargetDoc] = useState<{ doc: Invoice; mode: "share" | "reminder" } | null>(null);
   const allReceipts = useLive<Receipt>(() => (kind === "invoice" ? db().receipts.toArray() : Promise.resolve([])));
 
-  useEffect(() => { getCompany().then(setCompany); }, []);
+  useEffect(() => {
+    const loadComp = () => { getCompany(activeCompany?.id).then(setCompany); };
+    loadComp();
+    window.addEventListener("bms:company-settings-updated", loadComp);
+    return () => window.removeEventListener("bms:company-settings-updated", loadComp);
+  }, [activeCompany?.id]);
   const initialLoading = !rowsState.isLoaded;
 
   function getNormalizedDoc(doc: T): NormalizedDocument {
     const isInv = kind === "invoice";
     const party = (doc as any).customerSnapshot || (doc as any).supplierSnapshot || (partyById((doc as any).customerId ?? (doc as Purchase).supplierId) || { name: "Client" }) as any;
-    const docCompany = (doc as any).companySnapshot || activeCompany || company || {};
+    const docCompany = resolveEffectiveCompany(doc, activeCompany, company);
     const isTaxDoc = doc.gstTotal > 0 || Boolean((doc as Invoice).isIgst);
 
     const billSnapshot = (doc as any).billToSnapshot || (doc as any).billingAddressSnapshot;
@@ -264,18 +272,18 @@ export function DocumentListPage<T extends AnyDoc>({
       company: {
         ...docCompany,
         name: docCompany.name,
-        legalName: docCompany.legalName || docCompany.name,
+        legalName: (docCompany as any).legalName || docCompany.name,
         address: docCompany.address,
-        city: docCompany.city,
-        state: docCompany.state,
-        pincode: docCompany.pincode,
+        city: (docCompany as any).city,
+        state: (docCompany as any).state,
+        pincode: (docCompany as any).pincode,
         gstin: docCompany.gstin,
         pan: docCompany.pan,
-        phone: docCompany.phone || docCompany.mobile,
+        phone: (docCompany as any).phone || docCompany.mobile,
         email: docCompany.email,
-        logo: docCompany.logoUrl || (docCompany as any).logo,
+        logo: (docCompany as any).logoUrl || (docCompany as any).logo,
         bankName: docCompany.bankName,
-        bankAccountNo: docCompany.bankAccount || docCompany.bankAccountNo,
+        bankAccountNo: docCompany.bankAccount || (docCompany as any).bankAccountNo,
         bankIfsc: docCompany.bankIfsc,
         bankAccountHolderName: (docCompany as any).bankAccountHolderName || (docCompany as any).accountHolderName,
         accountHolderName: (docCompany as any).accountHolderName || (docCompany as any).bankAccountHolderName,
@@ -290,20 +298,20 @@ export function DocumentListPage<T extends AnyDoc>({
         showQuotationGeneralInfo: (docCompany as any).showQuotationGeneralInfo,
         showQuotationTechnicalSpecs: (docCompany as any).showQuotationTechnicalSpecs,
         authorizedSignatory: docCompany.authorizedSignatory,
-        designation: docCompany.designation,
-        signatureMode: docCompany.signatureMode,
-        typedSignatureStyle: docCompany.typedSignatureStyle,
-        signatureUrl: docCompany.signatureUrl,
-        stampUrl: docCompany.stampUrl,
-        stampMode: docCompany.stampMode,
-        showSignature: docCompany.showSignature,
-        showStamp: docCompany.showStamp,
-        showSignatoryName: docCompany.showSignatoryName,
-        showDesignation: docCompany.showDesignation,
-        showSignatureDate: docCompany.showSignatureDate,
-        signatureDateMode: docCompany.signatureDateMode,
-        customSignatureDate: docCompany.customSignatureDate,
-      },
+        designation: (docCompany as any).designation,
+        signatureMode: (docCompany as any).signatureMode,
+        typedSignatureStyle: (docCompany as any).typedSignatureStyle,
+        signatureUrl: (docCompany as any).signatureUrl,
+        stampUrl: (docCompany as any).stampUrl,
+        stampMode: (docCompany as any).stampMode,
+        showSignature: (docCompany as any).showSignature,
+        showStamp: (docCompany as any).showStamp,
+        showSignatoryName: (docCompany as any).showSignatoryName,
+        showDesignation: (docCompany as any).showDesignation,
+        showSignatureDate: (docCompany as any).showSignatureDate,
+        signatureDateMode: (docCompany as any).signatureDateMode,
+        customSignatureDate: (docCompany as any).customSignatureDate,
+      } as any,
       signatoryOverride: (doc as any).signatoryOverride,
       signatorySnapshot: (doc as any).signatorySnapshot,
       party: {
@@ -502,18 +510,28 @@ export function DocumentListPage<T extends AnyDoc>({
   const pager = usePagination(filtered, 12);
 
   const { user } = useAuth();
-  const { activeCompany, activeFinancialYear } = useActiveCompany();
+  const [previewPdfBlob, setPreviewPdfBlob] = useState<Blob | null>(null);
+  const [previewRevision, setPreviewRevision] = useState(0);
+
+  useEffect(() => {
+    const handleUpdate = () => setPreviewRevision((r) => r + 1);
+    window.addEventListener("bms:company-settings-updated", handleUpdate);
+    return () => window.removeEventListener("bms:company-settings-updated", handleUpdate);
+  }, []);
 
   useEffect(() => {
     if (!preview) {
       setPreviewPdfUrl("");
+      setPreviewPdfBlob(null);
       return;
     }
     const norm = getNormalizedDoc(preview);
-    const url = generateDocumentPDFBlobUrl(norm, { includeDescriptions });
+    const blob = generateDocumentPDFBlob(norm, { includeDescriptions });
+    const url = URL.createObjectURL(blob);
+    setPreviewPdfBlob(blob);
     setPreviewPdfUrl(url);
     return () => URL.revokeObjectURL(url);
-  }, [preview, includeDescriptions, activeCompany?.id, company]);
+  }, [preview, includeDescriptions, activeCompany, company, previewRevision]);
 
     const derivedCabinConfig = useMemo(() => {
     if (!editing?.items) return "";
@@ -1401,14 +1419,14 @@ async function openNew() {
       const toSave: Quotation = {
         ...q,
         companySnapshot:
-          q.status !== "draft"
+          isDocumentFinalized(q)
             ? q.companySnapshot || (comp ? createCompanySnapshot(comp as any) : undefined)
-            : q.companySnapshot,
+            : (comp ? createCompanySnapshot(comp as any) : q.companySnapshot),
         signatorySnapshot:
-          q.status !== "draft"
+          isDocumentFinalized(q)
             ? q.signatorySnapshot ||
               (comp ? createSignatorySnapshot(comp as any, q.signatoryOverride, q.date) : undefined)
-            : q.signatorySnapshot,
+            : (comp ? createSignatorySnapshot(comp as any, q.signatoryOverride, q.date) : q.signatorySnapshot),
       };
 
       if (activeCompany?.id) {
@@ -3221,7 +3239,11 @@ async function openNew() {
                   onClick={() => {
                     if (!preview) return;
                     const normDoc = getNormalizedDoc(preview);
-                    downloadDocumentPDF(normDoc, `${preview.number}.pdf`, { includeDescriptions });
+                    if (previewPdfBlob) {
+                      downloadDocumentPDF(normDoc, `${preview.number}.pdf`, previewPdfBlob);
+                    } else {
+                      downloadDocumentPDF(normDoc, `${preview.number}.pdf`, { includeDescriptions });
+                    }
                     toast.success(`Selectable Vector PDF generated: ${preview.number}.pdf`);
                   }}
                 >

@@ -1,13 +1,21 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Eye, Download, Printer, Pencil, FileCheck, ExternalLink, Loader2, Share2 } from "lucide-react";
+import {
+  Eye, Download, Printer, Pencil, FileCheck, ExternalLink,
+  Loader2, Share2, RotateCcw, AlertTriangle, RefreshCw, AlertCircle
+} from "lucide-react";
 import { db, type Quotation, type Customer, type CompanySettings, type QuotationTemplate } from "@/lib/db";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useLive } from "@/lib/useLive";
 import { downloadQuotationPDF, printQuotationPDF, exportQuotationPDF, triggerDownload } from "@/lib/quotationExport";
+import { resolveEffectiveCompany, isDocumentFinalized, resolveCanonicalBankDetails } from "@/lib/documentModel";
+import { createCompanySnapshot } from "@/modules/company/types";
+import { authoritativeSaveEntity } from "@/modules/sync/canonicalMutationService";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface QuotationQuickPreviewModalProps {
   open: boolean;
@@ -21,14 +29,17 @@ interface QuotationQuickPreviewModalProps {
 /**
  * QuotationQuickPreviewModal
  * 
- * Production Preview Engine (PRD §§ 8-10, 60, Correction #1, #27):
+ * Production Vector PDF Preview Engine (PRD §§ 8-10, 60, Correction #1, #27):
  * Renders the actual generated vector PDF directly in an iframe/viewer so that:
  * 
- *                 Preview === Downloaded PDF
+ *                 Preview === Downloaded PDF === Print
  * 
- * Displays all pages (Page 1, General Info, Tech Specs, Terms & Conditions, Bank Details, Signatory)
- * with 100% layout fidelity. Eliminates calculation or presentation drift between preview and export.
- * Directly reuses the generated PDF Blob for Download and Print.
+ * Features:
+ * - Robust cancellation and 10s timeout protection against infinite spinner.
+ * - Primitive useEffect dependencies preventing render-cancel infinite loops.
+ * - Error state with direct Retry Preview and fallback download.
+ * - Direct reuse of the generated PDF Blob across Preview, Download, and Print.
+ * - Explicit Historical Snapshot detection and controlled Reissue action for quotations.
  */
 export function QuotationQuickPreviewModal({
   open,
@@ -38,46 +49,158 @@ export function QuotationQuickPreviewModal({
   onConvert,
   onShare,
 }: QuotationQuickPreviewModalProps) {
-  const { activeCompany } = useActiveCompany();
+  const { activeCompany, activeFinancialYear } = useActiveCompany();
+  const { user } = useAuth();
   const customers = useLive<Customer>(() => db().customers.toArray());
   const companySettingsList = useLive<CompanySettings>(() => db().companySettings.toArray());
   const templates = useLive<QuotationTemplate>(() => db().quotationTemplates.toArray());
-  const companySettings = companySettingsList[0];
+  const companySettings = useMemo(() => {
+    if (!companySettingsList || companySettingsList.length === 0) return undefined;
+    if (activeCompany?.id) {
+      const match = companySettingsList.find((c) => c.id === activeCompany.id);
+      if (match) return match;
+    }
+    const singleton = companySettingsList.find((c) => c.id === "singleton");
+    if (singleton) return singleton;
+    return companySettingsList[0];
+  }, [companySettingsList, activeCompany?.id]);
 
+  const [currentQuotation, setCurrentQuotation] = useState<Quotation | null>(quotation);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const [settingsRev, setSettingsRev] = useState(0);
+  const [isReissuing, setIsReissuing] = useState(false);
   const prevBlobUrlRef = useRef<string | null>(null);
 
-  // Canonical resolution: Draft uses current Company Settings defaults, Issued uses frozen snapshots
-  const isDraft = !quotation?.status || quotation?.status === "draft";
-  const comp = isDraft
-    ? (activeCompany || quotation?.companySnapshot || companySettings)
-    : (quotation?.companySnapshot || activeCompany || companySettings);
-  const cust = quotation?.customerSnapshot || (customers ? customers.find((c) => c.id === quotation?.customerId) : undefined);
-  const template = quotation?.templateId ? templates.find((t) => t.id === quotation.templateId) : undefined;
-
+  // Sync internal quotation state when prop changes, invalidating any previous PDF blob immediately
   useEffect(() => {
-    if (!open || !quotation) {
+    setCurrentQuotation(quotation);
+    if (prevBlobUrlRef.current) {
+      URL.revokeObjectURL(prevBlobUrlRef.current);
+      prevBlobUrlRef.current = null;
+    }
+    setPdfUrl(null);
+    setPdfBlob(null);
+    setError(null);
+  }, [quotation?.id, quotation?.number]);
+
+  // Memoize resolved company, customer and template
+  const comp = useMemo(
+    () => resolveEffectiveCompany(currentQuotation, activeCompany, companySettings),
+    [currentQuotation, activeCompany, companySettings]
+  );
+
+  const cust = useMemo(
+    () => currentQuotation?.customerSnapshot || (customers ? customers.find((c) => c.id === currentQuotation?.customerId) : undefined),
+    [currentQuotation?.customerSnapshot, currentQuotation?.customerId, customers]
+  );
+
+  const template = useMemo(
+    () => (currentQuotation?.templateId ? templates.find((t) => t.id === currentQuotation.templateId) : undefined),
+    [currentQuotation?.templateId, templates]
+  );
+
+  // Listen for realtime / cross-tab company settings updates
+  useEffect(() => {
+    const handleUpdate = () => setSettingsRev((r) => r + 1);
+    window.addEventListener("bms:company-settings-updated", handleUpdate);
+    return () => window.removeEventListener("bms:company-settings-updated", handleUpdate);
+  }, []);
+
+  // Check if document is frozen to an older historical company profile
+  const isFinalized = isDocumentFinalized(currentQuotation);
+  const snapName = currentQuotation?.companySnapshot?.name || currentQuotation?.companySnapshot?.legalName;
+  const activeName = activeCompany?.name || activeCompany?.legalName;
+  const isSnapshotStale = Boolean(
+    isFinalized &&
+    snapName &&
+    activeName &&
+    snapName.trim().toLowerCase() !== activeName.trim().toLowerCase()
+  );
+
+  // Controlled Reissue handler: update quotation's company snapshot to latest active company profile
+  async function handleReissueWithLatestCompany() {
+    if (!currentQuotation || !activeCompany) return;
+    setIsReissuing(true);
+    try {
+      const updatedSnapshot = createCompanySnapshot(activeCompany);
+      const bankAccounts = await db().bankAccounts.toArray();
+      const canonicalBank = resolveCanonicalBankDetails(currentQuotation, activeCompany, isFinalized);
+
+      const updatedQuotation: Quotation = {
+        ...currentQuotation,
+        companySnapshot: updatedSnapshot,
+        updatedAt: Date.now(),
+      };
+
+      if (canonicalBank?.bankDetails) {
+        (updatedQuotation as any).bankSnapshot = canonicalBank.bankDetails;
+      }
+
+      // Persist to Cloud and Dexie
+      if (activeCompany?.id) {
+        await authoritativeSaveEntity({
+          companyId: activeCompany.id,
+          financialYearId: updatedQuotation.financialYearId || activeFinancialYear?.id,
+          kind: "quotation",
+          entity: updatedQuotation,
+          uid: user?.uid,
+          action: "update",
+        });
+      } else {
+        await db().quotations.put(updatedQuotation);
+      }
+
+      setCurrentQuotation(updatedQuotation);
+      window.dispatchEvent(
+        new CustomEvent("bms:company-settings-updated", {
+          detail: { companyId: activeCompany.id, company: activeCompany },
+        })
+      );
+      toast.success(`Quotation updated with ${activeName}`);
+      setRetryCount((c) => c + 1);
+    } catch (err: any) {
+      console.error("Failed to update quotation company snapshot:", err);
+      toast.error(err?.message || "Failed to update quotation company profile");
+    } finally {
+      setIsReissuing(false);
+    }
+  }
+
+  // Effect to generate vector PDF blob using primitive dependency keys
+  useEffect(() => {
+    if (!open || !currentQuotation) {
       if (prevBlobUrlRef.current) {
         URL.revokeObjectURL(prevBlobUrlRef.current);
         prevBlobUrlRef.current = null;
       }
       setPdfUrl(null);
       setPdfBlob(null);
+      setLoading(false);
+      setError(null);
       return;
     }
 
-    let isMounted = true;
+    let isCancelled = false;
     setLoading(true);
     setError(null);
 
-    const timer = setTimeout(async () => {
+    // 10-second failsafe timeout to prevent infinite spinner
+    const timeoutTimer = setTimeout(() => {
+      if (isCancelled) return;
+      setLoading(false);
+      setError("Preview generation timed out after 10 seconds. You can retry or download directly.");
+    }, 10000);
+
+    const debounceTimer = setTimeout(async () => {
       try {
-        const blob = await exportQuotationPDF(quotation, comp as any, cust as any, template);
-        if (!isMounted) return;
+        const blob = await exportQuotationPDF(currentQuotation, comp as any, cust as any, template);
+        if (isCancelled) return;
+        clearTimeout(timeoutTimer);
 
         if (prevBlobUrlRef.current) {
           URL.revokeObjectURL(prevBlobUrlRef.current);
@@ -87,21 +210,43 @@ export function QuotationQuickPreviewModal({
         prevBlobUrlRef.current = url;
         setPdfBlob(blob);
         setPdfUrl(url);
+        setError(null);
       } catch (err: any) {
         console.error("Failed to render PDF preview:", err);
-        if (isMounted) {
+        if (!isCancelled) {
+          clearTimeout(timeoutTimer);
           setError(err?.message || "Failed to generate preview PDF.");
         }
       } finally {
-        if (isMounted) setLoading(false);
+        if (!isCancelled) {
+          clearTimeout(timeoutTimer);
+          setLoading(false);
+        }
       }
-    }, 150); // Debounce to keep UI responsive
+    }, 120);
 
     return () => {
-      isMounted = false;
-      clearTimeout(timer);
+      isCancelled = true;
+      clearTimeout(debounceTimer);
+      clearTimeout(timeoutTimer);
     };
-  }, [open, quotation, comp, cust, template]);
+  }, [
+    open,
+    currentQuotation?.id,
+    currentQuotation?.updatedAt,
+    currentQuotation?.status,
+    comp?.name,
+    comp?.legalName,
+    comp?.address,
+    comp?.gstin,
+    comp?.logo,
+    comp?.bankAccountNo,
+    comp?.bankIfsc,
+    cust?.name,
+    template?.id,
+    settingsRev,
+    retryCount,
+  ]);
 
   // Clean up object URL on component unmount
   useEffect(() => {
@@ -113,7 +258,7 @@ export function QuotationQuickPreviewModal({
     };
   }, []);
 
-  if (!quotation) return null;
+  if (!currentQuotation) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -122,13 +267,13 @@ export function QuotationQuickPreviewModal({
         <DialogHeader className="p-3.5 border-b bg-muted/20 flex flex-row items-center justify-between">
           <DialogTitle className="flex items-center gap-2 text-base font-bold">
             <Eye className="h-4 w-4 text-primary" />
-            Quotation Preview — {quotation.number}
+            Quotation Preview — {currentQuotation.number}
             <Badge variant="outline" className="ml-2 uppercase text-[10px]">
-              {quotation.status}
+              {currentQuotation.status}
             </Badge>
-            {quotation.gstCalculationMode === "overall" && (
+            {currentQuotation.gstCalculationMode === "overall" && (
               <Badge variant="secondary" className="text-[10px] bg-primary/10 text-primary border-primary/20">
-                Overall GST {quotation.overallGstRate ?? 18}%
+                Overall GST {currentQuotation.overallGstRate ?? 18}%
               </Badge>
             )}
           </DialogTitle>
@@ -149,39 +294,76 @@ export function QuotationQuickPreviewModal({
           </div>
         </DialogHeader>
 
+        {/* Historical Snapshot Notice with Controlled Reissue Option */}
+        {isSnapshotStale && (
+          <div className="bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <span>
+                <strong>Historical Snapshot:</strong> This quotation is locked to historical profile (<strong>{snapName}</strong>). Active company is <strong>{activeName}</strong>.
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs bg-white dark:bg-amber-900/50 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-100 hover:bg-amber-100 dark:hover:bg-amber-900 gap-1.5 font-medium"
+              onClick={handleReissueWithLatestCompany}
+              disabled={isReissuing}
+            >
+              <RefreshCw className={cn("h-3 w-3", isReissuing && "animate-spin")} />
+              Update to {activeName}
+            </Button>
+          </div>
+        )}
+
         {/* Multi-Page Vector PDF Viewport (Preview === Downloaded PDF) */}
-        <div className="flex-1 w-full h-full min-h-0 bg-slate-100 flex items-center justify-center relative overflow-hidden">
+        <div className="flex-1 w-full h-full min-h-0 bg-slate-100 dark:bg-slate-900 flex items-center justify-center relative overflow-hidden">
           {loading && (
-            <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center gap-3">
+            <div className="absolute inset-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center gap-3">
               <Loader2 className="h-8 w-8 text-primary animate-spin" />
-              <div className="text-sm font-semibold text-slate-800">Preparing Preview…</div>
-              <div className="text-xs text-slate-500">
+              <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">Preparing Preview…</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400">
                 Generating vector PDF pages with complete address, terms, specifications & bank details
               </div>
             </div>
           )}
 
           {error && !loading && (
-            <div className="text-center p-8 max-w-md">
-              <div className="text-destructive font-bold mb-2">Preview Generation Failed</div>
-              <div className="text-xs text-muted-foreground mb-4">{error}</div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (comp) downloadQuotationPDF(quotation, comp as any, cust as any, template);
-                }}
-              >
-                <Download className="h-3.5 w-3.5 mr-1" /> Download PDF Instead
-              </Button>
+            <div className="text-center p-8 max-w-md bg-card rounded-xl shadow-sm border m-4">
+              <AlertCircle className="h-10 w-10 text-destructive mx-auto mb-3" />
+              <div className="text-destructive font-bold text-base mb-1">Preview Generation Failed</div>
+              <div className="text-xs text-muted-foreground mb-5">{error}</div>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => {
+                    setError(null);
+                    setRetryCount((c) => c + 1);
+                  }}
+                  className="gap-1.5"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" /> Retry Preview
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (comp) downloadQuotationPDF(currentQuotation, comp as any, cust as any, template, pdfBlob);
+                  }}
+                  className="gap-1.5"
+                >
+                  <Download className="h-3.5 w-3.5" /> Download PDF Instead
+                </Button>
+              </div>
             </div>
           )}
 
           {pdfUrl && !loading && (
             <iframe
               src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1`}
-              className="w-full h-full border-0 bg-white shadow-inner"
-              title={`Quotation Preview - ${quotation.number}`}
+              className="w-full h-full border-0 bg-white dark:bg-slate-950 shadow-inner"
+              title={`Quotation Preview - ${currentQuotation.number}`}
             />
           )}
         </div>
@@ -200,21 +382,21 @@ export function QuotationQuickPreviewModal({
                 className="gap-1.5"
                 onClick={() => {
                   onOpenChange(false);
-                  onEdit(quotation);
+                  onEdit(currentQuotation);
                 }}
               >
                 <Pencil className="h-3.5 w-3.5" /> Edit Quotation
               </Button>
             )}
 
-            {onConvert && quotation.status !== "converted" && (
+            {onConvert && currentQuotation.status !== "converted" && (
               <Button
                 variant="secondary"
                 size="sm"
                 className="gap-1.5 text-primary border border-primary/20"
                 onClick={() => {
                   onOpenChange(false);
-                  onConvert(quotation);
+                  onConvert(currentQuotation);
                 }}
               >
                 <FileCheck className="h-3.5 w-3.5" /> Convert to Invoice
@@ -228,7 +410,7 @@ export function QuotationQuickPreviewModal({
                 className="gap-1.5 text-primary border-primary/30 hover:bg-primary/5"
                 onClick={() => {
                   onOpenChange(false);
-                  onShare(quotation);
+                  onShare(currentQuotation);
                 }}
               >
                 <Share2 className="h-3.5 w-3.5" /> Share
@@ -252,8 +434,8 @@ export function QuotationQuickPreviewModal({
                       if (document.body.contains(iframe)) document.body.removeChild(iframe);
                     }, 60000);
                   };
-                } else if (comp && quotation) {
-                  printQuotationPDF(quotation, comp as any, cust as any, template);
+                } else if (comp && currentQuotation) {
+                  printQuotationPDF(currentQuotation, comp as any, cust as any, template, pdfBlob);
                 }
               }}
             >
@@ -270,13 +452,13 @@ export function QuotationQuickPreviewModal({
                 setDownloading(true);
                 try {
                   let blobToDownload = pdfBlob;
-                  if (!blobToDownload && quotation && comp) {
-                    blobToDownload = await exportQuotationPDF(quotation, comp as any, cust as any, template);
+                  if (!blobToDownload && currentQuotation && comp) {
+                    blobToDownload = await exportQuotationPDF(currentQuotation, comp as any, cust as any, template);
                     setPdfBlob(blobToDownload);
                   }
-                  if (blobToDownload && quotation) {
-                    triggerDownload(blobToDownload, `${quotation.number}.pdf`);
-                    toast.success(`Downloaded ${quotation.number}.pdf`);
+                  if (blobToDownload && currentQuotation) {
+                    triggerDownload(blobToDownload, `${currentQuotation.number}.pdf`);
+                    toast.success(`Downloaded ${currentQuotation.number}.pdf`);
                   }
                 } catch (err: any) {
                   console.error("Failed to download PDF:", err);

@@ -66,6 +66,7 @@ import {
   parseMarkdownToStructuredTerms,
 } from "@/modules/documents/documentContentHydration";
 import { parseMarkdownToCanonicalTechSpecs } from "@/lib/techSpecResolution";
+import { isDocumentFinalized } from "@/lib/documentModel";
 
 interface Props {
   initial: Quotation;
@@ -176,6 +177,9 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
       if (initialQ.includeGeneralInfo === undefined) {
         initialQ.includeGeneralInfo = activeCompany.showQuotationGeneralInfo !== false;
       }
+      if (initialQ.includeBankDetails === undefined) {
+        initialQ.includeBankDetails = activeCompany.showQuotationBankDetails !== false;
+      }
     }
     setQ(initialQ);
     setRowIds(initialQ.items.map(() => uid()));
@@ -218,7 +222,7 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
   draftSaveCallbackRef.current = onDraftSave;
   draftFlushRef.current = workingDraft;
   useEffect(() => {
-    if (!draftSaveCallbackRef.current || q.status !== "draft" || (!q.customerId && q.items.length === 0)) return;
+    if (!draftSaveCallbackRef.current || isDocumentFinalized(q) || (!q.customerId && q.items.length === 0)) return;
     const timer = setTimeout(() => {
       const saveDraft = draftSaveCallbackRef.current;
       if (saveDraft) void Promise.resolve(saveDraft(workingDraft)).catch((error) => console.warn("[QuotationForm] Draft autosave failed:", error));
@@ -228,7 +232,7 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
 
   useEffect(() => () => {
     const pending = draftFlushRef.current;
-    if (pending && draftSaveCallbackRef.current && pending.status === "draft" && (pending.customerId || pending.items.length > 0)) {
+    if (pending && draftSaveCallbackRef.current && !isDocumentFinalized(pending) && (pending.customerId || pending.items.length > 0)) {
       void Promise.resolve(draftSaveCallbackRef.current(pending)).catch((error) => console.warn("[QuotationForm] Final draft flush failed:", error));
     }
   }, []);
@@ -443,7 +447,7 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
     setSaving(true);
     const cust = customers.find(c => c.id === q.customerId);
     const comp = activeCompany;
-    const isFinalized = Boolean(q.status && q.status !== "draft");
+    const isFinalized = isDocumentFinalized(q);
     const defaultBank = (banks || []).find(b => b.isDefault) || (banks || [])[0];
     
     // Resolve authoritative Bill To snapshot
@@ -517,9 +521,13 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
       includeTerms: q.includeTerms !== false,
       includeBankDetails: q.includeBankDetails !== false,
       bankAccountId: q.bankAccountId,
-      bankSnapshot: q.bankSnapshot,
-      companySnapshot: q.companySnapshot,
-      signatorySnapshot: q.signatorySnapshot,
+      bankSnapshot: isFinalized ? q.bankSnapshot : (q.bankSnapshot || (comp?.bankName ? { bankName: comp.bankName, accountNumber: comp.bankAccountNo, ifsc: comp.bankIfsc } as any : undefined)),
+      companySnapshot: isFinalized
+        ? (q.companySnapshot || (comp ? createCompanySnapshot(comp) : undefined))
+        : (comp ? createCompanySnapshot(comp) : q.companySnapshot),
+      signatorySnapshot: isFinalized
+        ? (q.signatorySnapshot || (comp ? createSignatorySnapshot(comp, q.signatoryOverride, q.date) : undefined))
+        : (comp ? createSignatorySnapshot(comp, q.signatoryOverride, q.date) : q.signatorySnapshot),
       bankDetailsSnapshot: q.bankDetailsSnapshot,
       termsSnapshot: (q.structuredTerms && q.structuredTerms.length > 0)
         ? q.structuredTerms.map(t => t.text)
@@ -557,7 +565,12 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
         : (q.technicalSpecificationSnapshot && q.technicalSpecificationSnapshot.length > 0)
           ? q.technicalSpecificationSnapshot
           : parseMarkdownToCanonicalTechSpecs(activeCompany?.quotationTechnicalSpecsMarkdown),
-      visibilitySnapshot: (q as any).visibilitySnapshot,
+      visibilitySnapshot: (q as any).visibilitySnapshot || {
+        showTerms: q.includeTerms !== false,
+        showTechSpecs: q.includeTechSpecs !== false,
+        showGeneralInfo: q.includeGeneralInfo !== false,
+        showBankDetails: q.includeBankDetails !== false,
+      },
     };
     const frozenQ = freezeQuotationSnapshots(finalQ, comp, banks);
     // Save any custom sizes typed in items

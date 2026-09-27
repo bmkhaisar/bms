@@ -5,6 +5,7 @@ import { extractTableRowsFromMarkdown, extractTermsFromMarkdown } from "@/lib/ma
 import { resolveGeneralInfoFields } from "@/lib/cabinConfiguration";
 import { resolveTechSpecSections } from "@/lib/techSpecResolution";
 import { resolveItemSize, parseSizeSnapshot } from "@/lib/sizeResolution";
+import { isDocumentFinalized } from "@/lib/documentModel";
 
 /**
  * Freezes immutable master snapshots at Quotation Issue/Finalization (PRD §§ 7-9, 28, 78-82)
@@ -16,12 +17,12 @@ export function freezeQuotationSnapshots(
   banks?: BankAccount[],
   force = false
 ): Quotation {
-  const isFinalized = force || Boolean(quotation.status && quotation.status !== "draft");
+  const isFinalized = force || isDocumentFinalized(quotation);
   if (!isFinalized) {
     return quotation;
   }
 
-  const comp = quotation.companySnapshot || company;
+  const comp = company || quotation.companySnapshot;
   const defaultBank =
     banks && banks.length > 0
       ? banks.find((b) => b.isDefault) || banks[0]
@@ -123,7 +124,7 @@ export function freezeQuotationSnapshots(
 
   return {
     ...quotation,
-    companySnapshot: quotation.companySnapshot || (comp ? createCompanySnapshot(comp) : undefined),
+    companySnapshot: comp ? createCompanySnapshot(comp) : quotation.companySnapshot,
     signatorySnapshot:
       quotation.signatorySnapshot ||
       (comp

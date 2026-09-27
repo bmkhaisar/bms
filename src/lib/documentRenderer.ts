@@ -8,8 +8,9 @@ import { formatCompanyAddress } from "@/lib/companyAddress";
 import { handleAutoTableMarkdownCell, drawMarkdownText } from "@/lib/markdownPdfRenderer";
 import { resolveGeneralInfoFields } from "@/lib/cabinConfiguration";
 import { resolveTechSpecSections } from "@/lib/techSpecResolution";
-import { renderPaginatedKeyValueTable } from "@/lib/pdfTablePagination";
 import { resolvePdfDisplaySize } from "@/lib/sizeResolution";
+import { renderPaginatedKeyValueTable } from "@/lib/pdfTablePagination";
+import { resolveCanonicalBankDetails, resolveEffectiveCompany, isDocumentFinalized } from "@/lib/documentModel";
 
 const PDF_CCY = "Rs. ";
 const money = (val: number) => formatMoney(val, PDF_CCY);
@@ -198,7 +199,7 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 14;
 
-  const comp = docData.company || {};
+  const comp = resolveEffectiveCompany(docData, docData.company || {}, null);
   const compName = comp.legalName || comp.name || "Business Entity";
   const isTaxDoc = docData.enableGst !== false;
   const watermarkMode = docData.watermarkMode || (comp as any).watermarkSetting || "off";
@@ -846,7 +847,7 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
   y += 6;
 
   // 6.5. General Information (rendered if enabled on invoice/document)
-  const isPostedDoc = (docData as any).postingStatus === "posted" || (docData as any).status === "posted" || Boolean((docData as any).voucherId) || ((docData as any).status && (docData as any).status !== "draft" && (docData as any).status !== "pending");
+  const isPostedDoc = isDocumentFinalized(docData);
   const showGeneralInfo = docData.visibilitySnapshot?.showGeneralInfo !== undefined
     ? docData.visibilitySnapshot.showGeneralInfo
     : options?.includeGeneralInfo !== undefined
@@ -1003,10 +1004,18 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
   }
 
   // 8. Settlement & Banking Details (Rendered after Terms & Conditions)
-  const showBank = docData.includeBankDetails !== false &&
-    (docData.bankDetailsSnapshot || docData.bankSnapshot || (docData as any).showInvoiceBankDetails !== false && (comp as any).showInvoiceBankDetails !== false);
+  const isInvoiceFinalized = isDocumentFinalized(docData);
+  const isQuotationDoc = docData.kind === "quotation";
+  const explicitBankVisibility = docData.visibilitySnapshot?.showBankDetails;
+  const bankToggleOn = isQuotationDoc
+    ? (comp as any).showQuotationBankDetails !== false && (docData as any).showQuotationBankDetails !== false
+    : (comp as any).showInvoiceBankDetails !== false && (docData as any).showInvoiceBankDetails !== false;
 
-  if (showBank && (docData.receiptDetails || (docData.bankDetailsSnapshot || docData.bankSnapshot || comp.bankName || comp.upiId))) {
+  const showBank = explicitBankVisibility !== undefined
+    ? explicitBankVisibility
+    : (docData.includeBankDetails !== false && bankToggleOn);
+
+  if (showBank && (docData.receiptDetails || (docData.bankDetailsSnapshot || docData.bankSnapshot || comp.bankName || (comp as any).bankAccountNo || (comp as any).bankAccount || comp.upiId))) {
     if (y > pageH - 45) {
       doc.addPage();
       renderWatermark(doc, pageW, pageH, watermarkMode, comp.logo, watermarkCustomText);
@@ -1038,25 +1047,31 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
         y += 3.5;
       }
     } else {
-      const rawBank: any = docData.bankDetailsSnapshot || docData.bankSnapshot || (comp.bankName ? {
-        accountHolderName: (comp as any).accountHolderName || (comp as any).bankAccountHolderName || (comp as any).bankAccountName || comp.legalName || comp.name,
-        accountName: (comp as any).accountHolderName || (comp as any).bankAccountHolderName || (comp as any).bankAccountName || comp.legalName || comp.name,
-        accountNo: comp.bankAccountNo || (comp as any).bankAccount,
+      const canonicalBank = resolveCanonicalBankDetails(docData, comp as any, isInvoiceFinalized);
+      const rawBank: any = canonicalBank.bankDetails || docData.bankDetailsSnapshot || docData.bankSnapshot || ((comp.bankName || (comp as any).bankAccountNo || (comp as any).bankAccount) ? {
+        accountHolderName: (comp as any).accountHolderName || (comp as any).bankAccountHolderName || (comp as any).bankAccountName || comp.name || comp.legalName,
+        accountName: (comp as any).accountHolderName || (comp as any).bankAccountHolderName || (comp as any).bankAccountName || comp.name || comp.legalName,
+        accountNo: comp.bankAccountNo || (comp as any).bankAccount || (comp as any).bankAccountNo,
+        accountNumber: comp.bankAccountNo || (comp as any).bankAccount || (comp as any).bankAccountNo,
         bankName: comp.bankName,
         ifsc: comp.bankIfsc,
         branch: (comp as any).bankBranch,
+        accountType: (comp as any).bankAccountType,
+        swift: (comp as any).bankSwiftCode,
         upi: comp.upiId,
       } : null);
 
       if (rawBank && (rawBank.bankName || rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || rawBank.bankAccount || rawBank.bankAccountNumber)) {
         const bankRows: [string, string][] = [
-          ["Account Holder Name", rawBank.accountHolderName || rawBank.accountName || (comp as any).accountHolderName || (comp as any).bankAccountHolderName || comp.legalName || comp.name || "Business Entity"],
-          ["Account Number", rawBank.accountNo || rawBank.bankAccountNo || rawBank.accountNumber || rawBank.bankAccount || rawBank.bankAccountNumber || (comp as any).bankAccountNo || (comp as any).bankAccount || "—"],
+          ["Account Holder Name", rawBank.accountHolderName || rawBank.accountName || (comp as any).accountHolderName || (comp as any).bankAccountHolderName || comp.name || comp.legalName || "Business Entity"],
           ["Bank Name", rawBank.bankName || "—"],
+          ["Account Number", rawBank.accountNumber || rawBank.accountNo || rawBank.bankAccountNo || rawBank.bankAccount || rawBank.bankAccountNumber || (comp as any).bankAccountNo || (comp as any).bankAccount || "—"],
           ["IFSC Code", rawBank.ifsc || rawBank.bankIfsc || "—"],
         ];
-        if (rawBank.branch) bankRows.push(["Branch", rawBank.branch]);
-        if (rawBank.upi) bankRows.push(["UPI ID / VPA", rawBank.upi]);
+        if (rawBank.branch || (comp as any).bankBranch) bankRows.push(["Branch", rawBank.branch || (comp as any).bankBranch]);
+        if (rawBank.accountType || (comp as any).bankAccountType) bankRows.push(["Account Type", rawBank.accountType || (comp as any).bankAccountType]);
+        if (rawBank.swift || (comp as any).bankSwiftCode) bankRows.push(["SWIFT Code", rawBank.swift || (comp as any).bankSwiftCode]);
+        if (rawBank.upi || (comp as any).upiId) bankRows.push(["UPI ID / VPA", rawBank.upi || (comp as any).upiId]);
 
         autoTable(doc, {
           body: bankRows,

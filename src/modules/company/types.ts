@@ -163,7 +163,7 @@ export interface CompanySnapshot {
 }
 
 export function createCompanySnapshot(company: Partial<Company> & { logo?: string }): CompanySnapshot {
-  const compName = company.legalName || company.name || "";
+  const compName = company.name || company.legalName || "";
   const signatorySnapshot: SignatorySnapshot = {
     companyName: compName,
     authorizedSignatory: company.authorizedSignatory,
