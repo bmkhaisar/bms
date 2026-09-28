@@ -496,8 +496,25 @@ export function resolveDocumentModel(
   const kind = (doc as any).kind || (isQuotation ? "quotation" : "invoice");
   const title = isQuotation ? "QUOTATION" : "TAX INVOICE";
 
+  // PRD § 14: PDF & Document Tenant Isolation Invariant
+  // document.companyId === resolvedCompany.companyId
+  const docCompanyId = doc?.companyId;
+  const targetCompanyId = activeCompany?.id || activeCompany?.companyId;
+  if (docCompanyId && targetCompanyId && targetCompanyId !== "singleton" && docCompanyId !== targetCompanyId) {
+    throw new Error(
+      `TENANT_ISOLATION_VIOLATION: Document companyId (${docCompanyId}) does not match active companyId (${targetCompanyId})`
+    );
+  }
+
   // 1. Resolve Company Header using authoritative resolution rule
   const comp = resolveEffectiveCompany(doc, activeCompany, null);
+
+  if (docCompanyId && comp?.id && comp.id !== "singleton" && docCompanyId !== comp.id) {
+    throw new Error(
+      `TENANT_ISOLATION_VIOLATION: Document companyId (${docCompanyId}) does not match resolved companyId (${comp.id})`
+    );
+  }
+
   const formattedCompany = formatCompanyAddress(comp);
   const companyLogo = comp.logo || comp.logoUrl || null;
 

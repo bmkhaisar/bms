@@ -2,9 +2,15 @@ import { ReactNode, useEffect, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { InstallPwaBanner } from "./InstallPwaBanner";
+import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { useAuth } from "@/modules/auth/context/AuthContext";
+import { AlertCircle } from "lucide-react";
 
 export function AppShell({ title, children }: { title: string; children: ReactNode }) {
   const [mounted, setMounted] = useState(false);
+  const { isDemoExpired } = useActiveCompany();
+  const { isPlatformAdmin } = useAuth();
+
   useEffect(() => setMounted(true), []);
   return (
     <div className="flex min-h-screen bg-background text-foreground">
@@ -13,6 +19,12 @@ export function AppShell({ title, children }: { title: string; children: ReactNo
       </div>
       <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
         <Topbar title={title} />
+        {isDemoExpired && !isPlatformAdmin && (
+          <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-center text-xs font-medium text-amber-800 dark:text-amber-300 flex items-center justify-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>Demo access has expired. Contact your administrator.</span>
+          </div>
+        )}
         <main className="min-w-0 flex-1 p-3 sm:p-6">
           {mounted ? (
             <>

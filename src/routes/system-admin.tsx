@@ -51,6 +51,7 @@ function SystemAdminPage() {
   const nav = useNavigate();
 
   const [activeTab, setActiveTab] = useState("overview");
+  const [selectedAccessCompanyId, setSelectedAccessCompanyId] = useState<string>("");
   const [idToken, setIdToken] = useState<string>("");
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState(false);
@@ -615,7 +616,16 @@ function SystemAdminPage() {
 
           {/* TAB 2: ORGANIZATIONS */}
           <TabsContent value="companies" className="focus-visible:outline-none">
-            <CompaniesView idToken={idToken} onCompanyCreated={() => verifyAuthAndStatus(true)} />
+            <CompaniesView
+              idToken={idToken}
+              onCompanyCreated={() => verifyAuthAndStatus(true)}
+              onNavigateTab={(tab, context) => {
+                if (context?.companyId) {
+                  setSelectedAccessCompanyId(context.companyId);
+                }
+                setActiveTab(tab);
+              }}
+            />
           </TabsContent>
 
           {/* TAB 3: USERS */}
@@ -625,7 +635,7 @@ function SystemAdminPage() {
 
           {/* TAB 4: ACCESS MANAGEMENT */}
           <TabsContent value="access" className="focus-visible:outline-none">
-            <CompanyAccessView idToken={idToken} />
+            <CompanyAccessView idToken={idToken} initialCompanyId={selectedAccessCompanyId} />
           </TabsContent>
         </Tabs>
       </main>

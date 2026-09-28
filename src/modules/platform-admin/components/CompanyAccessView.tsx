@@ -55,6 +55,7 @@ import type { PlatformCompanySummary } from "@/server/platform-admin/companyServ
 
 interface CompanyAccessViewProps {
   idToken: string;
+  initialCompanyId?: string;
 }
 
 const AVAILABLE_ROLES = [
@@ -67,10 +68,10 @@ const AVAILABLE_ROLES = [
   { id: "viewer", label: "Viewer (Read-only operational data)" },
 ];
 
-export function CompanyAccessView({ idToken }: CompanyAccessViewProps) {
+export function CompanyAccessView({ idToken, initialCompanyId }: CompanyAccessViewProps) {
   const { user } = useAuth();
   const [companies, setCompanies] = useState<PlatformCompanySummary[]>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(initialCompanyId || "");
   const [memberships, setMemberships] = useState<any[]>([]);
   const [loadingCompanies, setLoadingCompanies] = useState(true);
   const [loadingMemberships, setLoadingMemberships] = useState(false);
@@ -135,7 +136,9 @@ export function CompanyAccessView({ idToken }: CompanyAccessViewProps) {
         const res = await listCompaniesPlatformAdminFn({ data: { idToken: token } });
         if (res.success && res.companies) {
           setCompanies(res.companies);
-          if (res.companies.length > 0 && !selectedCompanyId) {
+          if (initialCompanyId && res.companies.some((c) => c.id === initialCompanyId)) {
+            setSelectedCompanyId(initialCompanyId);
+          } else if (res.companies.length > 0 && !selectedCompanyId) {
             setSelectedCompanyId(res.companies[0].id);
           }
         }
@@ -145,8 +148,14 @@ export function CompanyAccessView({ idToken }: CompanyAccessViewProps) {
         setLoadingCompanies(false);
       }
     },
-    [getAuthToken, selectedCompanyId]
+    [getAuthToken, selectedCompanyId, initialCompanyId]
   );
+
+  useEffect(() => {
+    if (initialCompanyId) {
+      setSelectedCompanyId(initialCompanyId);
+    }
+  }, [initialCompanyId]);
 
   useEffect(() => {
     loadCompanies();
@@ -425,16 +434,35 @@ export function CompanyAccessView({ idToken }: CompanyAccessViewProps) {
               <SelectValue placeholder="Choose a company..." />
             </SelectTrigger>
             <SelectContent>
-              {companies.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name} ({c.id})
-                </SelectItem>
-              ))}
+              {companies.map((c) => {
+                const isDemo = c.isDemo || c.organizationType === "DEMO";
+                return (
+                  <SelectItem key={c.id} value={c.id}>
+                    <div className="flex items-center gap-2">
+                      <span>{c.name}</span>
+                      {isDemo && (
+                        <Badge className="text-[9px] px-1 h-3.5 bg-amber-500/20 text-amber-700 dark:text-amber-300 border-none">
+                          DEMO
+                        </Badge>
+                      )}
+                    </div>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         </div>
         {selectedCompany && (
-          <div className="text-xs text-slate-500 border-t sm:border-t-0 sm:border-l border-slate-200 pt-2 sm:pt-0 sm:pl-4">
+          <div className="text-xs text-slate-500 border-t sm:border-t-0 sm:border-l border-slate-200 pt-2 sm:pt-0 sm:pl-4 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-slate-700">Organization:</span>
+              <span>{selectedCompany.name}</span>
+              {(selectedCompany.isDemo || selectedCompany.organizationType === "DEMO") && (
+                <Badge className="text-[9px] px-1 h-3.5 bg-amber-500/20 text-amber-700 dark:text-amber-300 border-none font-semibold">
+                  DEMO
+                </Badge>
+              )}
+            </div>
             <div>
               <span className="font-semibold text-slate-700">GSTIN:</span> {selectedCompany.gstin || "N/A"}
             </div>

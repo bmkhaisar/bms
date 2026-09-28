@@ -14,12 +14,16 @@ import type { Company, Membership, FinancialYear } from "../types";
 import { hasCapability, type Capability } from "@/modules/auth/permissions";
 import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYearFn";
 import { db } from "@/lib/db";
+import { outboxManager } from "@/modules/sync/outboxManager";
 
 export interface CompanySummary {
   id: string;
   name: string;
   legalName?: string;
   role: string;
+  organizationType?: "NORMAL" | "DEMO";
+  isDemo?: boolean;
+  demoExpiresAt?: number;
 }
 
 export interface ActiveCompanyContextValue {
@@ -31,6 +35,8 @@ export interface ActiveCompanyContextValue {
   loading: boolean;
   error: string | null;
   isOwner: boolean;
+  isDemo: boolean;
+  isDemoExpired: boolean;
   can: (capability: string) => boolean;
   switchCompany: (companyId: string) => void;
   switchFinancialYear: (financialYearId: string) => void;
@@ -52,9 +58,9 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const repairingFinancialYearRef = useRef<Set<string>>(new Set());
 
-  // Register cleanup on canonical logout
+  // Register cleanup on canonical logout (PRD § 10)
   useEffect(() => {
-    return registerLogoutCleanup(() => {
+    return registerLogoutCleanup(async () => {
       setCompanies([]);
       setActiveCompanyId(null);
       setActiveCompany(null);
@@ -64,8 +70,30 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       setResolvedUserId(null);
       setError(null);
+      if (typeof window !== "undefined") {
+        try {
+          await Promise.all([
+            db().invoices.clear(),
+            db().quotations.clear(),
+            db().purchases.clear(),
+            db().receipts.clear(),
+            db().payments.clear(),
+            db().parties.clear(),
+            db().customers.clear(),
+            db().suppliers.clear(),
+            db().productSizes.clear(),
+            db().sizes.clear(),
+            db().companySettings.clear(),
+          ]);
+        } catch {}
+      }
     });
   }, [registerLogoutCleanup]);
+
+  // Synchronize active company to outbox manager for company-scoped queuing (PRD § 10)
+  useEffect(() => {
+    outboxManager.setActiveCompany(activeCompanyId);
+  }, [activeCompanyId]);
 
   // 1. Listen for user's assigned companies at /userCompanies/{uid}
   useEffect(() => {
@@ -106,21 +134,29 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
           if (compSnap.exists() && memSnap.exists()) {
             const compData = compSnap.val();
             const memData = memSnap.val();
+            const isDemo = Boolean(compData.isDemo || compData.organizationType === "DEMO");
             summaries.push({
               id: cId,
               name: compData.name || "Unnamed Company",
               legalName: compData.legalName,
               role: memData.role || "viewer",
+              organizationType: isDemo ? "DEMO" : "NORMAL",
+              isDemo,
+              demoExpiresAt: compData.demoExpiresAt,
             });
           } else {
             // Fallback to companySummaries
             const sumSnap = await get(ref(firebaseDb!, `companySummaries/${cId}`));
             if (sumSnap.exists()) {
               const sumData = sumSnap.val();
+              const isDemo = Boolean(sumData.isDemo || sumData.organizationType === "DEMO");
               summaries.push({
                 id: cId,
                 name: sumData.name || "Unnamed Company",
                 role: "viewer",
+                organizationType: isDemo ? "DEMO" : "NORMAL",
+                isDemo,
+                demoExpiresAt: sumData.demoExpiresAt,
               });
             }
           }
@@ -240,12 +276,34 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
       .finally(() => repairingFinancialYearRef.current.delete(activeCompanyId));
   }, [user, activeCompanyId, activeCompany, financialYears.length]);
 
-  const switchCompany = useCallback((companyId: string) => {
-    // Immediately clear previous company state so child views never render stale records (PRD #62)
+  const switchCompany = useCallback(async (companyId: string) => {
+    // PRD §§ 9, 10, 22: Immediately isolate UI state, queries, Dexie, realtime listeners, outbox
     setActiveCompany(null);
     setActiveMembership(null);
     setFinancialYears([]);
     setActiveFinancialYearId(null);
+
+    // Stop outbox processing and clear working Dexie tables so no stale Company A records flash in UI
+    if (typeof window !== "undefined") {
+      try {
+        await Promise.all([
+          db().invoices.clear(),
+          db().quotations.clear(),
+          db().purchases.clear(),
+          db().receipts.clear(),
+          db().payments.clear(),
+          db().parties.clear(),
+          db().customers.clear(),
+          db().suppliers.clear(),
+          db().productSizes.clear(),
+          db().sizes.clear(),
+          db().companySettings.clear(),
+        ]);
+      } catch (err) {
+        console.warn("Failed to clear working Dexie tables on company switch:", err);
+      }
+    }
+
     setActiveCompanyId(companyId);
     if (typeof window !== "undefined") {
       window.dispatchEvent(
@@ -265,6 +323,12 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isOwner = activeMembership?.role === "owner";
+  const isDemo = Boolean(activeCompany?.isDemo || activeCompany?.organizationType === "DEMO");
+  const isDemoExpired = Boolean(
+    isDemo &&
+    activeCompany?.demoExpiresAt &&
+    Date.now() > activeCompany.demoExpiresAt
+  );
 
   const can = (capability: string): boolean => {
     return hasCapability(activeMembership, capability as Capability);
@@ -283,6 +347,8 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
         loading: loading || Boolean(user && resolvedUserId !== user.uid),
         error,
         isOwner,
+        isDemo,
+        isDemoExpired,
         can,
         switchCompany,
         switchFinancialYear,

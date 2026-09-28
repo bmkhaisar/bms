@@ -10,6 +10,15 @@ class OutboxSyncManager {
   private networkStatus: NetworkStatus = "online";
   private statusListeners: Set<StatusListener> = new Set();
   private connectedRefUnsub: (() => void) | null = null;
+  private activeCompanyId: string | null = null;
+
+  setActiveCompany(companyId: string | null): void {
+    this.activeCompanyId = companyId;
+  }
+
+  getActiveCompany(): string | null {
+    return this.activeCompanyId;
+  }
 
   init(): () => void {
     if (typeof window === "undefined") return () => {};
@@ -65,6 +74,7 @@ class OutboxSyncManager {
       this.cleanupFn = null;
     }
     this.isProcessing = false;
+    this.activeCompanyId = null;
     this.statusListeners.clear();
   }
 
@@ -96,20 +106,32 @@ class OutboxSyncManager {
     return fullMutation;
   }
 
-  async processOutbox(): Promise<void> {
+  async processOutbox(scopedCompanyId?: string): Promise<void> {
     if (this.isProcessing || typeof window === "undefined" || !navigator.onLine) return;
     this.isProcessing = true;
     this.updateStatus("syncing");
 
+    const targetCompanyId = scopedCompanyId || this.activeCompanyId;
+
     try {
       const db = getCacheDb();
-      const pendingMutations = await db.outbox
+      let pendingMutations = await db.outbox
         .where("status")
         .equals("pending")
         .sortBy("createdAt");
 
+      // PRD § 10: Outbox entries must be company-scoped
+      if (targetCompanyId) {
+        pendingMutations = pendingMutations.filter((m) => m.companyId === targetCompanyId);
+      }
+
       for (const m of pendingMutations) {
         if (!navigator.onLine) break;
+
+        // Skip mutation if active company context has changed
+        if (targetCompanyId && m.companyId !== targetCompanyId) {
+          continue;
+        }
 
         // Mark syncing
         await db.outbox.update(m.id, {

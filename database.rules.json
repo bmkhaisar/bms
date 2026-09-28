@@ -35,7 +35,7 @@
     },
     "companySummaries": {
       "$companyId": {
-        ".read": "auth != null",
+        ".read": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'",
         ".write": false
       }
     },

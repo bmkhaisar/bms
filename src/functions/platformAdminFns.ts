@@ -112,3 +112,32 @@ export const listCompanyMembershipsFn = createServerFn({ method: "POST" })
     const { listCompanyMemberships } = await import("@/server/platform-admin/accessService");
     return await listCompanyMemberships(data.idToken, data.companyId);
   });
+
+export const resetDemoCompanyFn = createServerFn({ method: "POST" })
+  .validator((data: { idToken: string; companyId: string; confirmName: string }) => data)
+  .handler(async ({ data }) => {
+    const { resetDemoCompanyAsPlatformAdmin } = await import("@/server/platform-admin/companyService");
+    return await resetDemoCompanyAsPlatformAdmin(data);
+  });
+
+export const initializeDemoDataFn = createServerFn({ method: "POST" })
+  .validator((data: { idToken: string; companyId: string }) => data)
+  .handler(async ({ data }) => {
+    const { initializeDemoDataAsPlatformAdmin } = await import("@/server/platform-admin/companyService");
+    return await initializeDemoDataAsPlatformAdmin(data);
+  });
+
+export const extendDemoExpirationFn = createServerFn({ method: "POST" })
+  .validator((data: { idToken: string; companyId: string; demoExpiresAt: number }) => data)
+  .handler(async ({ data }) => {
+    const { extendDemoExpirationAsPlatformAdmin } = await import("@/server/platform-admin/companyService");
+    return await extendDemoExpirationAsPlatformAdmin(data);
+  });
+
+export const openOrganizationForAdminFn = createServerFn({ method: "POST" })
+  .validator((data: { idToken: string; companyId: string }) => data)
+  .handler(async ({ data }) => {
+    const { openOrganizationForAdmin } = await import("@/server/platform-admin/companyService");
+    return await openOrganizationForAdmin(data);
+  });
+

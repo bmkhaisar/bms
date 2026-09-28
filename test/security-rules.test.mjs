@@ -53,3 +53,10 @@ test("Security Rule 9: Query indexOn rules defined for all critical collections"
   assert.ok(Array.isArray(cd.payments[".indexOn"]), "payments must have .indexOn");
   assert.ok(Array.isArray(cd.financialYears[".indexOn"]), "financialYears must have .indexOn");
 });
+
+test("Security Rule 10: Company summaries require authenticated active membership", () => {
+  const readRule = rulesJson.companySummaries.$companyId[".read"];
+  assert.ok(readRule.includes("auth != null"), "Must require authentication");
+  assert.ok(readRule.includes("memberships"), "Must check memberships tree");
+  assert.ok(readRule.includes("active"), "Must check membership status === 'active'");
+});

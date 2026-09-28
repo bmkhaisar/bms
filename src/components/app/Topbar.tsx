@@ -3,6 +3,7 @@ import { LogOut, Moon, Sun, Menu, Search, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/modules/auth/context/AuthContext";
+import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Sidebar } from "./Sidebar";
@@ -15,6 +16,7 @@ export function Topbar({ title }: { title: string }) {
   const [openLogout, setOpenLogout] = useState(false);
   const [openSearch, setOpenSearch] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { isDemo } = useActiveCompany();
 
   useEffect(() => {
     const t = localStorage.getItem("bms_theme") === "dark";
@@ -64,7 +66,14 @@ export function Topbar({ title }: { title: string }) {
           <Sidebar onNavigate={() => setMobileOpen(false)} />
         </SheetContent>
       </Sheet>
-      <h1 className="text-sm font-semibold tracking-tight text-foreground sm:text-base truncate max-w-[150px] sm:max-w-none">{title}</h1>
+      <div className="flex items-center gap-2 truncate">
+        <h1 className="text-sm font-semibold tracking-tight text-foreground sm:text-base truncate max-w-[150px] sm:max-w-none">{title}</h1>
+        {isDemo && (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0 tracking-wider">
+            DEMO
+          </span>
+        )}
+      </div>
       <div className="ml-auto flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => setOpenSearch(true)} className="gap-2">
           <Search className="h-4 w-4" />
