@@ -1,6 +1,6 @@
 import { getFirebaseAdmin } from "../firebaseAdmin";
 import { checkSessionAge } from "../authMiddleware";
-import { hasCapability } from "@/modules/auth/permissions";
+import { hasCapability, hasBranchPermission } from "@/modules/auth/permissions";
 import type {
   PostVoucherInput,
   PostVoucherResult,
@@ -112,10 +112,22 @@ export async function executePostVoucher(
     };
   }
 
-  if (!hasCapability(membership, "accounting.voucher.create")) {
+  // Canonical Granular & Branch Permission Enforcement (Hardening Task 2)
+  const voucherPermMap: Record<string, string> = {
+    sales: "INVOICE_POST",
+    purchase: "PURCHASE_POST",
+    receipt: "RECEIPT_CREATE",
+    payment: "PURCHASE_POST",
+    credit_note: "SALES_RETURN_POST",
+    sales_return: "SALES_RETURN_POST",
+  };
+  const requiredPermission = voucherPermMap[input.voucherType] || "accounting.voucher.create";
+
+  if (!hasBranchPermission(membership, input.branchId, requiredPermission)) {
+    const branchDesc = input.branchId && input.branchId !== "all" ? ` for branch '${input.branchId}'` : "";
     return {
       success: false,
-      error: "Forbidden: You do not have permission to post accounting vouchers.",
+      error: `Forbidden: You do not have permission '${requiredPermission}'${branchDesc} to post this transaction.`,
       code: "FORBIDDEN",
     };
   }

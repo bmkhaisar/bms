@@ -69,8 +69,8 @@
           ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner'"
         },
         "branches": {
-          ".indexOn": ["code", "active"],
-          ".write": "auth != null && (root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' || root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'admin')"
+          ".indexOn": ["code", "active", "isMainBranch"],
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('role').val() === 'owner' && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "warehouses": {
           ".indexOn": ["code", "branchId", "active"],
@@ -109,23 +109,31 @@
           ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "quotations": {
-          ".indexOn": ["customerId", "date", "status", "createdAt"],
+          ".indexOn": ["customerId", "branchId", "date", "status", "createdAt"],
           ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "invoices": {
-          ".indexOn": ["customerId", "date", "status", "financialYearId", "createdAt"],
+          ".indexOn": ["customerId", "branchId", "date", "status", "financialYearId", "createdAt"],
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+        },
+        "salesReturns": {
+          ".indexOn": ["customerId", "branchId", "date", "status", "financialYearId", "createdAt"],
+          ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
+        },
+        "creditNotes": {
+          ".indexOn": ["customerId", "branchId", "date", "status", "financialYearId", "createdAt"],
           ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "purchases": {
-          ".indexOn": ["supplierId", "date", "status", "financialYearId", "createdAt"],
+          ".indexOn": ["supplierId", "branchId", "date", "status", "financialYearId", "createdAt"],
           ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "receipts": {
-          ".indexOn": ["customerId", "date", "financialYearId", "createdAt"],
+          ".indexOn": ["customerId", "branchId", "date", "financialYearId", "createdAt"],
           ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "payments": {
-          ".indexOn": ["supplierId", "date", "financialYearId", "createdAt"],
+          ".indexOn": ["supplierId", "branchId", "date", "financialYearId", "createdAt"],
           ".write": "auth != null && root.child('memberships').child($companyId).child(auth.uid).child('status').val() === 'active'"
         },
         "quotationMasters": {

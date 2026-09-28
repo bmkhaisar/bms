@@ -31,6 +31,7 @@ import { Route as AppPurchasesRouteImport } from './routes/_app.purchases'
 import { Route as AppQuotationsRouteImport } from './routes/_app.quotations'
 import { Route as AppReceiptsRouteImport } from './routes/_app.receipts'
 import { Route as AppReportsRouteImport } from './routes/_app.reports'
+import { Route as AppSalesReturnsRouteImport } from './routes/_app.sales-returns'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppSuppliersRouteImport } from './routes/_app.suppliers'
 
@@ -144,6 +145,11 @@ const AppReportsRoute = AppReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSalesReturnsRoute = AppSalesReturnsRouteImport.update({
+  id: '/sales-returns',
+  path: '/sales-returns',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -177,6 +183,7 @@ export interface FileRoutesByFullPath {
   '/quotations': typeof AppQuotationsRoute
   '/receipts': typeof AppReceiptsRoute
   '/reports': typeof AppReportsRoute
+  '/sales-returns': typeof AppSalesReturnsRoute
   '/settings': typeof AppSettingsRoute
   '/suppliers': typeof AppSuppliersRoute
 }
@@ -201,6 +208,7 @@ export interface FileRoutesByTo {
   '/quotations': typeof AppQuotationsRoute
   '/receipts': typeof AppReceiptsRoute
   '/reports': typeof AppReportsRoute
+  '/sales-returns': typeof AppSalesReturnsRoute
   '/settings': typeof AppSettingsRoute
   '/suppliers': typeof AppSuppliersRoute
   '/': typeof AppIndexRoute
@@ -228,6 +236,7 @@ export interface FileRoutesById {
   '/_app/quotations': typeof AppQuotationsRoute
   '/_app/receipts': typeof AppReceiptsRoute
   '/_app/reports': typeof AppReportsRoute
+  '/_app/sales-returns': typeof AppSalesReturnsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/suppliers': typeof AppSuppliersRoute
   '/_app/': typeof AppIndexRoute
@@ -256,6 +265,7 @@ export interface FileRouteTypes {
     | '/quotations'
     | '/receipts'
     | '/reports'
+    | '/sales-returns'
     | '/settings'
     | '/suppliers'
   fileRoutesByTo: FileRoutesByTo
@@ -280,6 +290,7 @@ export interface FileRouteTypes {
     | '/quotations'
     | '/receipts'
     | '/reports'
+    | '/sales-returns'
     | '/settings'
     | '/suppliers'
     | '/'
@@ -306,6 +317,7 @@ export interface FileRouteTypes {
     | '/_app/quotations'
     | '/_app/receipts'
     | '/_app/reports'
+    | '/_app/sales-returns'
     | '/_app/settings'
     | '/_app/suppliers'
     | '/_app/'
@@ -478,6 +490,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppReportsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/sales-returns': {
+      id: '/_app/sales-returns'
+      path: '/sales-returns'
+      fullPath: '/sales-returns'
+      preLoaderRoute: typeof AppSalesReturnsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings': {
       id: '/_app/settings'
       path: '/settings'
@@ -509,6 +528,7 @@ interface AppRouteChildren {
   AppQuotationsRoute: typeof AppQuotationsRoute
   AppReceiptsRoute: typeof AppReceiptsRoute
   AppReportsRoute: typeof AppReportsRoute
+  AppSalesReturnsRoute: typeof AppSalesReturnsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppSuppliersRoute: typeof AppSuppliersRoute
   AppIndexRoute: typeof AppIndexRoute
@@ -528,6 +548,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppQuotationsRoute: AppQuotationsRoute,
   AppReceiptsRoute: AppReceiptsRoute,
   AppReportsRoute: AppReportsRoute,
+  AppSalesReturnsRoute: AppSalesReturnsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppSuppliersRoute: AppSuppliersRoute,
   AppIndexRoute: AppIndexRoute,

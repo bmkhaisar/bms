@@ -2,7 +2,7 @@ import { Link, useLocation } from "@tanstack/react-router";
 import {
   LayoutDashboard, Users, Truck, Package, Tags, FileText, Receipt, HandCoins,
   ShoppingCart, BookOpen, BarChart3, Settings, HardDriveDownload, Info, Building2, Layers,
-  Wifi, WifiOff, RefreshCw, ShieldCheck,
+  Wifi, WifiOff, RefreshCw, ShieldCheck, RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import logo from "@/assets/bms-logo.png.asset.json";
@@ -36,6 +36,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/quotations", label: "Quotations", icon: FileText },
       { to: "/invoices", label: "Invoices", icon: Receipt },
+      { to: "/sales-returns", label: "Sales Returns & CN", icon: RotateCcw },
       { to: "/receipts", label: "Receipts & Inflows", icon: HandCoins },
     ],
   },

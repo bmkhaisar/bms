@@ -91,7 +91,7 @@ export function DocumentListPage<T extends AnyDoc>({
   tableFor: "customer" | "supplier";
 }) {
   const navigate = useNavigate();
-  const { activeCompany, activeFinancialYear } = useActiveCompany();
+  const { activeCompany, activeFinancialYear, activeBranchId, branches, isOwner } = useActiveCompany();
   const rowsState = useLiveState<T>(async () => {
     const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
     return (await table.orderBy("createdAt").reverse().toArray()) as unknown as T[];
@@ -494,6 +494,13 @@ export function DocumentListPage<T extends AnyDoc>({
       }
       // "all" includes everything
 
+      // Strict Branch Isolation (PRD §§ 9, 10): If user is scoped to a specific branch, only show that branch's records
+      if (activeBranchId && activeBranchId !== "all") {
+        if ((r as any).branchId && (r as any).branchId !== activeBranchId) {
+          return false;
+        }
+      }
+
       if (!q) return true;
       const s = q.toLowerCase().trim();
       const p = partyById((r as any).customerId ?? (r as Purchase).supplierId);
@@ -506,7 +513,7 @@ export function DocumentListPage<T extends AnyDoc>({
         suppInv.includes(s)
       );
     });
-  }, [effectiveRows, statusFilter, q, customers, suppliers]);
+  }, [effectiveRows, statusFilter, q, customers, suppliers, activeBranchId]);
   const pager = usePagination(filtered, 12);
 
   const { user } = useAuth();
@@ -694,12 +701,19 @@ async function openNew() {
     const isCompanyNonGst = (activeCompany as any)?.gstRegistrationMode === "unregistered";
     setEnableGst(!isCompanyNonGst);
 
+    const effectiveBranchId = activeBranchId && activeBranchId !== "all"
+      ? activeBranchId
+      : (branches.find((b) => b.isMainBranch)?.id || branches[0]?.id || "main");
+
     const base = {
       id: uid(), number, date: Date.now(), items: [] as LineItem[],
       subtotal: 0, discountTotal: 0, gstTotal: 0, roundOff: 0, grandTotal: 0,
       createdAt: Date.now(), financialYearId: resolvedFinancialYear?.id, extraCharges: [] as ExtraCharge[], extraChargesTotal: 0,
       gstCalculationMode: "overall" as const,
       overallGstRate: 18,
+      organizationId: activeCompany?.id,
+      companyId: activeCompany?.id,
+      branchId: effectiveBranchId,
     };
     markManualOpen();
     let initDoc: T;

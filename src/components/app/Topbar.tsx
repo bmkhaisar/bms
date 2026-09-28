@@ -8,6 +8,8 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Sidebar } from "./Sidebar";
 import { GlobalSearch } from "./GlobalSearch";
+import { isBetaDeployment } from "@/config/env";
+import { BetaFeedbackDialog } from "./BetaFeedbackDialog";
 
 export function Topbar({ title }: { title: string }) {
   const nav = useNavigate();
@@ -68,6 +70,14 @@ export function Topbar({ title }: { title: string }) {
       </Sheet>
       <div className="flex items-center gap-2 truncate">
         <h1 className="text-sm font-semibold tracking-tight text-foreground sm:text-base truncate max-w-[150px] sm:max-w-none">{title}</h1>
+        {isBetaDeployment() && (
+          <span
+            className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-primary/15 text-primary border border-primary/30 shrink-0 tracking-wider"
+            title="BMS NEXT Beta Deployment"
+          >
+            BETA
+          </span>
+        )}
         {isDemo && (
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0 tracking-wider">
             DEMO
@@ -75,6 +85,7 @@ export function Topbar({ title }: { title: string }) {
         )}
       </div>
       <div className="ml-auto flex items-center gap-2">
+        {isBetaDeployment() && <BetaFeedbackDialog />}
         <Button variant="outline" size="sm" onClick={() => setOpenSearch(true)} className="gap-2">
           <Search className="h-4 w-4" />
           <span className="hidden sm:inline">Search</span>

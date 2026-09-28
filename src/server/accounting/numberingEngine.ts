@@ -1,6 +1,6 @@
 import type { Database } from "firebase-admin/database";
-import type { VoucherType } from "@/modules/accounting/types";
-import { VOUCHER_PREFIXES } from "@/modules/accounting/constants";
+import type { VoucherType } from "../../modules/accounting/types.ts";
+import { VOUCHER_PREFIXES } from "../../modules/accounting/constants.ts";
 
 export interface AllocateVoucherNumberResult {
   voucherNumber: string;
@@ -66,7 +66,10 @@ export async function allocateVoucherNumber(
 export interface AllocateLegalDocNumberInput {
   companyId: string;
   financialYearId: string;
-  docType: "invoice" | "quotation" | "receipt" | "purchase";
+  docType: "invoice" | "quotation" | "receipt" | "purchase" | "credit_note" | "sales_return";
+  branchId?: string;
+  branchCode?: string;
+  gstin?: string;
   fyName?: string;
   customPrefix?: string;
 }
@@ -113,9 +116,25 @@ export async function allocateLegalDocumentNumber(
   db: Database,
   params: AllocateLegalDocNumberInput
 ): Promise<AllocateLegalDocNumberResult> {
-  const { companyId, financialYearId, docType, fyName = "FY", customPrefix } = params;
+  const {
+    companyId,
+    financialYearId,
+    docType,
+    branchId,
+    branchCode,
+    gstin,
+    fyName = "FY",
+    customPrefix,
+  } = params;
+
+  // Scoped counter path:
+  // company + applicable branch / GST registration + financial year + document type
+  const scopeKey = branchId
+    ? `branch_${branchId.replace(/[^a-zA-Z0-9_-]/g, "_")}`
+    : (gstin ? `gstin_${gstin.replace(/[^a-zA-Z0-9]/g, "")}` : "documents");
+
   const counterRef = db.ref(
-    `companyData/${companyId}/docCounters/${financialYearId}/documents/${docType}`
+    `companyData/${companyId}/docCounters/${financialYearId}/${scopeKey}/${docType}`
   );
 
   const txResult = await counterRef.transaction((currentValue) => {
@@ -124,7 +143,7 @@ export async function allocateLegalDocumentNumber(
 
   if (!txResult.committed) {
     throw new Error(
-      `Failed to allocate sequence number for document type '${docType}'. Concurrency contention.`
+      `Failed to allocate sequence number for document type '${docType}' in scope '${scopeKey}'. Concurrency contention.`
     );
   }
 
@@ -135,10 +154,13 @@ export async function allocateLegalDocumentNumber(
     quotation: "QT",
     receipt: "REC",
     purchase: "PO",
+    credit_note: "CN",
+    sales_return: "SR",
   };
   const prefix = (customPrefix && customPrefix.trim()) || defaultPrefixes[docType] || docType.toUpperCase();
+  const bCode = branchCode ? `${branchCode.trim().toUpperCase()}/` : "";
   const paddedNumber = String(sequenceNumber).padStart(4, "0");
-  const documentNumber = `${prefix}/${fyCode}/${paddedNumber}`;
+  const documentNumber = `${prefix}/${bCode}${fyCode}/${paddedNumber}`;
 
   return {
     documentNumber,

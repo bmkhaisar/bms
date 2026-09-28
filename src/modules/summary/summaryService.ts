@@ -69,6 +69,7 @@ export async function computeCustomerSummary(
     creditNotes?: Array<{ id: string; customerId: string; amount: number; date: number }>;
     customer?: Customer;
     ledgers?: Ledger[];
+    branchId?: string;
   }
 ): Promise<CustomerFinancialSummary> {
   let invoices = options?.invoices;
@@ -92,6 +93,12 @@ export async function computeCustomerSummary(
   } else {
     invoices = invoices?.filter((i) => i.customerId === customerId) || [];
     receipts = receipts?.filter((r) => r.customerId === customerId) || [];
+  }
+
+  // Branch isolation
+  if (options?.branchId && options.branchId !== "all") {
+    invoices = invoices.filter((i) => i.branchId === options.branchId);
+    receipts = receipts.filter((r) => r.branchId === options.branchId);
   }
 
   // Only posted / active invoices count in financial totals (strictly exclude draft, cancelled, reversed)
@@ -183,6 +190,7 @@ export async function computeProductSummary(
     invoices?: Invoice[];
     purchases?: Purchase[];
     product?: Product;
+    branchId?: string;
   }
 ): Promise<ProductFinancialSummary> {
   let invoices = options?.invoices;
@@ -202,6 +210,12 @@ export async function computeProductSummary(
   } else {
     invoices = invoices || [];
     purchases = purchases || [];
+  }
+
+  // Branch isolation
+  if (options?.branchId && options.branchId !== "all") {
+    invoices = invoices.filter((i) => i.branchId === options.branchId);
+    purchases = purchases.filter((p) => p.branchId === options.branchId);
   }
 
   // Filter posted invoices containing this product (strictly exclude draft, cancelled, reversed)

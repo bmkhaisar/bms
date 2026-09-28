@@ -69,10 +69,14 @@ export interface CompanySettings {
   quotationPrefix: string;
   receiptPrefix: string;
   purchasePrefix: string;
+  creditNotePrefix?: string;
+  salesReturnPrefix?: string;
   nextInvoiceNo: number;
   nextQuotationNo: number;
   nextReceiptNo: number;
   nextPurchaseNo: number;
+  nextCreditNoteNo?: number;
+  nextSalesReturnNo?: number;
   defaultCountry?: string;
   defaultState?: string;
   defaultPincode?: string;
@@ -267,6 +271,7 @@ export interface MeasurementEntry {
 }
 
 export interface LineItem {
+  id?: string;
   productId: ID; name: string; productName?: string; description?: string; sku?: string; hsn?: string;
   quantity: number; unit: string; uomId?: string; uomLabel?: string;
   rate: number; ratePaise?: number; discountPct: number; discountPercent?: number;
@@ -333,6 +338,9 @@ export interface ExtraCharge {
 
 export interface Quotation {
   id: ID; number: string; date: number;
+  companyId?: ID;
+  branchId?: ID;
+  branchSnapshot?: any;
   financialYearId?: ID;
   validity?: number; // ms timestamp
   preparedBy?: string;
@@ -413,6 +421,9 @@ export interface Quotation {
 
 export interface Invoice {
   id: ID; number: string; date: number; dueDate?: number; creditDaysSnapshot?: number;
+  companyId?: ID;
+  branchId?: ID;
+  branchSnapshot?: any;
   financialYearId?: ID;
   customerId: ID; customerSnapshot?: Partial<Customer>;
   companySnapshot?: any;
@@ -520,6 +531,10 @@ export interface Invoice {
 
 export interface Receipt {
   id: ID; number: string; date: number; customerId: ID; partyId?: ID; invoiceId?: ID;
+  companyId?: ID;
+  branchId?: ID;
+  branchSnapshot?: any;
+  financialYearId?: ID;
   amount: number; mode: "cash" | "bank" | "upi" | "cheque" | "other";
   paymentMethod?: string;
   chequeNumber?: string;
@@ -583,6 +598,10 @@ export interface Receipt {
 
 export interface Payment {
   id: ID; number: string; date: number; supplierId: ID; purchaseId?: ID;
+  companyId?: ID;
+  branchId?: ID;
+  branchSnapshot?: any;
+  financialYearId?: ID;
   amount: number; mode: "cash" | "bank" | "upi" | "cheque" | "other";
   paymentMethod?: string;
   chequeNumber?: string;
@@ -603,6 +622,9 @@ export interface Payment {
 
 export interface Purchase {
   id: ID; number: string; date: number; supplierId: ID;
+  companyId?: ID;
+  branchId?: ID;
+  branchSnapshot?: any;
   financialYearId?: ID;
   supplierInvoiceNumber?: string;
   supplierInvoiceDate?: number | string;
@@ -632,6 +654,137 @@ export interface Purchase {
   createdAt: number;
   updatedAt?: number;
 }
+
+// --- Sales Returns & Credit Notes (PRD §§ 20-28) ---
+export type SalesReturnReason =
+  | "Defective"
+  | "Damaged"
+  | "Wrong Item"
+  | "Customer Return"
+  | "Price Adjustment"
+  | "Other";
+
+export type RestockAction =
+  | "RESTOCK_SALEABLE"
+  | "RESTOCK_DAMAGED"
+  | "FINANCIAL_CREDIT_ONLY";
+
+export interface SalesReturnItem {
+  id: ID;
+  invoiceItemId: string;
+  productId: ID;
+  productName: string;
+  name?: string;
+  description?: string;
+  sku?: string;
+  hsn?: string;
+  uomId?: string;
+  uomLabel?: string;
+  unit?: string;
+  invoicedQuantity: number;
+  previouslyReturnedQuantity: number;
+  returnQuantity: number;
+  rate: number;
+  ratePaise: number;
+  discountPct: number;
+  gstRate: number;
+  isInterState: boolean;
+  taxableAmount: number;
+  taxablePaise: number;
+  cgstAmount: number;
+  cgstPaise: number;
+  sgstAmount: number;
+  sgstPaise: number;
+  igstAmount: number;
+  igstPaise: number;
+  totalAmount: number;
+  total?: number;
+  totalPaise: number;
+  reason: SalesReturnReason;
+  reasonNotes?: string;
+  restockAction: RestockAction;
+  restockOption?: RestockAction;
+}
+
+export interface SalesReturn {
+  id: ID;
+  number: string; // e.g. SR/2026-27/0001
+  creditNoteNumber: string; // e.g. CN/2026-27/0001
+  creditNoteId?: string;
+  date: number;
+  companyId?: ID;
+  branchId?: ID;
+  branchSnapshot?: any;
+  financialYearId?: ID;
+  customerId: ID;
+  customerSnapshot?: Partial<Customer>;
+  originalInvoiceId: ID;
+  originalInvoiceNumber: string;
+  originalInvoiceDate: number;
+  returnType: "FULL" | "PARTIAL";
+  reason?: string;
+  placeOfSupplySnapshot?: string;
+  items: SalesReturnItem[];
+  subtotal: number;
+  discountTotal: number;
+  taxableAmount: number;
+  cgstTotal: number;
+  sgstTotal: number;
+  igstTotal: number;
+  gstTotal: number;
+  roundOff: number;
+  grandTotal: number;
+  notes?: string;
+  status: "draft" | "posted" | "reversed" | "cancelled" | "voided" | "deleted";
+  postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
+  voucherId?: string;
+  customerCreditCreated?: number;
+  customerCreditGeneratedPaise?: number;
+  customerCreditAllocatedPaise?: number;
+  outstandingReducedPaise?: number;
+  companySnapshot?: any;
+  signatorySnapshot?: any;
+  createdAt: number;
+  createdBy?: string;
+  updatedAt?: number;
+}
+
+export interface CreditNote {
+  id: ID;
+  number: string;
+  salesReturnId: ID;
+  originalInvoiceId: ID;
+  originalInvoiceNumber: string;
+  originalInvoiceDate: number;
+  date: number;
+  companyId?: ID;
+  branchId?: ID;
+  branchSnapshot?: any;
+  financialYearId?: ID;
+  customerId: ID;
+  customerSnapshot?: Partial<Customer>;
+  items: SalesReturnItem[];
+  subtotal: number;
+  discountTotal: number;
+  taxableAmount: number;
+  cgstTotal: number;
+  sgstTotal: number;
+  igstTotal: number;
+  gstTotal: number;
+  roundOff: number;
+  grandTotal: number;
+  reason: SalesReturnReason;
+  notes?: string;
+  voucherId?: string;
+  status: "draft" | "posted" | "reversed" | "cancelled";
+  postingStatus?: "draft" | "posting" | "posted" | "failed" | "reversed";
+  companySnapshot?: any;
+  signatorySnapshot?: any;
+  createdAt: number;
+  createdBy?: string;
+  updatedAt?: number;
+}
+
 
 // --- New masters & Structured Presentation Models (PRD §§ 4, 11, 20, 25, 31) ---
 export interface SizeSnapshot {
@@ -754,6 +907,9 @@ class BizDB extends Dexie {
   bankAccounts!: Table<BankAccount, ID>;
   quotationTemplates!: Table<QuotationTemplate, ID>;
   parties!: Table<Party, ID>;
+  salesReturns!: Table<SalesReturn, ID>;
+  creditNotes!: Table<CreditNote, ID>;
+  branches!: Table<any, ID>;
 
   constructor() {
     super("bms_db_v1");
@@ -788,6 +944,16 @@ class BizDB extends Dexie {
     });
     this.version(6).stores({
       productSizes: "id, productId, [productId+label], lastUsedAt, usageCount, createdAt",
+    });
+    this.version(7).stores({
+      salesReturns: "id, number, creditNoteNumber, originalInvoiceId, customerId, branchId, date, status, createdAt",
+      creditNotes: "id, number, salesReturnId, originalInvoiceId, customerId, branchId, date, status, createdAt",
+      branches: "id, code, name, isMainBranch, active, createdAt",
+      invoices: "id, number, date, customerId, branchId, status, createdAt",
+      quotations: "id, number, date, customerId, branchId, createdAt",
+      receipts: "id, number, date, customerId, branchId, invoiceId, createdAt",
+      purchases: "id, number, date, supplierId, branchId, supplierInvoiceNumber, createdAt",
+      payments: "id, number, date, supplierId, branchId, createdAt",
     });
   }
 }
@@ -829,12 +995,36 @@ export async function getCompany(companyId?: string): Promise<CompanySettings> {
 }
 
 export async function nextNumber(
-  kind: "invoice" | "quotation" | "receipt" | "purchase",
+  kind: "invoice" | "quotation" | "receipt" | "purchase" | "credit_note" | "sales_return",
 ): Promise<string> {
   const c = await getCompany();
-  const key = kind === "invoice" ? "nextInvoiceNo" : kind === "quotation" ? "nextQuotationNo" : kind === "receipt" ? "nextReceiptNo" : "nextPurchaseNo";
-  const prefix = kind === "invoice" ? c.invoicePrefix : kind === "quotation" ? c.quotationPrefix : kind === "receipt" ? c.receiptPrefix : c.purchasePrefix;
-  const n = (c as any)[key] as number;
+  const key =
+    kind === "invoice"
+      ? "nextInvoiceNo"
+      : kind === "quotation"
+      ? "nextQuotationNo"
+      : kind === "receipt"
+      ? "nextReceiptNo"
+      : kind === "purchase"
+      ? "nextPurchaseNo"
+      : kind === "credit_note"
+      ? "nextCreditNoteNo"
+      : "nextSalesReturnNo";
+
+  const prefix =
+    kind === "invoice"
+      ? c.invoicePrefix
+      : kind === "quotation"
+      ? c.quotationPrefix
+      : kind === "receipt"
+      ? c.receiptPrefix
+      : kind === "purchase"
+      ? c.purchasePrefix
+      : kind === "credit_note"
+      ? c.creditNotePrefix || "CN-"
+      : c.salesReturnPrefix || "SR-";
+
+  const n = ((c as any)[key] as number) || 1;
   const next = { ...c, [key]: n + 1 };
   await db().companySettings.put(next);
   return `${prefix}${String(n).padStart(4, "0")}`;

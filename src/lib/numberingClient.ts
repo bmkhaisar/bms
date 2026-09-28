@@ -4,6 +4,7 @@ import { nextNumber } from "@/lib/db";
 export interface GetNextDocNumberParams {
   kind: "invoice" | "quotation" | "receipt" | "purchase";
   companyId?: string;
+  branchId?: string;
   financialYearId?: string;
   fyName?: string;
   idToken?: string;

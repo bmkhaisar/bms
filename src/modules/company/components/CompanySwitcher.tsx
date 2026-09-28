@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Check, ChevronsUpDown, PlusCircle, Calendar } from "lucide-react";
+import { Building2, Check, ChevronsUpDown, Calendar, GitBranch, Layers } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
 export function CompanySwitcher() {
@@ -19,8 +19,14 @@ export function CompanySwitcher() {
     activeMembership,
     financialYears,
     activeFinancialYear,
+    branches,
+    activeBranchId,
+    activeBranch,
+    isAllBranches,
+    isOwner,
     switchCompany,
     switchFinancialYear,
+    switchBranch,
   } = useActiveCompany();
   const nav = useNavigate();
 
@@ -39,7 +45,7 @@ export function CompanySwitcher() {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       {/* Company Dropdown */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -100,16 +106,80 @@ export function CompanySwitcher() {
               </DropdownMenuItem>
             );
           })}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={() => nav({ to: "/select-company" as any })}
-            className="gap-2 text-xs text-primary font-medium"
-          >
-            <PlusCircle className="h-4 w-4" />
-            <span>Add / Join Company</span>
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Branch Selector (PRD § 12) */}
+      {(branches.length > 0 || isOwner) && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 w-full justify-between px-2 text-[11px] font-normal text-muted-foreground bg-background/50 border-border/70"
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                {isAllBranches ? (
+                  <Layers className="h-3 w-3 shrink-0 text-primary" />
+                ) : (
+                  <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
+                )}
+                <span className="truncate">
+                  Branch: {isAllBranches ? "All Branches (Consolidated)" : activeBranch?.name || "Select Branch"}
+                </span>
+              </div>
+              <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuLabel className="text-xs text-muted-foreground">Branch Context</DropdownMenuLabel>
+
+            {/* Owner Consolidated View Option (PRD § 12, 13) */}
+            {isOwner && (
+              <DropdownMenuItem
+                onClick={() => switchBranch("all")}
+                className="flex items-center justify-between text-xs font-medium"
+              >
+                <div className="flex items-center gap-1.5">
+                  <Layers className="h-3.5 w-3.5 text-primary" />
+                  <span>All Branches (Consolidated)</span>
+                </div>
+                {isAllBranches && <Check className="h-3.5 w-3.5 text-primary" />}
+              </DropdownMenuItem>
+            )}
+
+            {isOwner && branches.length > 0 && <DropdownMenuSeparator />}
+
+            {/* Assigned Branches List */}
+            {branches.map((b) => {
+              const isSelected = !isAllBranches && activeBranchId === b.id;
+              return (
+                <DropdownMenuItem
+                  key={b.id}
+                  onClick={() => switchBranch(b.id)}
+                  className="flex items-center justify-between text-xs"
+                >
+                  <div className="truncate">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate font-medium">{b.name}</span>
+                      {b.isMainBranch && (
+                        <span className="text-[9px] px-1 py-0 rounded bg-primary/10 text-primary font-semibold">
+                          Main
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      Code: {b.code} {b.city ? `• ${b.city}` : ""}
+                    </div>
+                  </div>
+                  {isSelected && <Check className="h-3.5 w-3.5 text-primary ml-2 shrink-0" />}
+                </DropdownMenuItem>
+              );
+            })}
+
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       {/* Financial Year Selector */}
       {financialYears.length > 0 && (
@@ -118,7 +188,7 @@ export function CompanySwitcher() {
             <Button
               variant="outline"
               size="sm"
-              className="h-7 w-full justify-between px-2 text-[11px] font-normal text-muted-foreground bg-background/50"
+              className="h-7 w-full justify-between px-2 text-[11px] font-normal text-muted-foreground bg-background/50 border-border/70"
             >
               <div className="flex items-center gap-1.5 truncate">
                 <Calendar className="h-3 w-3 shrink-0" />
@@ -148,3 +218,4 @@ export function CompanySwitcher() {
     </div>
   );
 }
+

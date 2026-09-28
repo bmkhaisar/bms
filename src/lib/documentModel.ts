@@ -65,9 +65,13 @@ export interface ResolvedBankDetails {
 }
 
 export interface ResolvedDocumentModel {
-  kind: "quotation" | "invoice" | "purchase" | "receipt";
+  kind: "quotation" | "invoice" | "purchase" | "receipt" | "credit_note";
   title: string;
   number: string;
+  originalInvoiceNumber?: string;
+  originalInvoiceDate?: string;
+  originalInvoiceDateRaw?: number;
+  reason?: string;
   date: number;
   dateFormatted: string;
   validityFormatted?: string;
@@ -300,15 +304,30 @@ export function resolveEffectiveCompany(
 ): CompanySettings {
   const finalized = isDocumentFinalized(doc);
   const snap = doc?.companySnapshot;
+  const branchSnap = doc?.branchSnapshot;
 
-  // 1. FINALIZED / POSTED documents preserve their frozen historical snapshot
-  if (finalized && snap && (snap.name || snap.legalName)) {
+  // 1. FINALIZED / POSTED documents preserve their frozen historical snapshot (PRD §§ 16, 19)
+  if (finalized && (snap || branchSnap)) {
+    const branchOverrides = branchSnap ? {
+      name: branchSnap.branchDisplayName || branchSnap.branchName || snap?.name || "Your Company",
+      address: branchSnap.address || snap?.address,
+      city: branchSnap.city || snap?.city,
+      state: branchSnap.state || snap?.state,
+      pincode: branchSnap.pincode || snap?.pincode,
+      phone: branchSnap.phone || snap?.phone,
+      email: branchSnap.email || snap?.email,
+      gstin: branchSnap.gstin || snap?.gstin,
+      ...(branchSnap.bankDetails || {}),
+      ...(branchSnap.signatory || {}),
+    } : {};
+
     return {
       ...(fallbackCompany || {}),
       ...(activeCompany || {}),
-      ...snap,
-      name: snap.name || snap.legalName || (activeCompany as any)?.name || (fallbackCompany as any)?.name || "Your Company",
-      legalName: snap.legalName || snap.name || (activeCompany as any)?.legalName || (fallbackCompany as any)?.legalName || "Your Company",
+      ...(snap || {}),
+      ...branchOverrides,
+      name: doc?.branchDisplayNameSnapshot || branchSnap?.branchDisplayName || branchSnap?.branchName || snap?.name || snap?.legalName || (activeCompany as any)?.name || (fallbackCompany as any)?.name || "Your Company",
+      legalName: doc?.organizationLegalNameSnapshot || snap?.legalName || snap?.name || (activeCompany as any)?.legalName || (fallbackCompany as any)?.legalName || "Your Company",
     } as CompanySettings;
   }
 
@@ -490,11 +509,15 @@ export function resolveDocumentModel(
 
   const isQuotation = doc?.kind === "quotation"
     ? true
-    : (doc?.kind === "invoice" || doc?.kind === "purchase" || doc?.kind === "receipt" || doc?.kind === "payment")
+    : (doc?.kind === "invoice" || doc?.kind === "purchase" || doc?.kind === "receipt" || doc?.kind === "payment" || doc?.kind === "credit_note")
     ? false
     : Boolean("validity" in (doc || {}) || ("quotationNumber" in (doc || {})));
   const kind = (doc as any).kind || (isQuotation ? "quotation" : "invoice");
-  const title = isQuotation ? "QUOTATION" : "TAX INVOICE";
+  const title = kind === "credit_note"
+    ? "CREDIT NOTE / SALES RETURN"
+    : isQuotation
+    ? "QUOTATION"
+    : "TAX INVOICE";
 
   // PRD § 14: PDF & Document Tenant Isolation Invariant
   // document.companyId === resolvedCompany.companyId
@@ -572,9 +595,9 @@ export function resolveDocumentModel(
   const cgstTotal = Number(doc.cgstTotal) || 0;
   const sgstTotal = Number(doc.sgstTotal) || 0;
   const igstTotal = Number(doc.igstTotal) || 0;
-  const gstTotal = Number(doc.gstTotal) || (cgstTotal + sgstTotal + igstTotal);
+  const gstTotal = Number(doc.gstTotal ?? doc.taxTotal) || (cgstTotal + sgstTotal + igstTotal);
   const roundOff = Number(doc.roundOff) || 0;
-  const grandTotal = Number(doc.grandTotal) || (taxableAmount + gstTotal + roundOff);
+  const grandTotal = Number(doc.grandTotal ?? doc.total) || (taxableAmount + gstTotal + roundOff);
 
   const extraCharges = (doc.extraCharges || []).map((c: any) => ({
     label: c.label || c.name || "Extra Charge",
@@ -710,6 +733,10 @@ export function resolveDocumentModel(
     kind,
     title,
     number: doc.number || "DRAFT",
+    originalInvoiceNumber: doc.originalInvoiceNumber,
+    originalInvoiceDate: doc.originalInvoiceDateFormatted || (doc.originalInvoiceDate ? formatDate(doc.originalInvoiceDate) : undefined),
+    originalInvoiceDateRaw: doc.originalInvoiceDate,
+    reason: doc.reason || doc.salesReturnReason,
     date: doc.date || Date.now(),
     dateFormatted: formatDate(doc.date || Date.now()),
     validityFormatted: doc.validity ? formatDate(doc.validity) : undefined,

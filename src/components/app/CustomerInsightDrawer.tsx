@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { documentDeepLink } from "@/lib/useDocumentDeepLink";
+import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 
 interface Props {
   customerId: string | null;
@@ -33,6 +34,7 @@ interface Props {
 
 export function CustomerInsightDrawer({ customerId, open, onOpenChange, onSelectInvoice }: Props) {
   const navigate = useNavigate();
+  const { activeBranchId } = useActiveCompany();
   const [summary, setSummary] = useState<CustomerFinancialSummary | null>(null);
   const [dualPosition, setDualPosition] = useState<PartyDualFinancialPosition | null>(null);
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -51,7 +53,7 @@ export function CustomerInsightDrawer({ customerId, open, onOpenChange, onSelect
 
     Promise.all([
       db().parties.get(customerId).then((p) => p || db().customers.get(customerId)),
-      computeCustomerSummary(customerId),
+      computeCustomerSummary(customerId, { branchId: activeBranchId }),
       getPartyDualFinancialPosition(customerId),
     ])
       .then(([c, s, d]) => {
@@ -69,7 +71,7 @@ export function CustomerInsightDrawer({ customerId, open, onOpenChange, onSelect
     return () => {
       active = false;
     };
-  }, [customerId, open]);
+  }, [customerId, open, activeBranchId]);
 
   if (!customerId) return null;
 

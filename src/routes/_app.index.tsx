@@ -11,7 +11,10 @@ import {
   type Quotation,
   type Receipt,
   type Payment,
+  type SalesReturn,
 } from "@/lib/db";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { useLive, useLiveState } from "@/lib/useLive";
 import { formatMoney, formatDate } from "@/lib/format";
 import {
@@ -61,7 +64,7 @@ export const Route = createFileRoute("/_app/")({
 });
 
 function Dashboard() {
-  const { activeCompany, activeFinancialYear } = useActiveCompany();
+  const { activeCompany, activeFinancialYear, activeBranchId, branches, isOwner } = useActiveCompany();
 
   // Local Dexie collections with bounded financial year queries + 45-day lookback for MTD vs LMTD cross-FY comparisons
   const invoicesState = useLiveState<Invoice>(() => {
@@ -111,6 +114,10 @@ function Dashboard() {
     return db().payments.orderBy("date").reverse().toArray();
   }, [activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
 
+  const salesReturnsState = useLiveState<SalesReturn>(() => {
+    return db().salesReturns.orderBy("date").reverse().toArray();
+  }, []);
+
   const recentInvoices = useLive<Invoice>(() =>
     db().invoices.orderBy("createdAt").reverse().limit(5).toArray()
   );
@@ -159,8 +166,8 @@ function Dashboard() {
     };
   }, [activeCompany?.id]);
 
-  const isDataLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded && receiptsState.isLoaded && paymentsState.isLoaded && customersState.isLoaded && ledgersLoaded;
-  const cacheKey = `${activeCompany?.id || "default"}_${activeFinancialYear?.id || "all"}`;
+  const isDataLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded && receiptsState.isLoaded && paymentsState.isLoaded && customersState.isLoaded && salesReturnsState.isLoaded && ledgersLoaded;
+  const cacheKey = `${activeCompany?.id || "default"}_${activeBranchId || "all"}_${activeFinancialYear?.id || "all"}`;
 
   // Compute authoritative metrics using formal double-entry and transaction data
   const metrics = useMemo(() => {
@@ -174,6 +181,9 @@ function Dashboard() {
       products,
       receipts,
       payments,
+      salesReturns: salesReturnsState.data,
+      branches,
+      branchId: activeBranchId,
       financialYearStart: activeFinancialYear?.startDate,
       financialYearEnd: activeFinancialYear?.endDate,
       inventoryValuationMethod: (activeCompany as any)?.inventoryValuationMethod,
@@ -195,11 +205,13 @@ function Dashboard() {
 
   const kpiCards = [
     {
-      label: "Total Sales",
-      value: formatMoney(metrics.totalSales),
+      label: metrics.totalSalesReturns && metrics.totalSalesReturns > 0 ? "Net Billed Value" : "Total Billed Sales",
+      value: formatMoney(metrics.netBilledValue ?? (metrics.totalSales - (metrics.totalSalesReturns || 0))),
       icon: TrendingUp,
       tint: "text-mint",
-      subtext: activeFinancialYear ? activeFinancialYear.name : "All Time",
+      subtext: metrics.totalSalesReturns && metrics.totalSalesReturns > 0
+        ? `Gross: ${formatMoney(metrics.totalSales)} | CN: ${formatMoney(metrics.totalSalesReturns)}`
+        : (activeFinancialYear ? activeFinancialYear.name : "All Time"),
       href: "/invoices",
     },
     {
@@ -344,6 +356,70 @@ function Dashboard() {
           </motion.div>
         ))}
       </div>
+
+      {/* Consolidated Branch Comparison (Owner or Consolidated View) */}
+      {metrics.branchMetrics && metrics.branchMetrics.length > 1 && (activeBranchId === "all" || isOwner) && (
+        <div className="mt-4">
+          <Card className="rounded-2xl border border-border/80 bg-card shadow-soft p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <Building2 className="h-5 w-5 text-primary" />
+                <h3 className="text-base font-semibold tracking-tight text-foreground">
+                  Branch Performance Comparison
+                </h3>
+                <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
+                  {activeBranchId === "all" ? "Consolidated All Branches" : "Multi-Branch Comparison"}
+                </span>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/40 text-[11px]">
+                    <TableHead>Branch</TableHead>
+                    <TableHead className="text-right">Gross Sales</TableHead>
+                    <TableHead className="text-right">Returns</TableHead>
+                    <TableHead className="text-right">Net Billed</TableHead>
+                    <TableHead className="text-right">Purchases</TableHead>
+                    <TableHead className="text-right">Collections</TableHead>
+                    <TableHead className="text-right">Outstanding AR</TableHead>
+                    <TableHead className="text-right">Operating Net</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {metrics.branchMetrics.map((bm: any) => (
+                    <TableRow key={bm.branchId} className="text-xs hover:bg-muted/30">
+                      <TableCell className="font-semibold text-foreground">
+                        <div className="flex items-center gap-1.5">
+                          <span>{bm.branchName}</span>
+                          {bm.branchCode && (
+                            <span className="text-[10px] text-muted-foreground font-mono">({bm.branchCode})</span>
+                          )}
+                          {bm.isMainBranch && (
+                            <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[9px] py-0">
+                              Main
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right font-medium text-foreground">{formatMoney(bm.sales)}</TableCell>
+                      <TableCell className="text-right text-rose-600 dark:text-rose-400 font-medium">
+                        {bm.salesReturns > 0 ? formatMoney(bm.salesReturns) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-bold text-foreground">{formatMoney(bm.sales - bm.salesReturns)}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">{formatMoney(bm.purchases)}</TableCell>
+                      <TableCell className="text-right text-emerald-600 dark:text-emerald-400 font-medium">{formatMoney(bm.collections)}</TableCell>
+                      <TableCell className="text-right font-medium text-foreground">{formatMoney(bm.receivables)}</TableCell>
+                      <TableCell className="text-right font-bold text-primary">{formatMoney(bm.netProfit)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Dedicated GST & Statutory Tax Position (PRD #22, #42, #44) */}
       <div className="mt-4">

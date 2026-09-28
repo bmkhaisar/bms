@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { ImagePlus, Save, ShieldAlert, Building2, FileSignature, Stamp, AlertCircle, FileText, Eye, CheckCircle2 } from "lucide-react";
+import { ImagePlus, Save, ShieldAlert, Building2, FileSignature, Stamp, AlertCircle, FileText, Eye, CheckCircle2, Layers, Users } from "lucide-react";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb } from "@/config/firebase";
@@ -27,9 +27,12 @@ import type { Company, TypedSignatureStyle } from "@/modules/company/types";
 import { TYPED_SIGNATURE_STYLES } from "@/modules/company/signatoryHelper";
 import { SignatoryBlock } from "@/components/app/SignatoryBlock";
 import { MarkdownRenderer } from "@/lib/MarkdownRenderer";
+import { BranchManagementSection } from "@/modules/company/components/BranchManagementSection";
+import { UserAccessManagementSection } from "@/modules/company/components/UserAccessManagementSection";
+import { isBetaDeployment } from "@/config/env";
 
 export const Route = createFileRoute("/_app/settings")({
-  head: () => ({ meta: [{ title: "Company Settings — BMS NEXT" }] }),
+  head: () => ({ meta: [{ title: "Company & Branch Settings — BMS NEXT" }] }),
   component: SettingsPage,
 });
 
@@ -41,6 +44,7 @@ function SettingsPage() {
   const [form, setForm] = useState<Partial<Company>>({});
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<string>("profile");
 
   useEffect(() => {
     let active = true;
@@ -293,26 +297,45 @@ function SettingsPage() {
   }
 
   return (
-    <AppShell title="Company Settings">
+    <AppShell title="Company & Branch Settings">
       <PageHeader
-        title="Company Settings"
-        description="Legal business identity, tax credentials, banking, and document numbering."
+        title="Company & Branch Settings"
+        description="Legal business identity, operating branches, granular user permissions, and document numbering."
         actions={
-          canEdit ? (
-            <Button className="gap-2" onClick={handleSave} disabled={saving}>
-              <Save className="h-4 w-4" />
-              <span>{saving ? "Saving..." : "Save Changes"}</span>
-            </Button>
-          ) : (
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <ShieldAlert className="h-4 w-4" />
-              <span>View-only permission</span>
-            </div>
+          activeTab === "profile" && (
+            canEdit ? (
+              <Button className="gap-2" onClick={handleSave} disabled={saving}>
+                <Save className="h-4 w-4" />
+                <span>{saving ? "Saving..." : "Save Changes"}</span>
+              </Button>
+            ) : (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <ShieldAlert className="h-4 w-4" />
+                <span>View-only permission</span>
+              </div>
+            )
           )
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <TabsList className="bg-muted/60 p-1 border border-border/60">
+          <TabsTrigger value="profile" className="gap-2 text-xs">
+            <Building2 className="h-3.5 w-3.5" />
+            Company Profile
+          </TabsTrigger>
+          <TabsTrigger value="branches" className="gap-2 text-xs">
+            <Layers className="h-3.5 w-3.5" />
+            Branches & Locations
+          </TabsTrigger>
+          <TabsTrigger value="access" className="gap-2 text-xs">
+            <Users className="h-3.5 w-3.5" />
+            Users & Access Control
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="profile" className="m-0 space-y-6">
+          <div className="grid gap-6 lg:grid-cols-3">
         {/* Business Details */}
         <Card className="rounded-2xl border border-border/80 bg-card shadow-soft lg:col-span-2">
           <CardHeader>
@@ -1287,7 +1310,26 @@ function SettingsPage() {
           </CardContent>
         </Card>
       </div>
-    </AppShell>
+    </TabsContent>
+
+    <TabsContent value="branches" className="m-0">
+      <BranchManagementSection />
+    </TabsContent>
+
+    <TabsContent value="access" className="m-0">
+      <UserAccessManagementSection />
+    </TabsContent>
+  </Tabs>
+
+  {isBetaDeployment() && (
+    <div className="mt-8 pt-4 border-t border-border/50 text-center text-xs text-muted-foreground/80 flex items-center justify-center gap-2">
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-primary/15 text-primary border border-primary/30 tracking-wider uppercase">
+        Beta
+      </span>
+      <span>BMS NEXT Beta Deployment &bull; Branch: <code className="font-mono font-medium text-foreground">staging</code></span>
+    </div>
+  )}
+</AppShell>
   );
 }
 

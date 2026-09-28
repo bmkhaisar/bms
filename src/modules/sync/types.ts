@@ -5,8 +5,9 @@ export interface OutboxMutation {
   clientMutationId: string;        // Stable idempotency key (reused across retries)
   uid: string;                     // Authenticated user who created the mutation
   companyId: string;               // Target company
+  branchId?: string;               // Branch context (PRD § 18)
   financialYearId: string;         // Financial year context
-  entityType: "company" | "customer" | "supplier" | "product" | "productSize" | "invoice" | "quotation" | "receipt" | "payment" | "voucher" | "stock" | "category";
+  entityType: "company" | "customer" | "supplier" | "product" | "productSize" | "invoice" | "quotation" | "receipt" | "payment" | "voucher" | "stock" | "category" | "salesReturn" | "creditNote" | "branch";
   entityId: string;                // ID of target entity
   operation: "create" | "update" | "post" | "void" | "adjust";
   payload: Record<string, unknown>; // Normalized mutation payload
@@ -22,6 +23,7 @@ export interface CachedEntity<T = unknown> {
   id: string;                      // Composite key: `${companyId}:${entityType}:${entityId}`
   uid: string;
   companyId: string;
+  branchId?: string;
   financialYearId?: string;
   entityType: string;
   entityId: string;

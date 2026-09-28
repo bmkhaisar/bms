@@ -7,7 +7,10 @@ export interface AllocateDocNumberInput {
   idToken: string;
   companyId: string;
   financialYearId: string;
-  docType: "invoice" | "quotation" | "receipt" | "purchase";
+  docType: "invoice" | "quotation" | "receipt" | "purchase" | "credit_note" | "sales_return";
+  branchId?: string;
+  branchCode?: string;
+  gstin?: string;
   fyName?: string;
   customPrefix?: string;
 }
@@ -54,10 +57,35 @@ export const allocateDocumentNumberServerFn = createServerFn({ method: "POST" })
         };
       }
 
+      const membership = memSnap.val();
+
+      // Enforce granular permission server-side (Hardening Task 2)
+      const docPermMap: Record<string, string> = {
+        invoice: "INVOICE_CREATE",
+        quotation: "QUOTATION_CREATE",
+        receipt: "RECEIPT_CREATE",
+        purchase: "PURCHASE_CREATE",
+        credit_note: "SALES_RETURN_CREATE",
+        sales_return: "SALES_RETURN_CREATE",
+      };
+      const requiredPerm = docPermMap[data.docType] || "INVOICE_CREATE";
+      const { hasBranchPermission } = await import("@/modules/auth/permissions");
+      if (!hasBranchPermission(membership, data.branchId, requiredPerm)) {
+        const branchDesc = data.branchId && data.branchId !== "all" ? ` for branch '${data.branchId}'` : "";
+        return {
+          success: false,
+          error: `Forbidden: You do not have permission '${requiredPerm}'${branchDesc}.`,
+          code: "FORBIDDEN",
+        };
+      }
+
       const result = await allocateLegalDocumentNumber(db, {
         companyId: data.companyId,
         financialYearId: data.financialYearId,
         docType: data.docType,
+        branchId: data.branchId,
+        branchCode: data.branchCode,
+        gstin: data.gstin,
         fyName: data.fyName,
         customPrefix: data.customPrefix,
       });

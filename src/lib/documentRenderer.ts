@@ -96,6 +96,9 @@ export interface NormalizedDocument {
   copyLabel?: DocumentCopyType;
   supplierInvoiceNumber?: string;
   supplierInvoiceDate?: number;
+  originalInvoiceNumber?: string;
+  originalInvoiceDate?: number;
+  salesReturnReason?: string;
   receiptDetails?: {
     receiptVoucherNumber?: string;
     allocationType?: string;
@@ -253,7 +256,9 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
   const metaX = pageW - margin;
   let metaY = margin + 5;
 
-  const docTitle = docData.kind === "receipt"
+  const docTitle = docData.kind === "credit_note"
+    ? (docData.title || "CREDIT NOTE / SALES RETURN").toUpperCase()
+    : docData.kind === "receipt"
     ? (docData.title || "RECEIPT VOUCHER").toUpperCase()
     : docData.kind === "payment"
     ? (docData.title || "PAYMENT VOUCHER").toUpperCase()
@@ -300,6 +305,27 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
   doc.setTextColor(17, 24, 39);
   doc.text(`${docData.title} #: ${docData.number}`, metaX, metaY, { align: "right" });
   metaY += 4.5;
+
+  if (docData.originalInvoiceNumber) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.text(`Orig Invoice #: ${docData.originalInvoiceNumber}`, metaX, metaY, { align: "right" });
+    metaY += 4.5;
+  }
+  if (docData.originalInvoiceDate) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(`Orig Inv Date: ${formatDate(docData.originalInvoiceDate)}`, metaX, metaY, { align: "right" });
+    metaY += 4;
+  }
+  if (docData.salesReturnReason) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Reason: ${docData.salesReturnReason}`, metaX, metaY, { align: "right" });
+    doc.setTextColor(17, 24, 39);
+    metaY += 4;
+  }
 
   if (docData.supplierInvoiceNumber) {
     doc.setFont("helvetica", "bold");

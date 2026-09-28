@@ -4,14 +4,15 @@ import {
   useEffect,
   useState,
   useCallback,
+  useMemo,
   useRef,
   type ReactNode,
 } from "react";
 import { ref, onValue, off, get } from "firebase/database";
 import { firebaseDb } from "@/config/firebase";
 import { useAuth } from "@/modules/auth/context/AuthContext";
-import type { Company, Membership, FinancialYear } from "../types";
-import { hasCapability, type Capability } from "@/modules/auth/permissions";
+import type { Company, Membership, FinancialYear, Branch } from "../types";
+import { hasCapability, type Capability, hasBranchPermission } from "@/modules/auth/permissions";
 import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYearFn";
 import { db } from "@/lib/db";
 import { outboxManager } from "@/modules/sync/outboxManager";
@@ -32,14 +33,19 @@ export interface ActiveCompanyContextValue {
   activeMembership: Membership | null;
   financialYears: FinancialYear[];
   activeFinancialYear: FinancialYear | null;
+  branches: Branch[];
+  activeBranchId: string | "all";
+  activeBranch: Branch | null;
+  isAllBranches: boolean;
   loading: boolean;
   error: string | null;
   isOwner: boolean;
   isDemo: boolean;
   isDemoExpired: boolean;
-  can: (capability: string) => boolean;
+  can: (capability: string, branchId?: string | null) => boolean;
   switchCompany: (companyId: string) => void;
   switchFinancialYear: (financialYearId: string) => void;
+  switchBranch: (branchId: string | "all") => void;
   refreshCompanyData: () => Promise<void>;
 }
 
@@ -53,6 +59,8 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
   const [activeMembership, setActiveMembership] = useState<Membership | null>(null);
   const [financialYears, setFinancialYears] = useState<FinancialYear[]>([]);
   const [activeFinancialYearId, setActiveFinancialYearId] = useState<string | null>(null);
+  const [allBranches, setAllBranches] = useState<Branch[]>([]);
+  const [activeBranchId, setActiveBranchId] = useState<string | "all">("all");
   const [loading, setLoading] = useState(true);
   const [resolvedUserId, setResolvedUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -207,6 +215,7 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
     const compRef = ref(firebaseDb, `companies/${activeCompanyId}`);
     const memRef = ref(firebaseDb, `memberships/${activeCompanyId}/${user.uid}`);
     const fyRef = ref(firebaseDb, `companyData/${activeCompanyId}/financialYears`);
+    const branchesRef = ref(firebaseDb, `companyData/${activeCompanyId}/branches`);
 
     const onCompChange = (snap: any) => {
       if (snap.exists()) {
@@ -253,14 +262,30 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    const onBranchesChange = (snap: any) => {
+      if (snap.exists()) {
+        const raw = snap.val();
+        const list: Branch[] = Object.entries(raw).map(([id, val]: [string, any]) => ({
+          ...val,
+          id: val?.id || id,
+          branchId: val?.id || id,
+        }));
+        setAllBranches(list);
+      } else {
+        setAllBranches([]);
+      }
+    };
+
     onValue(compRef, onCompChange);
     onValue(memRef, onMemChange);
     onValue(fyRef, onFyChange);
+    onValue(branchesRef, onBranchesChange);
 
     return () => {
       off(compRef, "value", onCompChange);
       off(memRef, "value", onMemChange);
       off(fyRef, "value", onFyChange);
+      off(branchesRef, "value", onBranchesChange);
     };
   }, [user, activeCompanyId, activeFinancialYearId]);
 
@@ -276,12 +301,70 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
       .finally(() => repairingFinancialYearRef.current.delete(activeCompanyId));
   }, [user, activeCompanyId, activeCompany, financialYears.length]);
 
+  const isOwner = (activeMembership?.organizationRole || activeMembership?.role || "").toLowerCase() === "owner";
+
+  // Branch isolation: Non-owners only see branches they are explicitly assigned to (PRD § 8, 14)
+  const branches = useMemo(() => {
+    if (isOwner || activeMembership?.allBranches) {
+      return allBranches;
+    }
+    const allowed = new Set<string>();
+    if (Array.isArray(activeMembership?.branchIds)) {
+      activeMembership.branchIds.forEach((id) => allowed.add(id));
+    }
+    if (Array.isArray(activeMembership?.branchAccess)) {
+      activeMembership.branchAccess.forEach((ba) => ba.branchId && allowed.add(ba.branchId));
+    }
+    return allBranches.filter((b) => allowed.has(b.id));
+  }, [allBranches, isOwner, activeMembership]);
+
+  // Auto-resolve active branch on company load or branch change
+  useEffect(() => {
+    if (!activeCompanyId) {
+      setActiveBranchId("all");
+      return;
+    }
+    const stored = typeof window !== "undefined" ? localStorage.getItem(`bms_branch_${activeCompanyId}`) : null;
+    if (isOwner && stored === "all") {
+      setActiveBranchId("all");
+      return;
+    }
+    if (stored && branches.some((b: Branch) => b.id === stored)) {
+      setActiveBranchId(stored);
+      return;
+    }
+    // Fallback: main branch or first authorized branch
+    const mainBranch = branches.find((b: Branch) => b.isMainBranch && b.active !== false);
+    if (mainBranch) {
+      setActiveBranchId(mainBranch.id);
+    } else if (branches.length > 0) {
+      setActiveBranchId(branches[0].id);
+    } else if (isOwner) {
+      setActiveBranchId("all");
+    }
+  }, [activeCompanyId, branches, isOwner]);
+
+  const switchBranch = useCallback((branchId: string | "all") => {
+    if (!isOwner && branchId === "all") return;
+    setActiveBranchId(branchId);
+    if (activeCompanyId && typeof window !== "undefined") {
+      localStorage.setItem(`bms_branch_${activeCompanyId}`, branchId);
+      window.dispatchEvent(
+        new CustomEvent("bms:branch-changed", {
+          detail: { companyId: activeCompanyId, branchId },
+        })
+      );
+    }
+  }, [activeCompanyId, isOwner]);
+
   const switchCompany = useCallback(async (companyId: string) => {
     // PRD §§ 9, 10, 22: Immediately isolate UI state, queries, Dexie, realtime listeners, outbox
     setActiveCompany(null);
     setActiveMembership(null);
     setFinancialYears([]);
     setActiveFinancialYearId(null);
+    setAllBranches([]);
+    setActiveBranchId("all");
 
     // Stop outbox processing and clear working Dexie tables so no stale Company A records flash in UI
     if (typeof window !== "undefined") {
@@ -292,6 +375,8 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
           db().purchases.clear(),
           db().receipts.clear(),
           db().payments.clear(),
+          db().salesReturns.clear(),
+          db().creditNotes.clear(),
           db().parties.clear(),
           db().customers.clear(),
           db().suppliers.clear(),
@@ -322,7 +407,6 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
     // Reactive listeners automatically maintain freshest state
   }, []);
 
-  const isOwner = activeMembership?.role === "owner";
   const isDemo = Boolean(activeCompany?.isDemo || activeCompany?.organizationType === "DEMO");
   const isDemoExpired = Boolean(
     isDemo &&
@@ -330,11 +414,14 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
     Date.now() > activeCompany.demoExpiresAt
   );
 
-  const can = (capability: string): boolean => {
-    return hasCapability(activeMembership, capability as Capability);
+  const can = (capability: string, branchId?: string | null): boolean => {
+    const targetBranch = branchId !== undefined ? branchId : (activeBranchId === "all" ? null : activeBranchId);
+    return hasCapability(activeMembership, capability as Capability, targetBranch);
   };
 
   const activeFinancialYear = financialYears.find((fy) => fy.id === activeFinancialYearId) || null;
+  const activeBranch = activeBranchId !== "all" ? branches.find((b: Branch) => b.id === activeBranchId) || null : null;
+  const isAllBranches = activeBranchId === "all";
 
   return (
     <ActiveCompanyContext.Provider
@@ -344,6 +431,10 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
         activeMembership,
         financialYears,
         activeFinancialYear,
+        branches,
+        activeBranchId,
+        activeBranch,
+        isAllBranches,
         loading: loading || Boolean(user && resolvedUserId !== user.uid),
         error,
         isOwner,
@@ -352,6 +443,7 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
         can,
         switchCompany,
         switchFinancialYear,
+        switchBranch,
         refreshCompanyData,
       }}
     >

@@ -39,6 +39,15 @@ class BmsCacheDatabase extends Dexie {
         "id, uid, companyId, financialYearId, entityType, nameLower, sku, gstin, numberLower, status, date, [companyId+entityType], [uid+companyId], [uid+companyId+entityType], [uid+companyId+financialYearId], [companyId+entityType+nameLower], [companyId+entityType+status], [companyId+financialYearId+date], updatedAt",
       sessionState: "key",
     });
+
+    // Version 4: Branch-scoped local cache & outbox indexing (PRD § 18)
+    this.version(4).stores({
+      outbox:
+        "id, clientMutationId, uid, companyId, branchId, financialYearId, [companyId+status], [companyId+branchId+status], [uid+companyId], createdAt, status",
+      cachedEntities:
+        "id, uid, companyId, branchId, financialYearId, entityType, nameLower, sku, gstin, numberLower, status, date, [companyId+entityType], [companyId+branchId], [companyId+branchId+entityType], [uid+companyId], [uid+companyId+entityType], [uid+companyId+financialYearId], [companyId+entityType+nameLower], [companyId+entityType+status], [companyId+financialYearId+date], updatedAt",
+      sessionState: "key",
+    });
   }
 }
 
@@ -67,7 +76,7 @@ function extractNormalizedFields(data: any): {
 } {
   if (!data || typeof data !== "object") return {};
   const name = data.name || data.legalName || data.title || "";
-  const number = data.number || data.invoiceNumber || data.quotationNumber || "";
+  const number = data.number || data.invoiceNumber || data.quotationNumber || data.creditNoteNumber || "";
   return {
     nameLower: name ? String(name).toLowerCase() : undefined,
     sku: data.sku ? String(data.sku).toLowerCase() : undefined,
@@ -79,11 +88,12 @@ function extractNormalizedFields(data: any): {
 }
 
 /**
- * Cache or update a single domain entity scoped by UID, Company, and optional Financial Year.
+ * Cache or update a single domain entity scoped by UID, Company, Branch, and optional Financial Year.
  */
 export async function cacheEntity<T = unknown>(params: {
   uid: string;
   companyId: string;
+  branchId?: string;
   financialYearId?: string;
   entityType: string;
   entityId: string;
@@ -96,11 +106,13 @@ export async function cacheEntity<T = unknown>(params: {
   const db = getCacheDb();
   const id = `${params.companyId}:${params.entityType}:${params.entityId}`;
   const norm = extractNormalizedFields(params.data);
+  const resolvedBranchId = params.branchId || (params.data as any)?.branchId || undefined;
 
   await db.cachedEntities.put({
     id,
     uid: params.uid,
     companyId: params.companyId,
+    branchId: resolvedBranchId,
     financialYearId: params.financialYearId,
     entityType: params.entityType,
     entityId: params.entityId,
@@ -121,6 +133,7 @@ export async function cacheEntitiesBulk(
   items: Array<{
     uid: string;
     companyId: string;
+    branchId?: string;
     financialYearId?: string;
     entityType: string;
     entityId: string;
@@ -135,10 +148,12 @@ export async function cacheEntitiesBulk(
 
   const records: CachedEntity[] = items.map((item) => {
     const norm = extractNormalizedFields(item.data);
+    const resolvedBranchId = item.branchId || (item.data as any)?.branchId || undefined;
     return {
       id: `${item.companyId}:${item.entityType}:${item.entityId}`,
       uid: item.uid,
       companyId: item.companyId,
+      branchId: resolvedBranchId,
       financialYearId: item.financialYearId,
       entityType: item.entityType,
       entityId: item.entityId,

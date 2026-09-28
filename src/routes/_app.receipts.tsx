@@ -56,7 +56,7 @@ export const Route = createFileRoute("/_app/receipts")({
 
 function ReceiptsAndPaymentsPage() {
   const { user } = useAuth();
-  const { activeCompany, activeFinancialYear } = useActiveCompany();
+  const { activeCompany, activeFinancialYear, activeBranchId, branches, isOwner } = useActiveCompany();
   const [activeTab, setActiveTab] = useState<"receipts" | "payments">(() => {
     if (typeof window !== "undefined") {
       const p = new URLSearchParams(window.location.search);
@@ -125,13 +125,29 @@ function ReceiptsAndPaymentsPage() {
   const [refundLedgerId, setRefundLedgerId] = useState<string>("");
   const [refunding, setRefunding] = useState<boolean>(false);
 
-  const filteredReceipts = receipts.filter(
-    (r) =>
+  const filteredReceipts = receipts.filter((r) => {
+    if (activeBranchId && activeBranchId !== "all") {
+      if (r.branchId && r.branchId !== activeBranchId) return false;
+    }
+    return (
       !q ||
       r.number.toLowerCase().includes(q.toLowerCase()) ||
       (customers.find((c) => c.id === r.customerId)?.name.toLowerCase().includes(q.toLowerCase()) ?? false)
-  );
+    );
+  });
   const receiptsPager = usePagination(filteredReceipts, 12);
+
+  const filteredPayments = payments.filter((p) => {
+    if (activeBranchId && activeBranchId !== "all") {
+      if ((p as any).branchId && (p as any).branchId !== activeBranchId) return false;
+    }
+    return (
+      !q ||
+      p.number.toLowerCase().includes(q.toLowerCase()) ||
+      (suppliers.find((s) => s.id === p.supplierId)?.name.toLowerCase().includes(q.toLowerCase()) ?? false)
+    );
+  });
+  const paymentsPager = usePagination(filteredPayments, 12);
 
   // Live Advance Tax Preview for the modal
   const advanceTaxPreview = useMemo(() => {
@@ -451,11 +467,15 @@ function ReceiptsAndPaymentsPage() {
   }
 
   async function openNewReceipt() {
+    const effectiveBranchId = (activeBranchId && activeBranchId !== "all")
+      ? activeBranchId
+      : (branches.find((b) => (b as any).isMain || b.isMainBranch)?.id || branches[0]?.id || "main");
     let idToken: string | undefined;
     try { idToken = await user?.getIdToken(); } catch {}
     const number = await getNextDocumentNumber({
       kind: "receipt",
       companyId: activeCompany?.id,
+      branchId: effectiveBranchId,
       financialYearId: activeFinancialYear?.id,
       fyName: activeFinancialYear?.name,
       idToken,
@@ -474,17 +494,23 @@ function ReceiptsAndPaymentsPage() {
       allocationType: "ON_ACCOUNT",
       supplyType: "GOODS",
       taxTreatment: "NO_ADVANCE_GST",
+      branchId: effectiveBranchId,
+      companyId: activeCompany?.id,
       createdAt: Date.now(),
     });
     setOpenReceipt(true);
   }
 
   async function openNewPayment() {
+    const effectiveBranchId = (activeBranchId && activeBranchId !== "all")
+      ? activeBranchId
+      : (branches.find((b) => (b as any).isMain || b.isMainBranch)?.id || branches[0]?.id || "main");
     let idToken: string | undefined;
     try { idToken = await user?.getIdToken(); } catch {}
     const number = await getNextDocumentNumber({
       kind: "purchase",
       companyId: activeCompany?.id,
+      branchId: effectiveBranchId,
       financialYearId: activeFinancialYear?.id,
       fyName: activeFinancialYear?.name,
       idToken,
@@ -500,6 +526,8 @@ function ReceiptsAndPaymentsPage() {
       mode: "bank",
       paymentMethod: "bank_transfer",
       settlementLedgerId: defaultBank,
+      branchId: effectiveBranchId,
+      companyId: activeCompany?.id,
       createdAt: Date.now(),
     });
     setOpenPayment(true);
@@ -597,8 +625,11 @@ function ReceiptsAndPaymentsPage() {
         }
       }
 
+      const effectiveBranchId = receiptToSave.branchId || (activeBranchId && activeBranchId !== "all" ? activeBranchId : (branches.find((b) => (b as any).isMain || b.isMainBranch)?.id || branches[0]?.id || "main"));
       const frozenReceipt: Receipt = {
         ...receiptToSave,
+        branchId: effectiveBranchId,
+        companyId: receiptToSave.companyId || activeCompany?.id,
         postingStatus: "posted",
         companySnapshot:
           receiptToSave.companySnapshot ||
@@ -725,8 +756,11 @@ function ReceiptsAndPaymentsPage() {
         }
       }
 
+      const effectiveBranchId = (paymentToSave as any).branchId || (activeBranchId && activeBranchId !== "all" ? activeBranchId : (branches.find((b) => (b as any).isMain || b.isMainBranch)?.id || branches[0]?.id || "main"));
       const frozenPayment: Payment = {
         ...paymentToSave,
+        branchId: effectiveBranchId,
+        companyId: (paymentToSave as any).companyId || activeCompany?.id,
         postingStatus: "posted",
         companySnapshot:
           paymentToSave.companySnapshot ||
@@ -1081,91 +1115,94 @@ function ReceiptsAndPaymentsPage() {
           ) : payments.length === 0 ? (
             <EmptyState title="No supplier payments yet" description="Record a supplier payment and optionally link it to a purchase." action={<Button onClick={openNewPayment} className="mt-2 gap-2"><ArrowUpRight className="h-4 w-4" /> Record Supplier Payment</Button>} />
           ) : (
-            <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
-              <Table className="text-xs">
-                <TableHeader className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                  <TableRow>
-                    <TableHead>Payment #</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Supplier</TableHead>
-                    <TableHead>Purchase</TableHead>
-                    <TableHead className="text-right">Amount</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>{payments.map((payment) => (
-                  <TableRow key={payment.id} className="hover:bg-secondary/30 transition-colors">
-                    <TableCell className="font-mono font-medium tabular-nums">{payment.number}</TableCell>
-                    <TableCell>{formatDate(payment.date)}</TableCell>
-                    <TableCell className="font-medium">{suppliers.find((s) => s.id === payment.supplierId)?.name || "—"}</TableCell>
-                    <TableCell className="font-mono tabular-nums">{purchases.find((p) => p.id === payment.purchaseId)?.number || "On account"}</TableCell>
-                    <TableCell className="text-right font-mono font-semibold tabular-nums text-foreground">{formatMoney(payment.amount)}</TableCell>
-                    <TableCell>
-                      <span className="rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[10px] uppercase font-semibold">
-                        {payment.postingStatus || "draft"}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        {/* 1. Quick Preview Eye */}
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Quick Preview Voucher"
-                          onClick={() => setPreviewDoc(getPaymentNormalizedDoc(payment))}
-                          className="text-primary hover:bg-primary/10"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
+            <>
+              <Card className="rounded-2xl border border-border/80 bg-card shadow-soft overflow-hidden">
+                <Table className="text-xs">
+                  <TableHeader className="bg-secondary/30 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                    <TableRow>
+                      <TableHead>Payment #</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Supplier</TableHead>
+                      <TableHead>Purchase</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>{paymentsPager.items.map((payment) => (
+                    <TableRow key={payment.id} className="hover:bg-secondary/30 transition-colors">
+                      <TableCell className="font-mono font-medium tabular-nums">{payment.number}</TableCell>
+                      <TableCell>{formatDate(payment.date)}</TableCell>
+                      <TableCell className="font-medium">{suppliers.find((s) => s.id === payment.supplierId)?.name || "—"}</TableCell>
+                      <TableCell className="font-mono tabular-nums">{purchases.find((p) => p.id === payment.purchaseId)?.number || "On account"}</TableCell>
+                      <TableCell className="text-right font-mono font-semibold tabular-nums text-foreground">{formatMoney(payment.amount)}</TableCell>
+                      <TableCell>
+                        <span className="rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[10px] uppercase font-semibold">
+                          {payment.postingStatus || "draft"}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {/* 1. Quick Preview Eye */}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Quick Preview Voucher"
+                            onClick={() => setPreviewDoc(getPaymentNormalizedDoc(payment))}
+                            className="text-primary hover:bg-primary/10"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
 
-                        {/* 2. Download PDF */}
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Download PDF"
-                          onClick={() => downloadPaymentVoucher(payment)}
-                          className="text-blue-600 hover:bg-blue-500/10"
-                        >
-                          <Download className="h-4 w-4" />
-                        </Button>
+                          {/* 2. Download PDF */}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Download PDF"
+                            onClick={() => downloadPaymentVoucher(payment)}
+                            className="text-blue-600 hover:bg-blue-500/10"
+                          >
+                            <Download className="h-4 w-4" />
+                          </Button>
 
-                        {/* 3. Share Payment Voucher */}
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Share Payment Voucher"
-                          onClick={() => setSharePayment(payment)}
-                          className="text-primary hover:bg-primary/10"
-                        >
-                          <Share2 className="h-4 w-4" />
-                        </Button>
+                          {/* 3. Share Payment Voucher */}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Share Payment Voucher"
+                            onClick={() => setSharePayment(payment)}
+                            className="text-primary hover:bg-primary/10"
+                          >
+                            <Share2 className="h-4 w-4" />
+                          </Button>
 
-                        {/* 4. Print */}
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Print Payment Voucher"
-                          onClick={() => printPaymentVoucher(payment)}
-                        >
-                          <Printer className="h-4 w-4 text-muted-foreground" />
-                        </Button>
+                          {/* 4. Print */}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Print Payment Voucher"
+                            onClick={() => printPaymentVoucher(payment)}
+                          >
+                            <Printer className="h-4 w-4 text-muted-foreground" />
+                          </Button>
 
-                        {/* 5. Delete Payment */}
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Delete Payment"
-                          onClick={() => setDeletePaymentId(payment.id)}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}</TableBody>
-              </Table>
-            </Card>
+                          {/* 5. Delete Payment */}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Delete Payment"
+                            onClick={() => setDeletePaymentId(payment.id)}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}</TableBody>
+                </Table>
+              </Card>
+              <Pager {...paymentsPager} />
+            </>
           )}
         </TabsContent>
       </Tabs>

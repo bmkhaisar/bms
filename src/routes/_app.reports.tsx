@@ -10,6 +10,7 @@ import {
   type Receipt,
   type Payment,
   type Party,
+  type CreditNote,
 } from "@/lib/db";
 import { useLive, useLiveState } from "@/lib/useLive";
 import { useMemo, useState, useEffect, Fragment } from "react";
@@ -33,6 +34,7 @@ import {
   Wrench,
   RefreshCw,
   Scale,
+  Building2,
 } from "lucide-react";
 import { formatDate, formatMoney, toDateInput, fromDateInput } from "@/lib/format";
 import { resolvePartyNameFromCollections } from "@/modules/accounting/domain/partyResolver";
@@ -227,6 +229,7 @@ function resolveDocumentTaxes(doc: Invoice | Purchase) {
 // ========================================================================
 
 function SalesReport({ from, to }: { from?: number; to?: number }) {
+  const { activeBranchId } = useActiveCompany();
   const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
   const invoices = invoicesState.data;
   const isLoaded = invoicesState.isLoaded;
@@ -235,8 +238,13 @@ function SalesReport({ from, to }: { from?: number; to?: number }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const activeInvoices = useMemo(
-    () => invoices.filter((i) => i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed"),
-    [invoices]
+    () => invoices.filter((i) => {
+      if (activeBranchId && activeBranchId !== "all") {
+        if (i.branchId !== activeBranchId) return false;
+      }
+      return i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed";
+    }),
+    [invoices, activeBranchId]
   );
   const rows = useRange(activeInvoices, from, to);
 
@@ -361,13 +369,19 @@ function SalesReport({ from, to }: { from?: number; to?: number }) {
 // ========================================================================
 
 function PurchaseReport({ from, to }: { from?: number; to?: number }) {
+  const { activeBranchId } = useActiveCompany();
   const purchases = useLive<Purchase>(() => db().purchases.toArray());
   const parties = useLive<Party>(() => db().parties.toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
 
   const activePurchases = useMemo(
-    () => purchases.filter((p) => p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed"),
-    [purchases]
+    () => purchases.filter((p) => {
+      if (activeBranchId && activeBranchId !== "all") {
+        if (p.branchId !== activeBranchId) return false;
+      }
+      return p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed";
+    }),
+    [purchases, activeBranchId]
   );
   const rows = useRange(activePurchases, from, to);
   const totalTaxable = rows.reduce((s, p) => s + (p.subtotal - p.discountTotal), 0);
@@ -430,6 +444,7 @@ function PurchaseReport({ from, to }: { from?: number; to?: number }) {
 // ========================================================================
 
 function OutstandingReport() {
+  const { activeBranchId } = useActiveCompany();
   const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
   const purchasesState = useLiveState<Purchase>(() => db().purchases.toArray());
   const invoices = invoicesState.data;
@@ -442,7 +457,12 @@ function OutstandingReport() {
   const recv = useMemo(() => {
     const now = Date.now();
     return invoices
-      .filter((i) => i.balance > 0.01 && i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed")
+      .filter((i) => {
+        if (activeBranchId && activeBranchId !== "all") {
+          if (i.branchId !== activeBranchId) return false;
+        }
+        return i.balance > 0.01 && i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed";
+      })
       .map((i) => {
         const name = resolvePartyNameFromCollections(i.customerId, i.customerSnapshot, parties, customers);
         const party = parties.find((p) => p.id === i.customerId);
@@ -457,11 +477,16 @@ function OutstandingReport() {
           ageDays,
         };
       });
-  }, [invoices, parties, customers]);
+  }, [invoices, parties, customers, activeBranchId]);
 
   const pay = useMemo(
-    () => purchases.filter((p) => p.balance > 0.01 && p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed"),
-    [purchases]
+    () => purchases.filter((p) => {
+      if (activeBranchId && activeBranchId !== "all") {
+        if (p.branchId !== activeBranchId) return false;
+      }
+      return p.balance > 0.01 && p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed";
+    }),
+    [purchases, activeBranchId]
   );
 
   const aging = useMemo(() => {
@@ -631,6 +656,7 @@ function OutstandingReport() {
 // ========================================================================
 
 function CustomerAdvanceRegisterReport() {
+  const { activeBranchId } = useActiveCompany();
   const receipts = useLive<Receipt>(() => db().receipts.toArray());
   const invoices = useLive<Invoice>(() => db().invoices.toArray());
   const parties = useLive<Party>(() => db().parties.toArray());
@@ -644,7 +670,12 @@ function CustomerAdvanceRegisterReport() {
 
     return allPartyList.map((c) => {
       const custReceipts = receipts.filter(
-        (r) => r.customerId === c.id && r.postingStatus !== "failed" && r.postingStatus !== "reversed"
+        (r) => {
+          if (activeBranchId && activeBranchId !== "all") {
+            if (r.branchId !== activeBranchId) return false;
+          }
+          return r.customerId === c.id && r.postingStatus !== "failed" && r.postingStatus !== "reversed";
+        }
       );
       const advanceReceipts = custReceipts.filter((r) => r.allocationType === "ADVANCE" || !r.invoiceId);
       const totalAdvanceReceived = advanceReceipts.reduce(
@@ -652,7 +683,12 @@ function CustomerAdvanceRegisterReport() {
         0
       );
 
-      const custInvoices = invoices.filter((i) => i.customerId === c.id && i.status !== "cancelled");
+      const custInvoices = invoices.filter((i) => {
+        if (activeBranchId && activeBranchId !== "all") {
+          if (i.branchId !== activeBranchId) return false;
+        }
+        return i.customerId === c.id && i.status !== "cancelled";
+      });
       const totalAdvanceAdjusted = custInvoices.reduce((s, i) => s + ((i.advanceAllocatedPaise || 0) / 100), 0);
       const availableAdvance = Math.max(0, totalAdvanceReceived - totalAdvanceAdjusted);
 
@@ -708,6 +744,7 @@ function CustomerAdvanceRegisterReport() {
 // ========================================================================
 
 function SupplierAdvanceRegisterReport() {
+  const { activeBranchId } = useActiveCompany();
   const payments = useLive<Payment>(() => db().payments.toArray());
   const purchases = useLive<Purchase>(() => db().purchases.toArray());
   const parties = useLive<Party>(() => db().parties.toArray());
@@ -720,11 +757,21 @@ function SupplierAdvanceRegisterReport() {
     ];
 
     return allSuppliers.map((s) => {
-      const suppPayments = payments.filter((p) => p.supplierId === s.id && p.postingStatus !== "failed" && p.postingStatus !== "reversed");
+      const suppPayments = payments.filter((p) => {
+        if (activeBranchId && activeBranchId !== "all") {
+          if ((p as any).branchId !== activeBranchId) return false;
+        }
+        return p.supplierId === s.id && p.postingStatus !== "failed" && p.postingStatus !== "reversed";
+      });
       const advPayments = suppPayments.filter((p) => (p as any).allocationType === "ADVANCE" || !p.purchaseId);
       const totalAdvPaid = advPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
 
-      const suppPurchases = purchases.filter((p) => p.supplierId === s.id && p.status !== "cancelled");
+      const suppPurchases = purchases.filter((p) => {
+        if (activeBranchId && activeBranchId !== "all") {
+          if (p.branchId !== activeBranchId) return false;
+        }
+        return p.supplierId === s.id && p.status !== "cancelled";
+      });
       const totalAdvAllocated = suppPurchases.reduce((acc, p) => acc + (((p as any).advanceAllocatedPaise || 0) / 100), 0);
       const availableAdvance = Math.max(0, totalAdvPaid - totalAdvAllocated);
 
@@ -860,7 +907,7 @@ function StockReport() {
 // ========================================================================
 
 function ProfitReport({ from, to }: { from?: number; to?: number }) {
-  const { activeCompany } = useActiveCompany();
+  const { activeCompany, activeBranchId } = useActiveCompany();
   const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
   const purchasesState = useLiveState<Purchase>(() => db().purchases.toArray());
   const productsState = useLiveState<Product>(() => db().products.toArray());
@@ -871,12 +918,22 @@ function ProfitReport({ from, to }: { from?: number; to?: number }) {
   const valuationMethod = (activeCompany as any)?.inventoryValuationMethod || "purchase_cost";
 
   const postedInvoices = useMemo(
-    () => invoices.filter((i) => i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed"),
-    [invoices]
+    () => invoices.filter((i) => {
+      if (activeBranchId && activeBranchId !== "all") {
+        if (i.branchId !== activeBranchId) return false;
+      }
+      return i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed";
+    }),
+    [invoices, activeBranchId]
   );
   const postedPurchases = useMemo(
-    () => purchases.filter((p) => p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed"),
-    [purchases]
+    () => purchases.filter((p) => {
+      if (activeBranchId && activeBranchId !== "all") {
+        if (p.branchId !== activeBranchId) return false;
+      }
+      return p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed";
+    }),
+    [purchases, activeBranchId]
   );
 
   const invRange = useRange(postedInvoices, from, to);
@@ -1015,34 +1072,93 @@ function ProfitReport({ from, to }: { from?: number; to?: number }) {
 // ========================================================================
 
 function GstReport({ from, to }: { from?: number; to?: number }) {
+  const { activeCompany, branches, activeBranchId } = useActiveCompany();
   const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
   const purchasesState = useLiveState<Purchase>(() => db().purchases.toArray());
   const receiptsState = useLiveState<Receipt>(() => db().receipts.toArray());
+  const creditNotesState = useLiveState<CreditNote>(() => db().creditNotes.toArray());
   const invoices = invoicesState.data;
   const purchases = purchasesState.data;
   const receipts = receiptsState.data;
-  const isLoaded = invoicesState.isLoaded && purchasesState.isLoaded && receiptsState.isLoaded;
+  const creditNotes = creditNotesState.data;
+  const isLoaded = invoicesState.isLoaded && purchasesState.isLoaded && receiptsState.isLoaded && creditNotesState.isLoaded;
   const parties = useLive<Party>(() => db().parties.toArray());
   const customers = useLive<Customer>(() => db().customers.toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
 
-  // Strict scope: POSTED documents only
-  const postedInvoices = useMemo(
-    () => invoices.filter((i) => (i.postingStatus === "posted" || (i.status as string) === "posted" || i.status === "paid" || i.status === "partial") && i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed"),
-    [invoices]
-  );
-  const postedPurchases = useMemo(
-    () => purchases.filter((p) => (p.postingStatus === "posted" || (p.status as string) === "posted" || p.status === "paid" || p.status === "partial") && p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed"),
-    [purchases]
-  );
-  const activeReceipts = useMemo(
-    () => receipts.filter((r) => r.postingStatus !== "failed" && r.postingStatus !== "reversed" && (r as any).status !== "cancelled"),
-    [receipts]
-  );
+  // Distinct statutory GST Registrations (Hardening Task 5)
+  const distinctGstins = useMemo(() => {
+    const map = new Map<string, string>();
+    const compGstin = (activeCompany?.gstin || "").trim().toUpperCase();
+    if (compGstin) map.set(compGstin, `Company HQ (${compGstin})`);
+    (branches || []).forEach((b) => {
+      const g = (b.gstin || "").trim().toUpperCase();
+      if (g) map.set(g, `${b.name} (${g})`);
+    });
+    return Array.from(map.entries()).map(([gstin, label]) => ({ gstin, label }));
+  }, [activeCompany, branches]);
+
+  const [selectedGstin, setSelectedGstin] = useState<string>("all");
+
+  const getDocGstin = (doc: any): string => {
+    if (doc.branchSnapshot?.gstin) return doc.branchSnapshot.gstin.trim().toUpperCase();
+    if (doc.branchId) {
+      const b = branches.find((br) => br.id === doc.branchId);
+      if (b?.gstin) return b.gstin.trim().toUpperCase();
+    }
+    if (doc.companySnapshot?.gstin) return doc.companySnapshot.gstin.trim().toUpperCase();
+    return (activeCompany?.gstin || "").trim().toUpperCase();
+  };
+
+  // Strict scope: POSTED documents filtered by branch & statutory GSTIN registration
+  const postedInvoices = useMemo(() => {
+    let list = invoices.filter((i) => (i.postingStatus === "posted" || (i.status as string) === "posted" || i.status === "paid" || i.status === "partial") && i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed");
+    if (activeBranchId && activeBranchId !== "all") {
+      list = list.filter((i) => i.branchId === activeBranchId);
+    }
+    if (selectedGstin !== "all") {
+      list = list.filter((i) => getDocGstin(i) === selectedGstin);
+    }
+    return list;
+  }, [invoices, selectedGstin, branches, activeCompany, activeBranchId]);
+
+  const postedPurchases = useMemo(() => {
+    let list = purchases.filter((p) => (p.postingStatus === "posted" || (p.status as string) === "posted" || p.status === "paid" || p.status === "partial") && p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed");
+    if (activeBranchId && activeBranchId !== "all") {
+      list = list.filter((p) => p.branchId === activeBranchId);
+    }
+    if (selectedGstin !== "all") {
+      list = list.filter((p) => getDocGstin(p) === selectedGstin);
+    }
+    return list;
+  }, [purchases, selectedGstin, branches, activeCompany, activeBranchId]);
+
+  const activeReceipts = useMemo(() => {
+    let list = receipts.filter((r) => r.postingStatus !== "failed" && r.postingStatus !== "reversed" && (r as any).status !== "cancelled");
+    if (activeBranchId && activeBranchId !== "all") {
+      list = list.filter((r) => r.branchId === activeBranchId);
+    }
+    if (selectedGstin !== "all") {
+      list = list.filter((r) => getDocGstin(r) === selectedGstin);
+    }
+    return list;
+  }, [receipts, selectedGstin, branches, activeCompany, activeBranchId]);
+
+  const postedCreditNotes = useMemo(() => {
+    let list = creditNotes.filter((cn) => cn.postingStatus === "posted" && cn.status !== "reversed" && cn.status !== "cancelled");
+    if (activeBranchId && activeBranchId !== "all") {
+      list = list.filter((cn) => cn.branchId === activeBranchId);
+    }
+    if (selectedGstin !== "all") {
+      list = list.filter((cn) => getDocGstin(cn) === selectedGstin);
+    }
+    return list;
+  }, [creditNotes, selectedGstin, branches, activeCompany, activeBranchId]);
 
   const invRows = useRange(postedInvoices, from, to);
   const purRows = useRange(postedPurchases, from, to);
   const recRows = useRange(activeReceipts, from, to);
+  const cnRows = useRange(postedCreditNotes, from, to);
 
   // 1. Output Tax from Invoices (Less prior advance GST accounted to prevent double taxation)
   let invoiceOutputCgst = 0;
@@ -1103,14 +1219,35 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
     }
   }
 
-  const outputCgst = invoiceOutputCgst + advanceOutputCgst;
-  const outputSgst = invoiceOutputSgst + advanceOutputSgst;
-  const outputIgst = invoiceOutputIgst + advanceOutputIgst;
-  const outputCess = invoiceOutputCess + advanceOutputCess;
-  const totalOutputLiability = netInvoiceOutputLiability + totalAdvanceLiability;
-  const taxableSales = totalInvoiceTaxable + totalAdvanceTaxable;
+  // 3. Credit Note Output Tax Adjustment (GSTR-1 Table 9B / Sales Returns)
+  let cnOutputCgst = 0;
+  let cnOutputSgst = 0;
+  let cnOutputIgst = 0;
+  let totalCreditNoteTaxable = 0;
+  let totalCreditNoteTax = 0;
 
-  // 3. Input Tax Credit (ITC) from Purchases
+  for (const cn of cnRows) {
+    totalCreditNoteTaxable += cn.taxableAmount || 0;
+    cnOutputCgst += cn.cgstTotal || 0;
+    cnOutputSgst += cn.sgstTotal || 0;
+    cnOutputIgst += cn.igstTotal || 0;
+    totalCreditNoteTax += cn.gstTotal || 0;
+  }
+
+  const grossOutputCgst = invoiceOutputCgst + advanceOutputCgst;
+  const grossOutputSgst = invoiceOutputSgst + advanceOutputSgst;
+  const grossOutputIgst = invoiceOutputIgst + advanceOutputIgst;
+  const grossOutputCess = invoiceOutputCess + advanceOutputCess;
+  const grossOutputLiability = netInvoiceOutputLiability + totalAdvanceLiability;
+
+  const outputCgst = Math.max(0, grossOutputCgst - cnOutputCgst);
+  const outputSgst = Math.max(0, grossOutputSgst - cnOutputSgst);
+  const outputIgst = Math.max(0, grossOutputIgst - cnOutputIgst);
+  const outputCess = grossOutputCess;
+  const totalOutputLiability = grossOutputLiability - totalCreditNoteTax;
+  const taxableSales = (totalInvoiceTaxable + totalAdvanceTaxable) - totalCreditNoteTaxable;
+
+  // 4. Input Tax Credit (ITC) from Purchases
   let inputCgst = 0;
   let inputSgst = 0;
   let inputIgst = 0;
@@ -1146,7 +1283,7 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
 
   type GstTx = {
     id: string;
-    type: "Sale" | "Purchase" | "Advance";
+    type: "Sale" | "Purchase" | "Advance" | "Credit Note";
     date: number;
     docNumber: string;
     supplierInvoiceNumber?: string;
@@ -1189,6 +1326,26 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
         totalTax: netTax,
         link: `/invoices?q=${encodeURIComponent(i.number)}`,
         notes: advanceTaxAdj > 0 ? `Less ₹${advanceTaxAdj.toFixed(2)} prior advance tax` : undefined,
+      });
+    }
+
+    for (const cn of cnRows) {
+      const partyName = resolvePartyNameFromCollections(cn.customerId, cn.customerSnapshot, parties, customers);
+      list.push({
+        id: cn.id,
+        type: "Credit Note",
+        date: cn.date,
+        docNumber: cn.number,
+        partyName,
+        gstin: cn.customerSnapshot?.gstin || "—",
+        taxable: -(cn.taxableAmount || 0),
+        cgst: -(cn.cgstTotal || 0),
+        sgst: -(cn.sgstTotal || 0),
+        igst: -(cn.igstTotal || 0),
+        cess: 0,
+        totalTax: -(cn.gstTotal || 0),
+        link: `/sales-returns?q=${encodeURIComponent(cn.number)}`,
+        notes: `Table 9B CN adjustment against Inv ${cn.originalInvoiceNumber}`,
       });
     }
 
@@ -1245,14 +1402,48 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
     }
 
     return list.sort((a, b) => b.date - a.date);
-  }, [invRows, purRows, recRows, parties, customers, suppliers]);
+  }, [invRows, cnRows, purRows, recRows, parties, customers, suppliers]);
 
   // Reconciliation Invariant Check: SUM(transactionRegister.outputTax) === GSTSummary.outputTaxLiability
-  const registerOutputTaxTotal = transactions.filter((t) => t.type === "Sale" || t.type === "Advance").reduce((s, t) => s + t.totalTax, 0);
+  const registerOutputTaxTotal = transactions.filter((t) => t.type === "Sale" || t.type === "Advance" || t.type === "Credit Note").reduce((s, t) => s + t.totalTax, 0);
   const gstReconciled = Math.abs(registerOutputTaxTotal - totalOutputLiability) < 0.01;
 
   return (
     <div className="mt-4 space-y-4">
+      {/* Statutory GST Registration Switcher (Hardening Task 5) */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-muted/40 rounded-lg border border-border/70">
+        <div className="space-y-0.5">
+          <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+            <Building2 className="h-3.5 w-3.5 text-primary" />
+            Statutory GST Registration Filter
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            {selectedGstin === "all"
+              ? "Consolidated View: Aggregating all company branches. Not for single statutory filing."
+              : `Statutory Filing Register: Isolated strictly to GSTIN ${selectedGstin}.`}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            value={selectedGstin}
+            onChange={(e) => setSelectedGstin(e.target.value)}
+            className="text-xs h-8 px-2.5 rounded-md border border-input bg-background text-foreground font-mono"
+          >
+            <option value="all">Consolidated (All Branches)</option>
+            {distinctGstins.map((g) => (
+              <option key={g.gstin} value={g.gstin}>
+                {g.label}
+              </option>
+            ))}
+          </select>
+          {selectedGstin !== "all" && (
+            <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20 shrink-0 font-mono">
+              Filing: {selectedGstin}
+            </Badge>
+          )}
+        </div>
+      </div>
+
       {/* Statutory Preparation & Summary Disclaimer */}
       <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400 flex items-start justify-between gap-3">
         <div>
@@ -1378,6 +1569,8 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
                           ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                           : tx.type === "Advance"
                           ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
+                          : tx.type === "Credit Note"
+                          ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
                           : "bg-sky-500/10 text-sky-600 dark:text-sky-400"
                       }`}
                     >
@@ -1428,6 +1621,7 @@ function GstReport({ from, to }: { from?: number; to?: number }) {
 // ========================================================================
 
 function FinancialReconciliationReport({ from, to }: { from?: number; to?: number }) {
+  const { activeBranchId } = useActiveCompany();
   const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
   const purchasesState = useLiveState<Purchase>(() => db().purchases.toArray());
   const receiptsState = useLiveState<Receipt>(() => db().receipts.toArray());
@@ -1439,16 +1633,31 @@ function FinancialReconciliationReport({ from, to }: { from?: number; to?: numbe
   const isLoaded = invoicesState.isLoaded && purchasesState.isLoaded && receiptsState.isLoaded && paymentsState.isLoaded;
 
   const activeInvoices = useMemo(
-    () => invoices.filter((i) => i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed"),
-    [invoices]
+    () => invoices.filter((i) => {
+      if (activeBranchId && activeBranchId !== "all") {
+        if (i.branchId !== activeBranchId) return false;
+      }
+      return i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed";
+    }),
+    [invoices, activeBranchId]
   );
   const activePurchases = useMemo(
-    () => purchases.filter((p) => p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed"),
-    [purchases]
+    () => purchases.filter((p) => {
+      if (activeBranchId && activeBranchId !== "all") {
+        if (p.branchId !== activeBranchId) return false;
+      }
+      return p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed";
+    }),
+    [purchases, activeBranchId]
   );
   const activeReceipts = useMemo(
-    () => receipts.filter((r) => r.postingStatus !== "failed" && r.postingStatus !== "reversed" && (r as any).status !== "cancelled"),
-    [receipts]
+    () => receipts.filter((r) => {
+      if (activeBranchId && activeBranchId !== "all") {
+        if (r.branchId !== activeBranchId) return false;
+      }
+      return r.postingStatus !== "failed" && r.postingStatus !== "reversed" && (r as any).status !== "cancelled";
+    }),
+    [receipts, activeBranchId]
   );
 
   const invRange = useRange(activeInvoices, from, to);

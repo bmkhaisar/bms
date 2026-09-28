@@ -1,6 +1,6 @@
 import type { Ledger } from "@/modules/accounting/types";
-import type { Invoice, Purchase, Product, Customer, Supplier, Receipt, Payment } from "@/lib/db";
-import { computeMonthlyTrend } from "./dashboardAnalyticsService";
+import type { Invoice, Purchase, Product, Customer, Supplier, Receipt, Payment, SalesReturn } from "@/lib/db";
+import { computeMonthlyTrend } from "./dashboardAnalyticsService.ts";
 
 export interface DashboardMetrics {
   totalSales: number;
@@ -32,6 +32,9 @@ export interface DashboardMetrics {
   grossProfit: number;
   netProfit: number;
   netSalesRevenue?: number;
+  totalSalesReturns?: number;
+  netBilledValue?: number;
+  netSales?: number;
   costOfGoodsSold?: number;
   isCostingIncomplete?: boolean;
   stockValue: number;
@@ -49,6 +52,19 @@ export interface DashboardMetrics {
   salesVsPurchasesTrend: Array<{ label: string; sales: number; purchases: number }>;
   agingReceivables: Array<{ range: string; amount: number }>;
   agingPayables: Array<{ range: string; amount: number }>;
+  branchMetrics?: Array<{
+    branchId: string;
+    branchName: string;
+    branchCode?: string;
+    isMainBranch?: boolean;
+    sales: number;
+    salesReturns: number;
+    purchases: number;
+    collections: number;
+    receivables: number;
+    netProfit: number;
+    invoiceCount: number;
+  }>;
   hasData: boolean;
 }
 
@@ -108,11 +124,45 @@ export function computeDashboardMetrics(params: {
   products: Product[];
   receipts?: Receipt[];
   payments?: Payment[];
+  salesReturns?: SalesReturn[];
+  branches?: Array<{ id: string; name: string; code?: string; isMainBranch?: boolean }>;
+  branchId?: string;
   financialYearStart?: number;
   financialYearEnd?: number;
   inventoryValuationMethod?: "purchase_cost" | "standard_cost" | string;
 }): DashboardMetrics {
-  const { ledgers, invoices, purchases, products, receipts = [], payments = [], financialYearStart, financialYearEnd, inventoryValuationMethod } = params;
+  const {
+    ledgers = [],
+    invoices: allInvoices = [],
+    purchases: allPurchases = [],
+    products = [],
+    receipts: allReceipts = [],
+    payments: allPayments = [],
+    salesReturns: allSalesReturns = [],
+    branches = [],
+    branchId,
+    financialYearStart,
+    financialYearEnd,
+    inventoryValuationMethod,
+  } = params;
+
+  // Branch Scoping: If a specific branch is selected, scope operational documents strictly to that branch
+  const isBranchScoped = Boolean(branchId && branchId !== "all");
+  const invoices = isBranchScoped
+    ? allInvoices.filter((inv) => inv.branchId === branchId)
+    : allInvoices;
+  const purchases = isBranchScoped
+    ? allPurchases.filter((pu) => pu.branchId === branchId)
+    : allPurchases;
+  const receipts = isBranchScoped
+    ? allReceipts.filter((rec) => rec.branchId === branchId)
+    : allReceipts;
+  const payments = isBranchScoped
+    ? allPayments.filter((pay) => pay.branchId === branchId)
+    : allPayments;
+  const salesReturns = isBranchScoped
+    ? allSalesReturns.filter((ret) => ret.branchId === branchId)
+    : allSalesReturns;
 
   // 1. Filter documents by active Financial Year window if provided
   const fyInvoices = invoices.filter((inv) => {
@@ -126,6 +176,17 @@ export function computeDashboardMetrics(params: {
     if (financialYearEnd && pu.date > financialYearEnd) return false;
     return true;
   });
+
+  const fySalesReturns = salesReturns.filter((ret) => {
+    if (financialYearStart && ret.date < financialYearStart) return false;
+    if (financialYearEnd && ret.date > financialYearEnd) return false;
+    if (ret.status === "cancelled" || ret.status === "reversed" || (ret as any).postingStatus === "reversed") return false;
+    return true;
+  });
+
+  const totalSalesReturns = fySalesReturns.reduce((sum, r) => sum + (r.grandTotal || 0), 0);
+  const returnsTaxable = fySalesReturns.reduce((sum, r) => sum + (r.taxableAmount || 0), 0);
+  const returnsGst = fySalesReturns.reduce((sum, r) => sum + (r.gstTotal || 0), 0);
 
   // Filter receipts by active Financial Year window
   const fyReceipts = receipts.filter((rec) => {
@@ -239,11 +300,19 @@ export function computeDashboardMetrics(params: {
       ? payableLedgers.reduce((sum, l) => sum + Math.max(0, -Math.min(0, (l.currentBalance || 0) / 100)), 0)
       : fyPurchases.reduce((sum, pu) => sum + Math.max(0, pu.balance || 0), 0);
 
-  // 3. Sales Revenue (Strictly excludes Output GST) & Deterministic COGS
-  const grossBilledSales = fyInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0);
-  const netSalesRevenue = fyInvoices.reduce((sum, inv) => sum + (inv.subtotal - inv.discountTotal), 0);
+  // 3. Canonical Revenue & Billed Metrics (Hardening Item 18)
+  // Net Billed Value = Gross Billed Sales (incl. GST) - Gross Sales Returns / Credit Notes (incl. GST)
+  // Allows signed negative values if returns exceed sales in a period
+  const grossBilledSales = fyInvoices.reduce((sum, inv) => sum + (inv.grandTotal ?? (inv as any).total ?? 0), 0);
+  const netBilledValue = grossBilledSales - totalSalesReturns;
+
+  // Canonical Net Sales Revenue = Posted Sales Revenue excluding Output GST - Revenue portion of posted Credit Notes
+  // Allows signed negative values if credit notes exceed sales in a period
+  const grossTaxableRevenue = fyInvoices.reduce((sum, inv) => sum + ((inv.subtotal || 0) - (inv.discountTotal || 0)), 0);
+  const netSalesRevenue = grossTaxableRevenue - returnsTaxable;
   const totalSales = grossBilledSales;
-  const totalPurchases = fyPurchases.reduce((sum, pu) => sum + pu.grandTotal, 0);
+  const netSales = netSalesRevenue;
+  const totalPurchases = fyPurchases.reduce((sum, pu) => sum + (pu.grandTotal ?? (pu as any).total ?? 0), 0);
 
   // Authoritative Cost of Goods Sold (COGS) without guessing
   const valuationMethod = inventoryValuationMethod || "purchase_cost";
@@ -290,9 +359,9 @@ export function computeDashboardMetrics(params: {
     }
   }
 
-  // 5. Authoritative GST Breakdown (Output GST, Input GST, Net GST Position)
-  // Reconciled with GST Report calculation: Output GST comes directly from posted fyInvoices
-  const outputGst = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).totalTax, 0);
+  // 5. Authoritative GST Breakdown (Net Output GST after Credit Notes, Input GST, Net GST Position)
+  const grossOutputGst = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).totalTax, 0);
+  const outputGst = Math.max(0, grossOutputGst - returnsGst);
   const inputGst = fyPurchases.reduce((s, p) => s + resolveDocumentTaxes(p).totalTax, 0);
   const netGst = outputGst - inputGst;
 
@@ -339,14 +408,52 @@ export function computeDashboardMetrics(params: {
     { range: "90+ Days", amount: rec90Plus },
   ];
 
+  // 8. Consolidated Branch Metrics Breakdown
+  const branchMetrics = branches.length > 0
+    ? branches.map((b) => {
+        const bInvs = allInvoices.filter((inv) => inv.branchId === b.id);
+        const bRets = allSalesReturns.filter(
+          (ret) => ret.branchId === b.id && ret.status !== "cancelled" && ret.status !== "reversed"
+        );
+        const bPurs = allPurchases.filter((pu) => pu.branchId === b.id);
+        const bRecs = allReceipts.filter(
+          (rec) => rec.branchId === b.id && rec.postingStatus !== "failed" && rec.postingStatus !== "reversed"
+        );
+
+        const bSales = bInvs.reduce((s, i) => s + (i.grandTotal ?? (i as any).total ?? 0), 0);
+        const bReturnsVal = bRets.reduce((s, r) => s + (r.grandTotal ?? (r as any).total ?? 0), 0);
+        const bPurchasesVal = bPurs.reduce((s, p) => s + (p.grandTotal ?? (p as any).total ?? 0), 0);
+        const bCollections = bRecs.reduce((s, r) => s + (r.amount || 0), 0);
+        const bReceivables = bInvs.reduce((s, i) => s + Math.max(0, i.balance || 0), 0);
+
+        return {
+          branchId: b.id,
+          branchName: b.name,
+          branchCode: b.code,
+          isMainBranch: b.isMainBranch,
+          sales: bSales,
+          salesReturns: bReturnsVal,
+          purchases: bPurchasesVal,
+          collections: bCollections,
+          receivables: bReceivables,
+          netProfit: (bSales - bReturnsVal) - bPurchasesVal,
+          invoiceCount: bInvs.length,
+        };
+      })
+    : undefined;
+
   const hasData =
     fyInvoices.length > 0 ||
     fyPurchases.length > 0 ||
+    fySalesReturns.length > 0 ||
     products.length > 0 ||
     ledgers.some((l) => l.currentBalance !== 0);
 
   return {
     totalSales,
+    totalSalesReturns,
+    netBilledValue,
+    netSales,
     totalPurchases,
     totalReceivables,
     totalCustomerCredits,
@@ -378,6 +485,7 @@ export function computeDashboardMetrics(params: {
     salesVsPurchasesTrend: trendMonths,
     agingReceivables,
     agingPayables: [],
+    branchMetrics,
     hasData,
   };
 }

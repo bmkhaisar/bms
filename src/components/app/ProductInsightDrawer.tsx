@@ -7,6 +7,7 @@ import { formatMoney, formatDate } from "@/lib/format";
 import { computeProductSummary, type ProductFinancialSummary } from "@/modules/summary/summaryService";
 import { db, type Product } from "@/lib/db";
 import { ArrowRight, Package, TrendingUp } from "lucide-react";
+import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 
 interface Props {
   productId: string | null;
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function ProductInsightDrawer({ productId, open, onOpenChange, onSelectInvoice }: Props) {
+  const { activeBranchId } = useActiveCompany();
   const [summary, setSummary] = useState<ProductFinancialSummary | null>(null);
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(false);
@@ -32,7 +34,7 @@ export function ProductInsightDrawer({ productId, open, onOpenChange, onSelectIn
 
     Promise.all([
       db().products.get(productId),
-      computeProductSummary(productId),
+      computeProductSummary(productId, { branchId: activeBranchId }),
     ])
       .then(([p, sum]) => {
         if (active) {
@@ -48,7 +50,7 @@ export function ProductInsightDrawer({ productId, open, onOpenChange, onSelectIn
     return () => {
       active = false;
     };
-  }, [productId, open]);
+  }, [productId, open, activeBranchId]);
 
   if (!productId) return null;
 

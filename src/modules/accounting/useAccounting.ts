@@ -22,7 +22,7 @@ import { initChartOfAccountsServerFn } from "@/functions/initChartOfAccountsFn";
 
 export function useAccounting() {
   const { user } = useAuth();
-  const { activeCompany, activeFinancialYear } = useActiveCompany();
+  const { activeCompany, activeFinancialYear, activeBranchId } = useActiveCompany();
   const companyId = activeCompany?.id;
 
   const [vouchersMap, setVouchersMap] = useState<Record<string, Voucher>>({});
@@ -128,10 +128,14 @@ export function useAccounting() {
     };
   }, [companyId]);
 
-  // Derived lists
+  // Derived lists with branch isolation (PRD § 9, 10)
   const vouchers = useMemo(() => {
-    return Object.values(vouchersMap).sort((a, b) => b.date - a.date || b.createdAt - a.createdAt);
-  }, [vouchersMap]);
+    const list = Object.values(vouchersMap).sort((a, b) => b.date - a.date || b.createdAt - a.createdAt);
+    if (activeBranchId && activeBranchId !== "all") {
+      return list.filter((v) => (v as any).branchId === activeBranchId);
+    }
+    return list;
+  }, [vouchersMap, activeBranchId]);
 
   const ledgers = useMemo(() => {
     return Object.values(ledgersMap).sort((a, b) => a.name.localeCompare(b.name));

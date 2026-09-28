@@ -44,6 +44,9 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     { name: "techSpecTemplates", table: db().techSpecTemplates, entityType: "techSpecTemplate" },
     { name: "bankAccounts", table: db().bankAccounts, entityType: "bankAccount" },
     { name: "quotationTemplates", table: db().quotationTemplates, entityType: "quotationTemplate" },
+    { name: "branches", table: db().branches, entityType: "branch" },
+    { name: "salesReturns", table: db().salesReturns, entityType: "salesReturn" },
+    { name: "creditNotes", table: db().creditNotes, entityType: "creditNote" },
   ];
 
   // Serialize snapshots per collection so a slow older reconciliation can never overwrite a newer event.
@@ -57,6 +60,7 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     if (Number(localStorage.getItem(markerKey) || 0) >= resetAt) return;
     await Promise.all([
       db().invoices.clear(), db().quotations.clear(), db().purchases.clear(), db().receipts.clear(), db().payments.clear(),
+      db().salesReturns.clear(), db().creditNotes.clear(),
       db().parties.clear(), db().customers.clear(), db().suppliers.clear(), db().productSizes.clear(), db().sizes.clear(),
     ]);
     await purgeCompanyCacheAndOutbox(companyId);

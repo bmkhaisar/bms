@@ -1,7 +1,18 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
+// Centralized deployment environment detection
+const isStagingBranch = process.env.VERCEL_GIT_COMMIT_REF === "staging";
+const isVercelPreview = process.env.VERCEL_ENV === "preview";
+const deploymentEnv =
+  process.env.VITE_BMS_DEPLOYMENT_ENV ||
+  process.env.BMS_DEPLOYMENT_ENV ||
+  (isStagingBranch ? "staging" : isVercelPreview ? "staging" : "");
+
 export default defineConfig({
   vite: {
+    define: {
+      "import.meta.env.VITE_BMS_DEPLOYMENT_ENV": JSON.stringify(deploymentEnv),
+    },
     resolve: {
       dedupe: ["react", "react-dom"],
     },

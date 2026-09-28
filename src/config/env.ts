@@ -21,3 +21,42 @@ export function isClientFirebaseConfigured(): boolean {
     clientEnv.FIREBASE_DATABASE_URL
   );
 }
+
+/**
+ * Deployment Environment Configuration
+ * Centralized evaluation of staging/beta status.
+ *
+ * Checks:
+ * 1. Build-time / runtime environment variables:
+ *    - VITE_BMS_DEPLOYMENT_ENV
+ *    - BMS_DEPLOYMENT_ENV
+ * 2. Vercel deployment variables (if available)
+ * 3. Client-side hostname detection (subdomains or preview URLs with "staging" or "beta")
+ *
+ * Production main strictly resolves to false.
+ */
+export const BMS_DEPLOYMENT_ENV = (
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_BMS_DEPLOYMENT_ENV) ||
+  (typeof process !== "undefined" && (process.env?.VITE_BMS_DEPLOYMENT_ENV || process.env?.BMS_DEPLOYMENT_ENV)) ||
+  ""
+).trim().toLowerCase();
+
+export function isBetaDeployment(): boolean {
+  if (BMS_DEPLOYMENT_ENV === "staging" || BMS_DEPLOYMENT_ENV === "beta") {
+    return true;
+  }
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname.toLowerCase();
+    if (
+      host.includes("-staging") ||
+      host.includes("staging.") ||
+      host.includes("staging-") ||
+      host.includes("beta.") ||
+      host.includes("-beta-")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
