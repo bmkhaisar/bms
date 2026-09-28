@@ -30,6 +30,7 @@ import { MarkdownRenderer } from "@/lib/MarkdownRenderer";
 import { BranchManagementSection } from "@/modules/company/components/BranchManagementSection";
 import { UserAccessManagementSection } from "@/modules/company/components/UserAccessManagementSection";
 import { isBetaDeployment } from "@/config/env";
+import { BmsBrandLockup } from "@/components/brand/BmsBrandLockup";
 
 export const Route = createFileRoute("/_app/settings")({
   head: () => ({ meta: [{ title: "Company & Branch Settings — BMS NEXT" }] }),
@@ -1321,14 +1322,22 @@ function SettingsPage() {
     </TabsContent>
   </Tabs>
 
-  {isBetaDeployment() && (
-    <div className="mt-8 pt-4 border-t border-border/50 text-center text-xs text-muted-foreground/80 flex items-center justify-center gap-2">
-      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-primary/15 text-primary border border-primary/30 tracking-wider uppercase">
-        Beta
-      </span>
-      <span>BMS NEXT Beta Deployment &bull; Branch: <code className="font-mono font-medium text-foreground">staging</code></span>
+  {/* Clean Non-Intrusive Product Branding Section (PRD § 3) */}
+  <div className="mt-12 pt-8 border-t border-border/60 flex flex-col items-center justify-center gap-3 text-center">
+    <BmsBrandLockup size="sm" />
+    <div className="text-xs text-muted-foreground/80 space-y-0.5">
+      <p className="font-semibold text-foreground/90">BMS NEXT &bull; Business Management System</p>
+      <p className="text-[11px]">Connected Cloud ERP &bull; Indian GST &bull; Multi-Branch Synchronization</p>
+      {isBetaDeployment() && (
+        <div className="mt-2 flex items-center justify-center gap-2">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30 tracking-wider uppercase">
+            Beta
+          </span>
+          <span className="text-[11px]">Branch: <code className="font-mono font-medium text-foreground">staging</code></span>
+        </div>
+      )}
     </div>
-  )}
+  </div>
 </AppShell>
   );
 }

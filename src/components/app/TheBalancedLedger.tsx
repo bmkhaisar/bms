@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import logo from "@/assets/bms-logo.png.asset.json";
+import { BmsBrandMark } from "@/components/brand/BmsBrandMark";
 
 export interface TheBalancedLedgerProps {
   isExiting?: boolean;
@@ -180,13 +180,9 @@ export function TheBalancedLedger({
             transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
             className="flex flex-col items-center text-center"
           >
-            {/* Existing BMS Logo Mark */}
+            {/* BMS Symbol Mark (Variant A) */}
             <div className="h-16 w-16 rounded-2xl bg-card p-2.5 shadow-soft border border-border flex items-center justify-center">
-              <img
-                src={logo.url}
-                alt="BMS NEXT Logo"
-                className="h-full w-full object-contain"
-              />
+              <BmsBrandMark size="lg" />
             </div>
 
             {/* Wordmark */}

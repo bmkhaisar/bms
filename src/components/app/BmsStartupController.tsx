@@ -117,6 +117,15 @@ export function BmsStartupController({
 
       // Determine target destination and preserve valid authorized deep links
       let targetPath: string;
+      const isPublicRoute =
+        loc.pathname === "/" ||
+        loc.pathname === "/about" ||
+        loc.pathname === "/faq" ||
+        loc.pathname === "/terms" ||
+        loc.pathname === "/privacy" ||
+        loc.pathname === "/contact" ||
+        loc.pathname === "/login";
+
       if (authDestination.type === "dashboard") {
         const isAppSubRoute =
           loc.pathname !== "/login" &&
@@ -125,6 +134,8 @@ export function BmsStartupController({
           loc.pathname !== "/platform-admin-setup-required";
 
         targetPath = isAppSubRoute && loc.pathname !== "/" ? loc.pathname : "/";
+      } else if (!user && isPublicRoute) {
+        targetPath = loc.pathname;
       } else {
         targetPath = authDestination.to;
       }

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { Button } from "@/components/ui/button";
+import { BmsBrandMark } from "@/components/brand/BmsBrandMark";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertCircle, LogOut, Loader2, ShieldCheck } from "lucide-react";
 import { checkPlatformAdminSetupStatusFn } from "@/functions/platformAdminFns";
@@ -95,9 +96,7 @@ function NoCompanyAccessPage() {
       <div className="w-full max-w-md">
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground font-bold text-sm shadow-soft">
-              BMS
-            </div>
+            <BmsBrandMark size="sm" />
             <div>
               <h1 className="text-base font-bold tracking-tight text-foreground">BMS NEXT</h1>
               <p className="text-xs text-muted-foreground">Workspace Access</p>

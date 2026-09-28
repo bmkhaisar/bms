@@ -12,11 +12,14 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AboutRouteImport } from './routes/about'
 import { Route as ContactRouteImport } from './routes/contact'
+import { Route as FaqRouteImport } from './routes/faq'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as NoCompanyAccessRouteImport } from './routes/no-company-access'
 import { Route as PlatformAdminSetupRequiredRouteImport } from './routes/platform-admin-setup-required'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as SelectCompanyRouteImport } from './routes/select-company'
 import { Route as SystemAdminRouteImport } from './routes/system-admin'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppBackupRouteImport } from './routes/_app.backup'
 import { Route as AppCaReviewRouteImport } from './routes/_app.ca-review'
@@ -49,6 +52,11 @@ const ContactRoute = ContactRouteImport.update({
   path: '/contact',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FaqRoute = FaqRouteImport.update({
+  id: '/faq',
+  path: '/faq',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -65,6 +73,11 @@ const PlatformAdminSetupRequiredRoute =
     path: '/platform-admin-setup-required',
     getParentRoute: () => rootRouteImport,
   } as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SelectCompanyRoute = SelectCompanyRouteImport.update({
   id: '/select-company',
   path: '/select-company',
@@ -73,6 +86,11 @@ const SelectCompanyRoute = SelectCompanyRouteImport.update({
 const SystemAdminRoute = SystemAdminRouteImport.update({
   id: '/system-admin',
   path: '/system-admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppIndexRoute = AppIndexRouteImport.update({
@@ -165,11 +183,14 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/about': typeof AboutRoute
   '/contact': typeof ContactRoute
+  '/faq': typeof FaqRoute
   '/login': typeof LoginRoute
   '/no-company-access': typeof NoCompanyAccessRoute
   '/platform-admin-setup-required': typeof PlatformAdminSetupRequiredRoute
+  '/privacy': typeof PrivacyRoute
   '/select-company': typeof SelectCompanyRoute
   '/system-admin': typeof SystemAdminRoute
+  '/terms': typeof TermsRoute
   '/backup': typeof AppBackupRoute
   '/ca-review': typeof AppCaReviewRoute
   '/categories': typeof AppCategoriesRoute
@@ -190,11 +211,14 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/about': typeof AboutRoute
   '/contact': typeof ContactRoute
+  '/faq': typeof FaqRoute
   '/login': typeof LoginRoute
   '/no-company-access': typeof NoCompanyAccessRoute
   '/platform-admin-setup-required': typeof PlatformAdminSetupRequiredRoute
+  '/privacy': typeof PrivacyRoute
   '/select-company': typeof SelectCompanyRoute
   '/system-admin': typeof SystemAdminRoute
+  '/terms': typeof TermsRoute
   '/backup': typeof AppBackupRoute
   '/ca-review': typeof AppCaReviewRoute
   '/categories': typeof AppCategoriesRoute
@@ -218,11 +242,14 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/about': typeof AboutRoute
   '/contact': typeof ContactRoute
+  '/faq': typeof FaqRoute
   '/login': typeof LoginRoute
   '/no-company-access': typeof NoCompanyAccessRoute
   '/platform-admin-setup-required': typeof PlatformAdminSetupRequiredRoute
+  '/privacy': typeof PrivacyRoute
   '/select-company': typeof SelectCompanyRoute
   '/system-admin': typeof SystemAdminRoute
+  '/terms': typeof TermsRoute
   '/_app/backup': typeof AppBackupRoute
   '/_app/ca-review': typeof AppCaReviewRoute
   '/_app/categories': typeof AppCategoriesRoute
@@ -247,11 +274,14 @@ export interface FileRouteTypes {
     | '/'
     | '/about'
     | '/contact'
+    | '/faq'
     | '/login'
     | '/no-company-access'
     | '/platform-admin-setup-required'
+    | '/privacy'
     | '/select-company'
     | '/system-admin'
+    | '/terms'
     | '/backup'
     | '/ca-review'
     | '/categories'
@@ -272,11 +302,14 @@ export interface FileRouteTypes {
   to:
     | '/about'
     | '/contact'
+    | '/faq'
     | '/login'
     | '/no-company-access'
     | '/platform-admin-setup-required'
+    | '/privacy'
     | '/select-company'
     | '/system-admin'
+    | '/terms'
     | '/backup'
     | '/ca-review'
     | '/categories'
@@ -299,11 +332,14 @@ export interface FileRouteTypes {
     | '/_app'
     | '/about'
     | '/contact'
+    | '/faq'
     | '/login'
     | '/no-company-access'
     | '/platform-admin-setup-required'
+    | '/privacy'
     | '/select-company'
     | '/system-admin'
+    | '/terms'
     | '/_app/backup'
     | '/_app/ca-review'
     | '/_app/categories'
@@ -327,11 +363,14 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   AboutRoute: typeof AboutRoute
   ContactRoute: typeof ContactRoute
+  FaqRoute: typeof FaqRoute
   LoginRoute: typeof LoginRoute
   NoCompanyAccessRoute: typeof NoCompanyAccessRoute
   PlatformAdminSetupRequiredRoute: typeof PlatformAdminSetupRequiredRoute
+  PrivacyRoute: typeof PrivacyRoute
   SelectCompanyRoute: typeof SelectCompanyRoute
   SystemAdminRoute: typeof SystemAdminRoute
+  TermsRoute: typeof TermsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -357,6 +396,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ContactRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/faq': {
+      id: '/faq'
+      path: '/faq'
+      fullPath: '/faq'
+      preLoaderRoute: typeof FaqRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -378,6 +424,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PlatformAdminSetupRequiredRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/select-company': {
       id: '/select-company'
       path: '/select-company'
@@ -390,6 +443,13 @@ declare module '@tanstack/react-router' {
       path: '/system-admin'
       fullPath: '/system-admin'
       preLoaderRoute: typeof SystemAdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app/': {
@@ -560,11 +620,14 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   AboutRoute: AboutRoute,
   ContactRoute: ContactRoute,
+  FaqRoute: FaqRoute,
   LoginRoute: LoginRoute,
   NoCompanyAccessRoute: NoCompanyAccessRoute,
   PlatformAdminSetupRequiredRoute: PlatformAdminSetupRequiredRoute,
+  PrivacyRoute: PrivacyRoute,
   SelectCompanyRoute: SelectCompanyRoute,
   SystemAdminRoute: SystemAdminRoute,
+  TermsRoute: TermsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

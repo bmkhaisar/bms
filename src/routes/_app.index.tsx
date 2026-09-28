@@ -54,14 +54,39 @@ import { firebaseDb } from "@/config/firebase";
 import { ref, onValue, off } from "firebase/database";
 import { DashboardSkeleton } from "@/components/app/Skeletons";
 import { DashboardSalesVsPurchasesCard } from "@/components/app/DashboardSalesVsPurchasesCard";
+import { useAuth } from "@/modules/auth/context/AuthContext";
+import { PublicShell } from "@/components/app/PublicShell";
+import { LandingPage } from "@/components/marketing/LandingPage";
 
 // In-memory module cache so navigating back to dashboard never flashes skeletons or fake zeroes (PRD #22, #23)
 const dashboardMetricsMemoryCache: Record<string, any> = {};
 
 export const Route = createFileRoute("/_app/")({
-  head: () => ({ meta: [{ title: "Dashboard — BMS NEXT" }] }),
-  component: Dashboard,
+  head: () => ({ meta: [{ title: "BMS NEXT — Business Management System" }] }),
+  component: RootLandingOrDashboard,
 });
+
+function RootLandingOrDashboard() {
+  const { isAuthenticated, user, authInitializing, claimsLoading } = useAuth();
+
+  if (authInitializing || claimsLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-purple-500 border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || !user) {
+    return (
+      <PublicShell>
+        <LandingPage />
+      </PublicShell>
+    );
+  }
+
+  return <Dashboard />;
+}
 
 function Dashboard() {
   const { activeCompany, activeFinancialYear, activeBranchId, branches, isOwner } = useActiveCompany();

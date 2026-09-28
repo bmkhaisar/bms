@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { Button } from "@/components/ui/button";
+import { BmsBrandMark } from "@/components/brand/BmsBrandMark";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Building2, ArrowRight, Loader2, LogOut } from "lucide-react";
 import { startupState } from "@/modules/app/startupState";
@@ -68,9 +69,7 @@ function SelectCompanyPage() {
       <div className="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center">
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground font-bold text-sm shadow-soft">
-              BMS
-            </div>
+            <BmsBrandMark size="sm" />
             <div>
               <h1 className="text-base font-bold tracking-tight text-foreground">BMS NEXT</h1>
               <p className="text-xs text-muted-foreground">

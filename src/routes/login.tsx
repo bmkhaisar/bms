@@ -8,7 +8,7 @@ import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { toast } from "sonner";
 import { KeyRound, Loader2, ShieldCheck, ShieldAlert, Lock, Eye, EyeOff, Sun, Moon } from "lucide-react";
-import logo from "@/assets/bms-logo.png.asset.json";
+import { BmsBrandMark } from "@/components/brand/BmsBrandMark";
 import { BRAND_ATTRIBUTION, BRAND_TAGLINE } from "@/config/publicConfig";
 import { checkPlatformAdminSetupStatusFn } from "@/functions/platformAdminFns";
 import { startupState } from "@/modules/app/startupState";
@@ -207,7 +207,7 @@ function LoginPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(44,123,82,0.06),transparent_80%)] dark:bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(141,214,170,0.05),transparent_80%)] p-4 selection:bg-accent selection:text-accent-foreground">
+    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(109,93,251,0.08),transparent_80%)] dark:bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(109,93,251,0.12),transparent_80%)] p-4 selection:bg-accent selection:text-accent-foreground">
       {/* Top right theme toggle */}
       <div className="absolute top-4 right-4">
         <Button
@@ -222,16 +222,12 @@ function LoginPage() {
       </div>
 
       <div className="relative w-full max-w-[400px]">
-        {/* Brand Header */}
+        {/* Brand Header — BMS Symbol (Variant A) */}
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <div className="relative">
-            <img
-              src={logo.url}
-              alt="BMS NEXT logo"
-              className="h-14 w-14 rounded-2xl object-contain shadow-soft border border-border/80 bg-card p-1"
-            />
+            <BmsBrandMark size="lg" className="rounded-2xl shadow-soft p-1" />
             <div className="absolute -bottom-1 -right-1 rounded-full bg-card p-0.5 shadow-xs border border-border/80">
-              <ShieldCheck className="h-3.5 w-3.5 text-mint" />
+              <ShieldCheck className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
             </div>
           </div>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground">BMS NEXT</h1>
@@ -240,7 +236,7 @@ function LoginPage() {
           </p>
         </div>
 
-        {/* Soft Login Card (Photo 1 inspired) */}
+        {/* Soft Login Card */}
         <Card className="rounded-3xl border border-border/80 bg-card shadow-raised transition-all">
           <CardHeader className="space-y-1 p-6 pb-2 sm:p-7 sm:pb-2">
             <CardTitle className="text-base font-semibold tracking-tight text-foreground">Sign In</CardTitle>
@@ -355,7 +351,7 @@ function LoginPage() {
 
       {(entering || resolvingDestination || (isAuthenticated && !routingResolved)) && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-background/85 backdrop-blur-md animate-fade-in">
-          <img src={logo.url} alt="BMS logo" className="h-16 w-16 rounded-2xl object-contain shadow-soft border border-border bg-card p-1" />
+          <BmsBrandMark size="lg" className="rounded-2xl shadow-soft p-1" />
           <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin text-mint" />
             <span>Resolving workspace access...</span>

@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useNavigate, useLocation } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
@@ -46,12 +46,17 @@ function AppGuard() {
     }
   }, [authInitializing, claimsLoading, isAuthenticated, user, isPlatformAdmin, companyLoading, activeCompany, companies.length]);
 
+  const loc = useLocation();
+  const isPublicRoot = loc.pathname === "/";
+
   useEffect(() => {
     if (authInitializing || claimsLoading) return;
 
-    // 1. Not authenticated -> /login
+    // 1. Not authenticated -> redirect to /login only if not visiting public root /
     if (!isAuthenticated || !user) {
-      nav({ to: "/login", replace: true });
+      if (!isPublicRoot) {
+        nav({ to: "/login", replace: true });
+      }
       return;
     }
 
@@ -88,11 +93,18 @@ function AppGuard() {
     companies,
     activeCompany,
     nav,
+    isPublicRoot,
   ]);
 
-  // If credentials or company memberships are actively resolving, mount AppShell with DashboardSkeleton
-  // underneath the startup overlay (or as extended fallback) to eliminate layout shift and jank
-  if (authInitializing || claimsLoading || (isAuthenticated && !isPlatformAdmin && (companyLoading || !activeCompany))) {
+  // If credentials or company memberships are actively resolving
+  if (authInitializing || claimsLoading) {
+    if (isPublicRoot) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <div className="h-7 w-7 animate-spin rounded-full border-2 border-purple-500 border-t-transparent" />
+        </div>
+      );
+    }
     return (
       <AppShell title="Dashboard">
         <div className="space-y-4">
@@ -108,7 +120,28 @@ function AppGuard() {
     );
   }
 
-  if (!isAuthenticated || !user) return null;
+  if (isAuthenticated && !isPlatformAdmin && (companyLoading || !activeCompany)) {
+    return (
+      <AppShell title="Dashboard">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground/80">
+              <span className="inline-block h-2 w-2 rounded-full bg-primary/60 animate-pulse" />
+              <span>Loading company workspace…</span>
+            </div>
+          </div>
+          <DashboardSkeleton />
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (!isAuthenticated || !user) {
+    if (isPublicRoot) {
+      return <Outlet />;
+    }
+    return null;
+  }
   if (!isPlatformAdmin && companies.length === 0) return null;
   if (isPlatformAdmin && (!activeCompany || !companies.some((c) => c.id === activeCompany.id))) {
     return null;

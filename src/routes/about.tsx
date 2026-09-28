@@ -1,16 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PublicShell } from "@/components/app/PublicShell";
-import { Card, CardContent } from "@/components/ui/card";
-import { Building2, Cloud, Database, FileText, Layers, ShieldCheck } from "lucide-react";
-import { BRAND_ATTRIBUTION, BRAND_TAGLINE } from "@/config/publicConfig";
+import { BmsBrandLockup } from "@/components/brand/BmsBrandLockup";
+import { ShieldCheck, Cloud, Database, Layers, Sparkles, Building2, Terminal, Briefcase } from "lucide-react";
+import { PUBLIC_SUPPORT_EMAIL } from "@/config/publicConfig";
 
 export const Route = createFileRoute("/about")({
   head: () => ({
     meta: [
       { title: "About — BMS NEXT" },
-      { name: "description", content: "BMS NEXT — Connected cloud accounting and business management with offline-first local cache." },
+      { name: "description", content: "Learn about BMS NEXT, our mission, and the founders building connected cloud trade software for Indian enterprises." },
       { property: "og:title", content: "About — BMS NEXT" },
-      { property: "og:description", content: "Connected cloud business management crafted by MMA." },
+      { property: "og:description", content: "Connected cloud business management built with precision." },
     ],
   }),
   component: AboutPage,
@@ -19,95 +19,119 @@ export const Route = createFileRoute("/about")({
 function AboutPage() {
   return (
     <PublicShell>
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft lg:col-span-2">
-          <CardContent className="p-8">
-            <div className="flex items-center gap-4">
-              <div className="grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/20">
-                <Building2 className="h-7 w-7" />
+      <div className="mx-auto max-w-5xl px-4 sm:px-6 py-12 sm:py-16 space-y-16">
+        {/* Header Hero */}
+        <div className="text-center max-w-2xl mx-auto space-y-4">
+          <div className="flex justify-center mb-2">
+            <BmsBrandLockup size="lg" />
+          </div>
+          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-foreground">
+            Crafted for modern trading operations.
+          </h1>
+          <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
+            BMS NEXT is an integrated cloud business system engineered to replace disconnected spreadsheets, fragile billing software, and complicated accounting tools with a single fast, synchronized workspace.
+          </p>
+        </div>
+
+        {/* Founders Section */}
+        <section className="space-y-8">
+          <div className="text-center max-w-xl mx-auto">
+            <span className="text-xs font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400">
+              Leadership & Engineering
+            </span>
+            <h2 className="mt-1 text-2xl font-bold tracking-tight text-foreground">
+              Meet the Founders
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-3xl mx-auto">
+            {/* Mohammed Maaz A */}
+            <div className="rounded-3xl border border-purple-500/20 bg-card p-6 shadow-soft flex flex-col items-center text-center">
+              <div className="relative mb-4">
+                <img
+                  src="/images/team/maaz.png"
+                  alt="Mohammed Maaz A"
+                  className="h-28 w-28 rounded-full object-cover border-2 border-purple-500/30 shadow-md"
+                  onError={(e) => {
+                    // Fallback to initials if image path fails to load
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+                <div className="absolute bottom-0 right-0 rounded-full bg-purple-600 text-white p-1 shadow-xs">
+                  <Terminal className="h-3.5 w-3.5" />
+                </div>
               </div>
-              <div>
-                <h1 className="text-2xl font-bold tracking-tight text-foreground">BMS NEXT</h1>
-                <p className="text-sm text-muted-foreground font-medium">
-                  {BRAND_TAGLINE}
-                </p>
-              </div>
+              <h3 className="text-lg font-bold text-foreground">Mohammed Maaz A</h3>
+              <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 mt-0.5">
+                Co-Founder & Developer
+              </p>
+              <p className="text-xs text-muted-foreground leading-relaxed mt-3 max-w-xs">
+                Architect of the BMS NEXT realtime engine, offline-first sync layer, Indian GST calculation pipelines, and high-performance UI.
+              </p>
             </div>
 
-            <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
-              BMS NEXT is a unified business operations and accounting suite built specifically for Indian businesses.
-              It couples cloud synchronization with an active offline cache so your day-to-day operations remain responsive, reliable, and uninterrupted even during connectivity drops.
+            {/* Khaisar Hussain */}
+            <div className="rounded-3xl border border-border/80 bg-card p-6 shadow-soft flex flex-col items-center text-center">
+              <div className="relative mb-4">
+                <div className="h-28 w-28 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border-2 border-indigo-500/30 flex items-center justify-center text-2xl font-black text-indigo-700 dark:text-indigo-300 shadow-md">
+                  KH
+                </div>
+                <div className="absolute bottom-0 right-0 rounded-full bg-indigo-600 text-white p-1 shadow-xs">
+                  <Briefcase className="h-3.5 w-3.5" />
+                </div>
+              </div>
+              <h3 className="text-lg font-bold text-foreground">Khaisar Hussain</h3>
+              <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mt-0.5">
+                Co-Founder — Sales & Operations
+              </p>
+              <p className="text-xs text-muted-foreground leading-relaxed mt-3 max-w-xs">
+                Directing business development, client relationship strategy, vendor onboarding, and daily field operation requirements across trading sectors.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Mission & Architectural Values */}
+        <section className="rounded-3xl border border-border/80 bg-card p-8 sm:p-10 shadow-soft">
+          <div className="max-w-3xl mx-auto space-y-6">
+            <h2 className="text-xl font-bold text-foreground">
+              Why We Built BMS NEXT
+            </h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Wholesale and retail businesses in India frequently encounter software that is either overly complex and expensive or hopelessly outdated desktop software that cannot sync across multiple locations without network errors.
+            </p>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              We engineered BMS NEXT from scratch with a unified modern stack: instant reactive synchronization, strict double-entry balancing, scoped branch permissions, and automated tax reporting. It gives business owners authoritative clarity over their entire enterprise.
             </p>
 
-            <div className="mt-8 grid gap-4 sm:grid-cols-2">
-              <Feature
-                icon={Cloud}
-                title="Realtime Cloud Synchronization"
-                desc="Realtime cloud state updates connected devices instantly while preserving tenant isolation."
-              />
-              <Feature
-                icon={Database}
-                title="Offline-First Active Cache"
-                desc="Fast startup and resilient offline browsing powered by scoped IndexedDB storage."
-              />
-              <Feature
-                icon={Layers}
-                title="Authoritative Double-Entry"
-                desc="Automated journal entries, day books, ledgers, and trial balances with zero balance drift."
-              />
-              <Feature
-                icon={FileText}
-                title="Indian GST Compliance"
-                desc="Structured quotations, tax invoices, purchase vouchers, HSN/SAC classifications, and tax breakdown."
-              />
-              <Feature
-                icon={ShieldCheck}
-                title="Multi-Company Partitioning"
-                desc="Strict per-company workspace isolation, role-based controls, and session lifetime guarantees."
-              />
-              <Feature
-                icon={Building2}
-                title="Enterprise Architecture"
-                desc="Built by MMA with precision, vector PDF document generation, and continuous audit trails."
-              />
-            </div>
-          </CardContent>
-        </Card>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-border/50">
+              <div className="flex items-start gap-2.5">
+                <Cloud className="h-5 w-5 text-purple-600 dark:text-purple-400 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-xs font-bold text-foreground">Realtime Cloud</h4>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Instant multi-device state updates with zero latency.</p>
+                </div>
+              </div>
 
-        <Card className="rounded-2xl border border-border/80 bg-card shadow-soft">
-          <CardContent className="p-8">
-            <h2 className="text-base font-semibold text-foreground">Current Capabilities</h2>
-            <div className="mt-4 space-y-3 text-sm text-muted-foreground">
-              <div className="rounded-lg border border-border/50 bg-background/50 p-3">
-                <span className="font-medium text-foreground block">Documents</span>
-                <span>Quotations, GST Invoices, Purchases, Receipts, and Payments.</span>
+              <div className="flex items-start gap-2.5">
+                <Database className="h-5 w-5 text-purple-600 dark:text-purple-400 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-xs font-bold text-foreground">Offline Resilience</h4>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">IndexedDB cache ensures counters continue trading offline.</p>
+                </div>
               </div>
-              <div className="rounded-lg border border-border/50 bg-background/50 p-3">
-                <span className="font-medium text-foreground block">Ledger & Master Data</span>
-                <span>Customer and supplier subledgers, inventory catalog, and custom groups.</span>
-              </div>
-              <div className="rounded-lg border border-border/50 bg-background/50 p-3">
-                <span className="font-medium text-foreground block">Financial Reports</span>
-                <span>Realtime Day Book, Ledger Statements, and balanced Trial Balance.</span>
-              </div>
-              <div className="rounded-lg border border-border/50 bg-background/50 p-3">
-                <span className="font-medium text-foreground block">Security & Access</span>
-                <span>Role-based company memberships and strict 2-hour session limits.</span>
+
+              <div className="flex items-start gap-2.5">
+                <Layers className="h-5 w-5 text-purple-600 dark:text-purple-400 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-xs font-bold text-foreground">Zero Balance Drift</h4>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Authoritative ledger and day book mathematics.</p>
+                </div>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       </div>
     </PublicShell>
-  );
-}
-
-function Feature({ icon: Icon, title, desc }: { icon: typeof Building2; title: string; desc: string }) {
-  return (
-    <div className="rounded-xl border border-border/50 bg-muted/20 p-4 transition-colors hover:bg-muted/40">
-      <Icon className="h-5 w-5 text-primary" />
-      <div className="mt-2 text-sm font-semibold text-foreground">{title}</div>
-      <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{desc}</div>
-    </div>
   );
 }

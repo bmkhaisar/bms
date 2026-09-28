@@ -5,7 +5,7 @@ import {
   Wifi, WifiOff, RefreshCw, ShieldCheck, RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import logo from "@/assets/bms-logo.png.asset.json";
+import { BmsBrandMark } from "@/components/brand/BmsBrandMark";
 import { CompanySwitcher } from "@/modules/company/components/CompanySwitcher";
 import { useEffect, useState } from "react";
 import { outboxManager } from "@/modules/sync/outboxManager";
@@ -79,7 +79,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-border/70 bg-sidebar text-sidebar-foreground select-none">
       {/* Brand Header */}
       <div className="flex items-center gap-2.5 border-b border-border/70 px-4 py-3.5">
-        <img src={logo.url} alt="BMS logo" className="h-9 w-9 rounded-xl object-contain shadow-xs border border-border/60 bg-card p-0.5" />
+        <BmsBrandMark size="sm" />
         <div className="leading-tight">
           <div className="text-sm font-bold tracking-tight text-foreground">BMS NEXT</div>
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Business ERP</div>
