@@ -439,3 +439,433 @@ test("Rule 14: Strict Scope Isolation between Branch Mode and Consolidated Mode"
   assert.equal(secBranchMetrics.totalReceivables, 0, "Secondary branch has 0 receivables");
   assert.equal(secBranchMetrics.totalPayables, 0, "Secondary branch has 0 payables");
 });
+
+// ============================================================================
+// HARDENED ACCOUNTING INVARIANT RECONCILIATION TESTS (PRD HARDENING)
+// ============================================================================
+
+test("Hardening 1: Cash & Bank derived strictly from posted double-entry voucher lines", () => {
+  const ledBank = { id: "led_bank_1", name: "HDFC Bank A/c", groupId: "grp_bank", currentBalance: 0 };
+  const ledCash = { id: "led_cash_1", name: "Main Cash", groupId: "grp_cash", currentBalance: 0 };
+  const ledDebtor = { id: "led_debtor_1", name: "Customer Alpha", groupId: "grp_sundry_debtors", partyType: "customer" };
+  const ledCreditor = { id: "led_creditor_1", name: "Supplier 1", groupId: "grp_sundry_creditors", partyType: "supplier" };
+  const ledExp = { id: "led_exp_1", name: "Office Rent", groupId: "grp_indirect_expenses", groupNature: "expense" };
+
+  const postedVouchers = [
+    // Voucher 1: Customer Receipt (64,231.98 into Bank)
+    {
+      id: "vch_rcp_1",
+      voucherNumber: "VCH-RCP-001",
+      status: "posted",
+      voucherType: "receipt",
+      date: 1775050000000,
+      lines: [
+        { ledgerId: "led_bank_1", debit: 6423198, credit: 0 },
+        { ledgerId: "led_debtor_1", debit: 0, credit: 6423198 },
+      ],
+    },
+    // Voucher 2: Supplier Payment (3,457.00 out of Bank)
+    {
+      id: "vch_pay_1",
+      voucherNumber: "VCH-PAY-001",
+      status: "posted",
+      voucherType: "payment",
+      date: 1775070000000,
+      lines: [
+        { ledgerId: "led_creditor_1", debit: 345700, credit: 0 },
+        { ledgerId: "led_bank_1", debit: 0, credit: 345700 },
+      ],
+    },
+    // Voucher 3: Direct Expense paid from Cash (1,500.00 out of Cash)
+    {
+      id: "vch_exp_1",
+      voucherNumber: "VCH-EXP-001",
+      status: "posted",
+      voucherType: "payment",
+      date: 1775075000000,
+      lines: [
+        { ledgerId: "led_exp_1", debit: 150000, credit: 0 },
+        { ledgerId: "led_cash_1", debit: 0, credit: 150000 },
+      ],
+    },
+    // Voucher 4: Draft Voucher (Must have ZERO accounting authority)
+    {
+      id: "vch_draft_1",
+      voucherNumber: "VCH-DRAFT",
+      status: "draft",
+      date: 1775078000000,
+      lines: [
+        { ledgerId: "led_bank_1", debit: 10000000, credit: 0 },
+      ],
+    },
+  ];
+
+  const scope = buildCanonicalReportingScope({ companyId: "comp_test", activeBranchId: "all" });
+  const metrics = computeDashboardMetrics({
+    ledgers: [ledBank, ledCash, ledDebtor, ledCreditor, ledExp],
+    vouchers: postedVouchers,
+    invoices: stagingInvoices,
+    purchases: stagingPurchases,
+    products: stagingProducts,
+    scope,
+  });
+
+  // Bank = 64,231.98 - 3,457.00 = 60,774.98
+  assert.equal(metrics.bankBalance, 60774.98, "Bank closing balance must be derived from double-entry lines (₹60,774.98)");
+  // Cash = -1,500.00 (spent 1500 without prior cash deposit)
+  assert.equal(metrics.cashInHand, -1500, "Cash in hand must reflect signed movements (-₹1,500.00)");
+  // Total liquidity = 60,774.98 - 1,500.00 = 59,274.98
+  assert.equal(metrics.totalLiquidity, 59274.98, "Total Liquidity is signed sum of all Cash & Bank ledgers");
+});
+
+test("Hardening 2: Opening Cash & Bank balances included naturally in closing ledger balances", () => {
+  const ledBank = {
+    id: "led_bank_open",
+    name: "ICICI Current A/c",
+    groupId: "grp_bank",
+    openingBalance: 5000000, // ₹50,000.00
+    openingBalanceType: "dr",
+  };
+  const ledCash = {
+    id: "led_cash_open",
+    name: "Petty Cash",
+    groupId: "grp_cash",
+    openingBalance: 1000000, // ₹10,000.00
+    openingBalanceType: "dr",
+  };
+
+  const vouchers = [
+    {
+      id: "vch_1",
+      status: "posted",
+      date: 1775050000000,
+      lines: [
+        { ledgerId: "led_bank_open", debit: 2000000, credit: 0 }, // +₹20,000
+        { ledgerId: "led_cash_open", debit: 0, credit: 500000 },  // -₹5,000
+      ],
+    },
+  ];
+
+  const scope = buildCanonicalReportingScope({ companyId: "comp_test", activeBranchId: "all" });
+  const metrics = computeDashboardMetrics({
+    ledgers: [ledBank, ledCash],
+    vouchers,
+    invoices: [],
+    purchases: [],
+    products: [],
+    scope,
+  });
+
+  assert.equal(metrics.bankBalance, 70000, "Bank closing = Opening 50,000 + Debit 20,000 = ₹70,000");
+  assert.equal(metrics.cashInHand, 5000, "Cash closing = Opening 10,000 - Credit 5,000 = ₹5,000");
+  assert.equal(metrics.totalLiquidity, 75000, "Total liquidity = 70,000 + 5,000 = ₹75,000");
+});
+
+test("Hardening 3: Contra transfer moves funds between cash and bank without altering total liquidity", () => {
+  const ledBank = { id: "led_b", name: "State Bank of India", groupId: "grp_bank", openingBalance: 2000000, openingBalanceType: "dr" }; // ₹20,000
+  const ledCash = { id: "led_c", name: "Office Cash", groupId: "grp_cash", openingBalance: 5000000, openingBalanceType: "dr" };        // ₹50,000
+
+  // Contra Voucher: Cash deposit into bank of ₹30,000
+  const contraVoucher = {
+    id: "vch_contra_1",
+    status: "posted",
+    voucherType: "contra",
+    date: 1775050000000,
+    lines: [
+      { ledgerId: "led_b", debit: 3000000, credit: 0 }, // Dr Bank +30,000
+      { ledgerId: "led_c", debit: 0, credit: 3000000 }, // Cr Cash -30,000
+    ],
+  };
+
+  const scope = buildCanonicalReportingScope({ companyId: "comp_test", activeBranchId: "all" });
+  const metrics = computeDashboardMetrics({
+    ledgers: [ledBank, ledCash],
+    vouchers: [contraVoucher],
+    invoices: [],
+    purchases: [],
+    products: [],
+    scope,
+  });
+
+  assert.equal(metrics.bankBalance, 50000, "Bank increases to ₹50,000 after contra deposit");
+  assert.equal(metrics.cashInHand, 20000, "Cash decreases to ₹20,000 after contra deposit");
+  assert.equal(metrics.totalLiquidity, 70000, "Total liquidity conserved at ₹70,000");
+});
+
+test("Hardening 4: Negative bank / overdraft balance preserved and not clamped to zero", () => {
+  const ledBank = { id: "led_od", name: "Bank Overdraft A/c", groupId: "grp_bank", openingBalance: 0 };
+  const ledCreditor = { id: "led_supp", name: "Steel Vendor", groupId: "grp_sundry_creditors" };
+
+  // Vendor payment of ₹45,000 issued via overdraft
+  const odPayment = {
+    id: "vch_od_1",
+    status: "posted",
+    voucherType: "payment",
+    date: 1775050000000,
+    lines: [
+      { ledgerId: "led_supp", debit: 4500000, credit: 0 },
+      { ledgerId: "led_od", debit: 0, credit: 4500000 }, // Cr Bank 45,000 -> -45,000 balance
+    ],
+  };
+
+  const scope = buildCanonicalReportingScope({ companyId: "comp_test", activeBranchId: "all" });
+  const metrics = computeDashboardMetrics({
+    ledgers: [ledBank, ledCreditor],
+    vouchers: [odPayment],
+    invoices: [],
+    purchases: [],
+    products: [],
+    scope,
+  });
+
+  assert.equal(metrics.bankBalance, -45000, "Bank balance must legitimately be negative (-₹45,000.00)");
+  assert.equal(metrics.totalLiquidity, -45000, "Total liquidity must preserve signed negative balance");
+});
+
+test("Hardening 5: Credit note in subsequent period causing negative net sales is preserved", () => {
+  // Period with 0 sales and a return of ₹35,000
+  const returnDoc = {
+    id: "ret_neg",
+    number: "SR-NEG",
+    branchId: BRANCH_MAIN,
+    taxableAmount: 30000,
+    gstTotal: 5400,
+    grandTotal: 35400,
+    status: "posted",
+    postingStatus: "posted",
+    date: 1775050000000,
+  };
+
+  const scope = buildCanonicalReportingScope({ companyId: "comp_test", activeBranchId: "all" });
+  const metrics = computeDashboardMetrics({
+    invoices: [],
+    purchases: [],
+    products: [],
+    salesReturns: [returnDoc],
+    scope,
+  });
+
+  assert.equal(metrics.netSalesRevenue, -30000, "Net taxable sales revenue must be signed (-₹30,000)");
+  assert.equal(metrics.netBilledValue, -35400, "Net billed value must be signed (-₹35,400)");
+  assert.equal(metrics.outputGst, -5400, "Output GST after credit notes must be signed (-₹5,400)");
+});
+
+test("Hardening 6: Full AR formula maintains Opening AR, Debit Adjustments, Write-offs, and Advances", () => {
+  const invoice = {
+    id: "inv_full_ar",
+    number: "INV/FULL/001",
+    grandTotal: 50000,
+    openingArPaise: 1000000,       // ₹10,000 opening AR
+    debitAdjustmentsPaise: 200000,  // ₹2,000 debit adjustments (freight/interest)
+    writeOffPaise: 100000,         // ₹1,000 dispute write-off
+    status: "posted",
+    postingStatus: "posted",
+    date: 1775050000000,
+  };
+
+  // Receipt allocating ₹20,000
+  const receipts = [
+    {
+      id: "rcp_ar",
+      number: "RCP-AR",
+      status: "posted",
+      postingStatus: "posted",
+      amount: 20000,
+      invoiceId: "inv_full_ar",
+    },
+  ];
+
+  // Sales Return of ₹5,000
+  const returns = [
+    {
+      id: "ret_ar",
+      number: "SR-AR",
+      originalInvoiceId: "inv_full_ar",
+      grandTotal: 5000,
+      status: "posted",
+      postingStatus: "posted",
+    },
+  ];
+
+  // Advance allocation applied of ₹4,000
+  invoice.advanceAllocatedPaise = 400000;
+
+  // Formula:
+  // Effective Billed = Opening AR (10,000) + Invoices (50,000) + Debit Adjustments (2,000) = 62,000
+  // Total Settled = Receipts (20,000) + Credit Notes (5,000) + Advance (4,000) + Write-off (1,000) = 30,000
+  // Closing AR = 62,000 - 30,000 = 32,000
+  const settlement = resolveCanonicalInvoiceOutstanding(invoice, receipts, returns);
+
+  assert.equal(settlement.effectiveBilledTotal, 62000, "Effective billed = 10,000 + 50,000 + 2,000 = ₹62,000");
+  assert.equal(settlement.totalSettled, 30000, "Total settled = 20,000 + 5,000 + 4,000 + 1,000 = ₹30,000");
+  assert.equal(settlement.remainingBalance, 32000, "Closing AR = ₹32,000");
+  assert.equal(settlement.isPaid, false);
+});
+
+test("Hardening 7: Full AP formula maintains Opening AP, Credit Adjustments, Debit Notes, and Discounts", () => {
+  const purchase = {
+    id: "pur_full_ap",
+    number: "PUR/FULL/001",
+    grandTotal: 40000,
+    openingApPaise: 1500000,        // ₹15,000 opening AP
+    creditAdjustmentsPaise: 150000, // ₹1,500 freight / supplementary bill
+    debitNoteAllocatedPaise: 300000,// ₹3,000 debit note
+    discountPaise: 50000,           // ₹500 settlement cash discount
+    supplierAdvancesAppliedPaise: 200000, // ₹2,000 supplier advance applied
+    status: "posted",
+    postingStatus: "posted",
+    date: 1775050000000,
+  };
+
+  const payments = [
+    {
+      id: "pay_ap",
+      number: "PAY-AP",
+      purchaseId: "pur_full_ap",
+      amount: 18000,
+      status: "posted",
+      postingStatus: "posted",
+    },
+  ];
+
+  // Formula:
+  // Effective Billed = Opening AP (15,000) + Purchases (40,000) + Credit Adj (1,500) = 56,500
+  // Total Settled = Payments (18,000) + Debit Note (3,000) + Supplier Advance (2,000) + Discount (500) = 23,500
+  // Closing AP = 56,500 - 23,500 = 33,000
+  const settlement = resolveCanonicalPurchaseOutstanding(purchase, payments);
+
+  assert.equal(settlement.effectiveBilledTotal, 56500, "Effective billed = 15,000 + 40,000 + 1,500 = ₹56,500");
+  assert.equal(settlement.totalSettled, 23500, "Total settled = 18,000 + 3,000 + 2,000 + 500 = ₹23,500");
+  assert.equal(settlement.remainingBalance, 33000, "Closing AP = ₹33,000");
+  assert.equal(settlement.isPaid, false);
+});
+
+test("Hardening 8: Customer credit ₹445.98 audit trail and receipt reversal lifecycle", () => {
+  const result = calculateAuthoritativeCustomerCredits({
+    invoices: stagingInvoices,
+    receipts: stagingReceipts,
+  });
+
+  assert.equal(result.totalCustomerCredits, 445.98, "Customer credit must be exactly ₹445.98");
+  const credit = result.creditItems[0];
+  assert.equal(credit.receiptNumber, "RCP-001", "Linked to receipt number");
+  assert.equal(credit.customerId, "cust_alpha", "Linked to customer");
+  assert.equal(credit.invoiceNumber, "INV/2026-27/0002", "Linked to settled invoice");
+  assert.equal(credit.branchId, BRANCH_MAIN, "Linked to branch");
+  assert.equal(credit.amountCreated, 445.98, "Credit amount created");
+  assert.equal(credit.amountApplied, 63786, "Amount applied to invoice");
+  assert.equal(credit.remainingAmount, 445.98, "Remaining available credit");
+
+  // Reversing the receipt must cancel and zero out the customer credit
+  const reversedReceipt = { ...stagingReceipts[0], postingStatus: "reversed" };
+  const reversedResult = calculateAuthoritativeCustomerCredits({
+    invoices: stagingInvoices,
+    receipts: [reversedReceipt],
+  });
+
+  assert.equal(reversedResult.totalCustomerCredits, 0, "Reversed receipt creates ZERO customer credit");
+  assert.equal(reversedResult.creditItems.length, 0, "No active credit items from reversed receipt");
+});
+
+test("Hardening 9: Sales Return reverses original frozen historical COGS, flags incomplete if missing", () => {
+  const origInvoice = {
+    id: "inv_cogs_orig",
+    number: "INV/COGS/001",
+    status: "posted",
+    postingStatus: "posted",
+    items: [
+      {
+        id: "item_orig_1",
+        productId: "prod_cab",
+        quantity: 2,
+        costPrice: 42000, // Frozen historical purchase cost at sale time
+        rate: 60000,
+        total: 120000,
+      },
+    ],
+  };
+
+  // Product catalog cost subsequently changed to 75,000
+  const currentCatalog = [
+    { id: "prod_cab", name: "Cabin Unit", purchasePrice: 75000, currentStock: 5, trackInventory: true },
+  ];
+
+  // Return of 1 unit
+  const returnDoc = {
+    id: "ret_frozen",
+    number: "SR-FROZEN",
+    originalInvoiceId: "inv_cogs_orig",
+    status: "posted",
+    postingStatus: "posted",
+    disposition: "RESTOCK_SALEABLE",
+    items: [
+      {
+        invoiceItemId: "item_orig_1",
+        productId: "prod_cab",
+        returnQuantity: 1,
+        rate: 60000,
+      },
+    ],
+  };
+
+  const scope = buildCanonicalReportingScope({ companyId: "comp_test", activeBranchId: "all" });
+  const metrics = computeDashboardMetrics({
+    invoices: [origInvoice],
+    purchases: [],
+    products: currentCatalog,
+    salesReturns: [returnDoc],
+    scope,
+  });
+
+  // Gross COGS for 2 sold units at frozen cost 42,000 = 84,000
+  // Returned COGS for 1 restocked unit must reverse frozen cost 42,000, NOT changed catalog price 75,000
+  // Net COGS = 84,000 - 42,000 = 42,000
+  assert.equal(metrics.costOfGoodsSold, 42000, "COGS must reverse frozen historical cost (₹42,000), not catalog cost (₹75,000)");
+  assert.equal(metrics.isCostingIncomplete, false, "Costing is complete because historical cost was frozen");
+
+  // Incomplete costing exception test
+  const returnWithoutHistory = {
+    id: "ret_nohistory",
+    number: "SR-NOHIST",
+    status: "posted",
+    postingStatus: "posted",
+    disposition: "RESTOCK_SALEABLE",
+    items: [{ productId: "prod_missing_cost", returnQuantity: 1, rate: 50000 }],
+  };
+
+  const metricsIncomplete = computeDashboardMetrics({
+    invoices: [],
+    purchases: [],
+    products: [{ id: "prod_missing_cost", name: "Unknown Part", purchasePrice: 0 }],
+    salesReturns: [returnWithoutHistory],
+    scope,
+  });
+
+  assert.equal(metricsIncomplete.isCostingIncomplete, true, "Must flag isCostingIncomplete when cost basis is missing");
+});
+
+test("Hardening 10: Cross-screen consistency for INV/2026-27/0002 after ₹63,786 allocation", () => {
+  const inv0002 = stagingInvoices.find((i) => i.number === "INV/2026-27/0002");
+  const settlement = resolveCanonicalInvoiceOutstanding(inv0002, stagingReceipts);
+
+  // Settlement truth
+  assert.equal(settlement.remainingBalance, 0, "Outstanding balance must be exactly ₹0.00");
+  assert.equal(settlement.isPaid, true, "Invoice status must be Paid");
+  assert.equal(settlement.totalSettled, 63786, "Settled amount must be ₹63,786.00");
+
+  // Dashboard AR reflects 0 for INV 0002
+  const scope = buildCanonicalReportingScope({ companyId: "comp_test", activeBranchId: "all" });
+  const metrics = computeDashboardMetrics({
+    invoices: stagingInvoices,
+    purchases: stagingPurchases,
+    receipts: stagingReceipts,
+    payments: stagingPayments,
+    products: stagingProducts,
+    branches: stagingBranches,
+    scope,
+  });
+
+  assert.equal(metrics.totalReceivables, 67649, "Only open invoice INV 0015 contributes to AR (₹67,649.00)");
+  // INV 0002 is not in aging receivables (>0 only)
+  assert.equal(metrics.agingReceivables.reduce((s, a) => s + a.amount, 0), 67649, "Aging only contains ₹67,649.00");
+});

@@ -4,8 +4,14 @@
  * Guarantees zero duplicate financial truth.
  */
 
-import { db, type Invoice, type Receipt, type Purchase, type Product, type Customer } from "@/lib/db";
+import { db, type Invoice, type Receipt, type Purchase, type Product, type Customer, type Payment } from "@/lib/db";
 import type { Ledger } from "@/modules/accounting/types";
+import {
+  isPostedInvoice,
+  isPostedPurchase,
+  resolveCanonicalInvoiceOutstanding,
+  resolveCanonicalPurchaseOutstanding,
+} from "@/modules/accounting/services/canonicalOutstandingService";
 
 export interface CustomerFinancialSummary {
   customerId: string;
@@ -102,35 +108,31 @@ export async function computeCustomerSummary(
   }
 
   // Only posted / active invoices count in financial totals (strictly exclude draft, cancelled, reversed)
-  const postedInvoices = invoices.filter(
-    (inv) =>
-      (inv.postingStatus === "posted" || (inv.status !== "draft" && inv.postingStatus !== "failed")) &&
-      inv.status !== "cancelled" &&
-      inv.postingStatus !== "reversed"
-  );
+  const postedInvoices = invoices.filter(isPostedInvoice);
 
   const totalInvoiced = postedInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0);
 
-  // Direct receipts reduce customer outstanding
-  const receiptTotal = receipts.reduce((sum, r) => sum + (r.amount || 0), 0);
-  const invoicePaidTotal = postedInvoices.reduce((sum, inv) => sum + (inv.amountPaid || 0), 0);
-  const totalPaid = Math.max(receiptTotal, invoicePaidTotal);
+  // Authoritative bill-wise settlement resolution
+  const invoiceSettlements = postedInvoices.map((inv) =>
+    resolveCanonicalInvoiceOutstanding(inv, receipts, [], options?.creditNotes as any)
+  );
 
-  // Credit notes reduce customer exposure and outstanding
-  const creditNotesTotal = (options?.creditNotes || []).reduce((sum, cn) => sum + (cn.amount || 0), 0);
-  const rawOutstanding = postedInvoices.reduce((sum, inv) => sum + Math.max(0, inv.balance || 0), 0);
-  const outstanding = Math.max(0, (rawOutstanding > 0 ? rawOutstanding : totalInvoiced - totalPaid) - creditNotesTotal);
+  const outstanding = invoiceSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
+  const totalPaid = invoiceSettlements.reduce((sum, s) => sum + s.totalSettled, 0);
 
   const now = Date.now();
   let overdue = 0;
-  for (const inv of postedInvoices) {
-    if (inv.balance > 0) {
-      if (inv.dueDate && inv.dueDate < now) {
-        overdue += inv.balance;
-      } else if (!inv.dueDate && typeof customer?.creditDays === "number") {
-        const calculatedDue = inv.date + customer.creditDays * 24 * 60 * 60 * 1000;
-        if (calculatedDue < now) {
-          overdue += inv.balance;
+  for (const s of invoiceSettlements) {
+    if (s.remainingBalance > 0) {
+      const inv = postedInvoices.find((i) => i.id === s.invoiceId);
+      if (inv) {
+        if (inv.dueDate && inv.dueDate < now) {
+          overdue += s.remainingBalance;
+        } else if (!inv.dueDate && typeof customer?.creditDays === "number") {
+          const calculatedDue = inv.date + customer.creditDays * 24 * 60 * 60 * 1000;
+          if (calculatedDue < now) {
+            overdue += s.remainingBalance;
+          }
         }
       }
     }
@@ -153,15 +155,18 @@ export async function computeCustomerSummary(
   const recentInvoices = [...postedInvoices]
     .sort((a, b) => b.date - a.date)
     .slice(0, 5)
-    .map((inv) => ({
-      id: inv.id,
-      number: inv.number,
-      date: inv.date,
-      amount: inv.grandTotal,
-      paid: inv.amountPaid || 0,
-      balance: inv.balance,
-      status: inv.status,
-    }));
+    .map((inv) => {
+      const s = invoiceSettlements.find((st) => st.invoiceId === inv.id) || resolveCanonicalInvoiceOutstanding(inv, receipts);
+      return {
+        id: inv.id,
+        number: inv.number,
+        date: inv.date,
+        amount: inv.grandTotal,
+        paid: s.totalSettled,
+        balance: s.remainingBalance,
+        status: s.isPaid ? "paid" : inv.status,
+      };
+    });
 
   return {
     customerId,
@@ -355,13 +360,14 @@ export async function computeSupplierSummary(
     purchases = purchases?.filter((p) => p.supplierId === supplierId) || [];
   }
 
-  const postedPurchases = purchases.filter(
-    (pu) => pu.postingStatus === "posted" || (pu.postingStatus !== "draft" && pu.postingStatus !== "failed")
-  );
+  const postedPurchases = purchases.filter(isPostedPurchase);
 
   const totalPurchased = postedPurchases.reduce((sum, pu) => sum + pu.grandTotal, 0);
-  const totalPaid = postedPurchases.reduce((sum, pu) => sum + (pu.amountPaid || 0), 0);
-  const outstanding = postedPurchases.reduce((sum, pu) => sum + Math.max(0, pu.balance || 0), 0);
+  const purchaseSettlements = postedPurchases.map((pu) =>
+    resolveCanonicalPurchaseOutstanding(pu)
+  );
+  const totalPaid = purchaseSettlements.reduce((sum, s) => sum + s.totalSettled, 0);
+  const outstanding = purchaseSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
   const purchaseCount = postedPurchases.length;
   const averagePurchase = purchaseCount > 0 ? totalPurchased / purchaseCount : 0;
 
@@ -372,17 +378,20 @@ export async function computeSupplierSummary(
   const recentPurchases = [...postedPurchases]
     .sort((a, b) => b.date - a.date)
     .slice(0, 5)
-    .map((pu) => ({
-      id: pu.id,
-      number: pu.number,
-      supplierInvoiceNumber: pu.supplierInvoiceNumber,
-      supplierInvoiceDate: pu.supplierInvoiceDate,
-      date: pu.date,
-      amount: pu.grandTotal,
-      paid: pu.amountPaid || 0,
-      balance: pu.balance,
-      status: pu.status,
-    }));
+    .map((pu) => {
+      const s = purchaseSettlements.find((st) => st.purchaseId === pu.id) || resolveCanonicalPurchaseOutstanding(pu);
+      return {
+        id: pu.id,
+        number: pu.number,
+        supplierInvoiceNumber: pu.supplierInvoiceNumber,
+        supplierInvoiceDate: pu.supplierInvoiceDate,
+        date: pu.date,
+        amount: pu.grandTotal,
+        paid: s.totalSettled,
+        balance: s.remainingBalance,
+        status: s.isPaid ? "paid" : pu.status,
+      };
+    });
 
   return {
     supplierId,

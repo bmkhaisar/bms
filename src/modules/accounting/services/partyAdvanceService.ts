@@ -4,6 +4,12 @@ import { postVoucherServerFn } from "@/functions/postVoucherFn";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, set } from "firebase/database";
 import { cacheEntity } from "@/modules/sync/dexieCache";
+import {
+  isPostedInvoice,
+  isPostedPurchase,
+  resolveCanonicalInvoiceOutstanding,
+  resolveCanonicalPurchaseOutstanding,
+} from "./canonicalOutstandingService";
 
 function toCanonicalDate(ts: number): string {
   const d = new Date(ts);
@@ -250,8 +256,13 @@ export async function getPartyFinancialInsight(
   // 2. Fetch canonical customer credit
   const canonicalCredit = await getCanonicalCustomerCredit(partyId);
 
-  // 3. Fetch invoices for this customer
+  // 3. Fetch invoices and receipts for this customer
   const invoices: Invoice[] = await db().invoices
+    .where("customerId")
+    .equals(partyId)
+    .toArray();
+
+  const receipts: Receipt[] = await db().receipts
     .where("customerId")
     .equals(partyId)
     .toArray();
@@ -261,15 +272,11 @@ export async function getPartyFinancialInsight(
   let outstandingReceivablePaise = 0;
 
   for (const inv of invoices) {
-    if (inv.status !== "cancelled" && inv.postingStatus !== "reversed") {
-      const invTotalPaise = toPaise(inv.grandTotal);
-      const paidPaise = toPaise(inv.amountPaid);
-      totalInvoicedPaise += invTotalPaise;
-      totalPaidPaise += paidPaise;
-
-      // Unpaid balance
-      const balancePaise = Math.max(0, invTotalPaise - paidPaise);
-      outstandingReceivablePaise += balancePaise;
+    if (isPostedInvoice(inv)) {
+      const s = resolveCanonicalInvoiceOutstanding(inv, receipts);
+      totalInvoicedPaise += toPaise(inv.grandTotal);
+      totalPaidPaise += toPaise(s.totalSettled);
+      outstandingReceivablePaise += toPaise(s.remainingBalance);
     }
   }
 
@@ -359,12 +366,11 @@ export async function getPartyDualFinancialPosition(
   }
 
   // --- SALES SIDE (Accounts Receivable) ---
-  const postedInvoices = (invoices || []).filter(
-    (i) => i.status !== "cancelled" && i.postingStatus !== "reversed"
-  );
+  const postedInvoices = (invoices || []).filter(isPostedInvoice);
   const totalInvoicedPaise = postedInvoices.reduce((s, i) => s + toPaise(i.grandTotal), 0);
-  const receivableOutstandingPaise = postedInvoices.reduce((s, i) => s + toPaise(i.balance), 0);
-  const unpaidInvoicesCount = postedInvoices.filter((i) => i.balance > 0.01).length;
+  const invoiceSettlements = postedInvoices.map((i) => resolveCanonicalInvoiceOutstanding(i, validReceipts));
+  const receivableOutstandingPaise = invoiceSettlements.reduce((s, st) => s + Math.round(st.remainingBalance * 100), 0);
+  const unpaidInvoicesCount = invoiceSettlements.filter((st) => !st.isPaid).length;
 
   const validReceipts = (receipts || []).filter(
     (r) => r.postingStatus !== "failed" && r.postingStatus !== "reversed" && r.postingStatus !== "refunded"
@@ -376,12 +382,11 @@ export async function getPartyDualFinancialPosition(
   const advanceReceivedRupees = canonicalCredit.availableCreditRupees;
 
   // --- PURCHASE SIDE (Accounts Payable) ---
-  const postedPurchases = (purchases || []).filter(
-    (p) => p.postingStatus !== "draft" && p.postingStatus !== "failed" && p.postingStatus !== "reversed"
-  );
+  const postedPurchases = (purchases || []).filter(isPostedPurchase);
   const totalPurchasedPaise = postedPurchases.reduce((s, p) => s + toPaise(p.grandTotal), 0);
-  const payableOutstandingPaise = postedPurchases.reduce((s, p) => s + toPaise(p.balance), 0);
-  const unpaidBillsCount = postedPurchases.filter((p) => p.balance > 0.01).length;
+  const purchaseSettlements = postedPurchases.map((p) => resolveCanonicalPurchaseOutstanding(p, validPayments));
+  const payableOutstandingPaise = purchaseSettlements.reduce((s, st) => s + Math.round(st.remainingBalance * 100), 0);
+  const unpaidBillsCount = purchaseSettlements.filter((st) => !st.isPaid).length;
 
   const validPayments = (payments || []).filter(
     (p) => p.postingStatus !== "failed" && p.postingStatus !== "reversed"

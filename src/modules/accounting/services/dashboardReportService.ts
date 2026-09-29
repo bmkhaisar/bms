@@ -1,4 +1,4 @@
-import type { Ledger } from "@/modules/accounting/types";
+import type { Ledger, Voucher } from "@/modules/accounting/types";
 import type { Invoice, Purchase, Product, Customer, Supplier, Receipt, Payment, SalesReturn, CreditNote } from "@/lib/db";
 import { computeMonthlyTrend } from "./dashboardAnalyticsService.ts";
 import { buildCanonicalReportingScope, type CanonicalReportingScope } from "./reportingScope.ts";
@@ -131,7 +131,8 @@ export function resolveDocumentTaxes(doc: Invoice | Purchase | SalesReturn | Cre
  * STRICT POSTED-ONLY ACCOUNTING RULE: Draft documents have zero accounting authority.
  */
 export function computeDashboardMetrics(params: {
-  ledgers: Ledger[];
+  ledgers?: Ledger[];
+  vouchers?: Voucher[] | any[];
   invoices: Invoice[];
   purchases: Purchase[];
   products: Product[];
@@ -148,6 +149,7 @@ export function computeDashboardMetrics(params: {
 }): DashboardMetrics {
   const {
     ledgers = [],
+    vouchers = [],
     invoices: allInvoices = [],
     purchases: allPurchases = [],
     products = [],
@@ -289,6 +291,7 @@ export function computeDashboardMetrics(params: {
   const returnsSgst = fySalesReturns.reduce((sum, r) => sum + (r.sgstTotal || 0), 0);
   const returnsIgst = fySalesReturns.reduce((sum, r) => sum + (r.igstTotal || 0), 0);
 
+  // Signed Net Billed Value (no clamping)
   const netBilledValue = grossBilledSales - totalSalesReturns;
 
   // Canonical Net Sales Revenue = Posted Sales Revenue excluding Output GST - Taxable portion of posted Credit Notes
@@ -309,7 +312,7 @@ export function computeDashboardMetrics(params: {
     resolveCanonicalPurchaseOutstanding(pu, fyPayments)
   );
 
-  // Derive authoritative Customer Credits (overpayments, unallocated receipts, credit note excesses)
+  // Derive authoritative Customer Credits (overpayments, unapplied receipts, credit note excesses)
   const customerCreditCalc = calculateAuthoritativeCustomerCredits({
     receipts: fyReceipts,
     salesReturns: fySalesReturns,
@@ -321,35 +324,14 @@ export function computeDashboardMetrics(params: {
   let totalReceivables = 0;
   let totalCustomerCredits = customerCreditCalc.totalCustomerCredits;
   let totalPayables = 0;
-  let cashInHand = 0;
-  let bankBalance = 0;
-  let totalLiquidity = 0;
 
-  // Liquid sums
-  const totalCashReceived = receivedByPaymentMode.cash;
-  const totalBankEquivReceived = totalAmountReceived - totalCashReceived;
-  const totalCashPaid = paidByPaymentMode.cash;
-  const totalBankEquivPaid = totalPaymentsMade - totalCashPaid;
-
+  // AR & AP Derivation
   if (isBranchScoped) {
-    // STRICT BRANCH SCOPE: Zero organization-wide AR/AP/Cash leakage
+    // STRICT BRANCH SCOPE: Zero organization-wide AR/AP leakage
     totalReceivables = invoiceSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
     totalPayables = purchaseSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
-
-    cashInHand = Math.max(0, totalCashReceived - totalCashPaid);
-    bankBalance = Math.max(0, totalBankEquivReceived - totalBankEquivPaid);
-    totalLiquidity = Math.max(0, totalAmountReceived - totalPaymentsMade);
   } else {
     // CONSOLIDATED SCOPE: Authoritative double-entry ledger balances across all branches
-    const cashLedgers = ledgers.filter(
-      (l) => l.groupId === "grp_cash" || l.groupId === "grp_cash_equiv" || l.name.toLowerCase().includes("cash")
-    );
-    const bankLedgers = ledgers.filter(
-      (l) => l.groupId === "grp_bank" || l.name.toLowerCase().includes("bank")
-    );
-    const cashPaise = cashLedgers.reduce((sum, l) => sum + (l.currentBalance || 0), 0);
-    const bankPaise = bankLedgers.reduce((sum, l) => sum + (l.currentBalance || 0), 0);
-
     const receivableLedgers = ledgers.filter(
       (l) => l.partyType === "customer" || l.groupId === "grp_sundry_debtors"
     );
@@ -376,17 +358,116 @@ export function computeDashboardMetrics(params: {
     } else {
       totalPayables = purchaseSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
     }
+  }
 
-    if (cashPaise !== 0 || bankPaise !== 0) {
-      cashInHand = cashPaise / 100;
-      bankBalance = bankPaise / 100;
-      totalLiquidity = (cashPaise + bankPaise) / 100;
-    } else {
-      cashInHand = Math.max(0, totalCashReceived - totalCashPaid);
-      bankBalance = Math.max(0, totalBankEquivReceived - totalBankEquivPaid);
-      totalLiquidity = Math.max(0, totalAmountReceived - totalPaymentsMade);
+  // 4b. CANONICAL DOUBLE-ENTRY CASH & BANK DERIVATION
+  // Canonical Cash & Bank equals signed closing balances of active Cash and Bank ledgers
+  // derived from POSTED double-entry voucher lines within scope.
+  // Includes opening balances, customer receipts, supplier payments, contra transfers,
+  // expenses, refunds, capital introduced, journals, and reversals.
+  // Debit balance is positive (Asset), Credit balance is negative (Overdraft / OD account).
+  // Strictly preserves legitimate signed negative bank balances without clamping to zero.
+  const isCashLedger = (l: Ledger) =>
+    l.groupId === "grp_cash" ||
+    l.groupId === "grp_cash_equiv" ||
+    l.code === "1001" ||
+    (!l.partyType && (l.name || "").toLowerCase().includes("cash"));
+
+  const isBankLedger = (l: Ledger) =>
+    l.groupId === "grp_bank" ||
+    l.groupId === "grp_bank_accounts" ||
+    l.code === "1002" ||
+    (!l.partyType && (
+      (l.name || "").toLowerCase().includes("bank") ||
+      (l.name || "").toLowerCase().includes("hdfc") ||
+      (l.name || "").toLowerCase().includes("icici") ||
+      (l.name || "").toLowerCase().includes("sbi") ||
+      (l.name || "").toLowerCase().includes("current a/c") ||
+      (l.name || "").toLowerCase().includes("savings a/c")
+    ));
+
+  let cashInHand = 0;
+  let bankBalance = 0;
+  let hasLedgerCashBank = false;
+
+  const cashLedgers = ledgers.filter(isCashLedger);
+  const bankLedgers = ledgers.filter(isBankLedger);
+  const activeLiquidityLedgers = [...cashLedgers, ...bankLedgers];
+
+  if (vouchers && vouchers.length > 0 && activeLiquidityLedgers.length > 0) {
+    const eligibleVouchers = vouchers.filter((v: any) => {
+      if (v.status !== "posted") return false;
+      if (isBranchScoped && v.branchId && v.branchId !== targetBranchId) return false;
+      return true;
+    });
+
+    let voucherCashPaise = 0;
+    let voucherBankPaise = 0;
+    let touchedLedgersCount = 0;
+
+    for (const l of activeLiquidityLedgers) {
+      const rawOpen = Math.abs(l.openingBalance || 0);
+      const openType = (l.openingBalanceType || "dr").toLowerCase() === "cr" ? "cr" : "dr";
+      let signedOpeningPaise = openType === "dr" ? rawOpen : -rawOpen;
+
+      let periodDrPaise = 0;
+      let periodCrPaise = 0;
+      let ledgerHasLines = false;
+
+      for (const v of eligibleVouchers) {
+        const vTime = typeof v.date === "number" ? v.date : new Date(v.date).getTime();
+        for (const line of v.lines || []) {
+          if (line.ledgerId === l.id) {
+            ledgerHasLines = true;
+            if (financialYearStart && vTime < financialYearStart) {
+              signedOpeningPaise += (line.debit || 0) - (line.credit || 0);
+            } else if (!financialYearEnd || vTime <= financialYearEnd) {
+              periodDrPaise += line.debit || 0;
+              periodCrPaise += line.credit || 0;
+            }
+          }
+        }
+      }
+
+      if (ledgerHasLines || signedOpeningPaise !== 0) {
+        touchedLedgersCount++;
+        const signedClosingPaise = signedOpeningPaise + periodDrPaise - periodCrPaise;
+        if (isCashLedger(l)) {
+          voucherCashPaise += signedClosingPaise;
+        } else {
+          voucherBankPaise += signedClosingPaise;
+        }
+      }
+    }
+
+    if (touchedLedgersCount > 0) {
+      cashInHand = voucherCashPaise / 100;
+      bankBalance = voucherBankPaise / 100;
+      hasLedgerCashBank = true;
     }
   }
+
+  if (!hasLedgerCashBank && !isBranchScoped && activeLiquidityLedgers.length > 0 && activeLiquidityLedgers.some((l) => (l.currentBalance || 0) !== 0)) {
+    // Stored signed ledger balances for consolidated scope (NO clamping)
+    const cashPaise = cashLedgers.reduce((sum, l) => sum + (l.currentBalance || 0), 0);
+    const bankPaise = bankLedgers.reduce((sum, l) => sum + (l.currentBalance || 0), 0);
+    cashInHand = cashPaise / 100;
+    bankBalance = bankPaise / 100;
+    hasLedgerCashBank = true;
+  }
+
+  if (!hasLedgerCashBank) {
+    // Operational fallback (STRICTLY SIGNED, NO clamping)
+    const totalCashReceived = receivedByPaymentMode.cash;
+    const totalBankEquivReceived = totalAmountReceived - totalCashReceived;
+    const totalCashPaid = paidByPaymentMode.cash;
+    const totalBankEquivPaid = totalPaymentsMade - totalCashPaid;
+
+    cashInHand = totalCashReceived - totalCashPaid;
+    bankBalance = totalBankEquivReceived - totalBankEquivPaid;
+  }
+
+  const totalLiquidity = cashInHand + bankBalance; // Signed, allows overdraft!
 
   // 5. Authoritative Cost of Goods Sold (COGS) & Inventory Stock Valuation
   const valuationMethod = inventoryValuationMethod || "purchase_cost";
@@ -397,12 +478,24 @@ export function computeDashboardMetrics(params: {
 
   for (const inv of fyInvoices) {
     for (const item of inv.items || []) {
+      const frozenItemCost =
+        (item as any).costPrice ??
+        (item as any).purchasePrice ??
+        (item as any).purchaseRate ??
+        (item as any).costBasis ??
+        (item as any).unitCost ??
+        (item as any).historicalCostRate ??
+        ((item as any).historicalCostPaise ? (item as any).historicalCostPaise / 100 : undefined);
+
       const prod = products.find((p) => p.id === item.productId);
-      const unitCost = prod
-        ? valuationMethod === "standard_cost"
-          ? ((prod as any).defaultPurchaseRatePaise ? (prod as any).defaultPurchaseRatePaise / 100 : 0)
-          : (prod.purchasePrice || 0)
-        : 0;
+      const unitCost =
+        frozenItemCost !== undefined && frozenItemCost !== null && !isNaN(frozenItemCost) && frozenItemCost > 0
+          ? frozenItemCost
+          : prod
+          ? valuationMethod === "standard_cost"
+            ? ((prod as any).defaultPurchaseRatePaise ? (prod as any).defaultPurchaseRatePaise / 100 : 0)
+            : (prod.purchasePrice || 0)
+          : 0;
       if (unitCost <= 0 && (item.quantity || 0) > 0) {
         isCostingIncomplete = true;
       }
@@ -411,29 +504,72 @@ export function computeDashboardMetrics(params: {
   }
 
   // Deduct COGS for restocked returned goods (PRD § 10)
+  // A posted sales return must reverse the SAME historical cost basis frozen on original posted sale.
+  // Do not use current selling price. Do not guess margin. Do not silently substitute newly changed product cost.
+  // If historical costing is unavailable: mark Costing Incomplete and expose the exception.
   for (const ret of fySalesReturns) {
+    const origInv = allInvoices.find(
+      (i) => i.id === ret.originalInvoiceId || i.number === ret.originalInvoiceNumber
+    );
+
     for (const item of ret.items || []) {
-      const prod = products.find((p) => p.id === item.productId);
-      const unitCost = prod
-        ? valuationMethod === "standard_cost"
-          ? ((prod as any).defaultPurchaseRatePaise ? (prod as any).defaultPurchaseRatePaise / 100 : 0)
-          : (prod.purchasePrice || 0)
-        : 0;
       const isRestocked =
         item.restockAction === "RESTOCK_SALEABLE" ||
         item.restockAction === "RESTOCK_DAMAGED" ||
         (ret as any).disposition === "RESTOCK_SALEABLE" ||
         (ret as any).disposition === "RESTOCK_DAMAGED";
-      if (isRestocked) {
-        const qty = item.returnQuantity !== undefined ? item.returnQuantity : (((item as any).quantity as number) || 1);
-        const restockVal = unitCost * qty;
-        returnedCogs += restockVal;
-        restockedStockValue += restockVal;
+      if (!isRestocked) continue;
+
+      const qty = item.returnQuantity !== undefined ? item.returnQuantity : (((item as any).quantity as number) || 1);
+
+      // Locate frozen historical cost basis on the original sale:
+      let frozenUnitCost: number | undefined =
+        (item as any).historicalCostRate ??
+        (item as any).frozenCostRate ??
+        (item as any).costBasis ??
+        (item as any).purchaseCost;
+
+      if (frozenUnitCost === undefined && origInv) {
+        const origItem = origInv.items?.find(
+          (it) => it.id === item.invoiceItemId || (it as any).productId === item.productId
+        );
+        if (origItem) {
+          frozenUnitCost =
+            (origItem as any).costPrice ??
+            (origItem as any).purchasePrice ??
+            (origItem as any).purchaseRate ??
+            (origItem as any).costBasis ??
+            (origItem as any).unitCost ??
+            (origItem as any).historicalCostRate ??
+            ((origItem as any).historicalCostPaise ? (origItem as any).historicalCostPaise / 100 : undefined);
+        }
       }
+
+      if (frozenUnitCost === undefined && valuationMethod === "standard_cost") {
+        const prod = products.find((p) => p.id === item.productId);
+        if (prod && (prod as any).defaultPurchaseRatePaise) {
+          frozenUnitCost = (prod as any).defaultPurchaseRatePaise / 100;
+        }
+      }
+
+      if (frozenUnitCost === undefined || frozenUnitCost === null || isNaN(frozenUnitCost) || frozenUnitCost <= 0) {
+        const prod = products.find((p) => p.id === item.productId);
+        if (prod && typeof prod.purchasePrice === "number" && prod.purchasePrice > 0) {
+          frozenUnitCost = prod.purchasePrice;
+        } else {
+          frozenUnitCost = 0;
+        }
+        isCostingIncomplete = true;
+      }
+
+      const restockVal = frozenUnitCost * qty;
+      returnedCogs += restockVal;
+      restockedStockValue += restockVal;
     }
   }
 
-  const costOfGoodsSold = Math.max(0, grossCogs - returnedCogs);
+  // Cost of goods sold is signed (no clamping)
+  const costOfGoodsSold = grossCogs - returnedCogs;
 
   // Operating Expenses from ledgers
   const expenseLedgers = ledgers.filter(
@@ -464,17 +600,17 @@ export function computeDashboardMetrics(params: {
 
   // 7. Authoritative GST Breakdown (Net Output GST after Credit Notes, Input GST, Net GST Position)
   const grossOutputGst = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).totalTax, 0);
-  const outputGst = Math.max(0, grossOutputGst - returnsGst);
+  const outputGst = grossOutputGst - returnsGst; // Signed, NO Math.max(0, ...)
   const inputGst = fyPurchases.reduce((s, p) => s + resolveDocumentTaxes(p).totalTax, 0);
-  const netGst = outputGst - inputGst;
+  const netGst = outputGst - inputGst; // Signed: positive = tax liability payable, negative = ITC receivable
 
   const grossCgstOutput = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).cgst, 0);
   const grossSgstOutput = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).sgst, 0);
   const grossIgstOutput = fyInvoices.reduce((s, i) => s + resolveDocumentTaxes(i).igst, 0);
 
-  const cgstOutput = Math.max(0, grossCgstOutput - returnsCgst);
-  const sgstOutput = Math.max(0, grossSgstOutput - returnsSgst);
-  const igstOutput = Math.max(0, grossIgstOutput - returnsIgst);
+  const cgstOutput = grossCgstOutput - returnsCgst; // Signed
+  const sgstOutput = grossSgstOutput - returnsSgst; // Signed
+  const igstOutput = grossIgstOutput - returnsIgst; // Signed
 
   const cgstInput = fyPurchases.reduce((s, p) => s + resolveDocumentTaxes(p).cgst, 0);
   const sgstInput = fyPurchases.reduce((s, p) => s + resolveDocumentTaxes(p).sgst, 0);
@@ -652,7 +788,7 @@ export function computeDashboardMetrics(params: {
     isCostingIncomplete,
     stockValue,
     lowStockCount,
-    gstLiability: Math.max(0, netGst),
+    gstLiability: netGst, // Strictly signed: negative represents Input Tax Credit / refund asset
     outputGst,
     inputGst,
     netGst,

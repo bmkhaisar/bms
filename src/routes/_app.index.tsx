@@ -50,7 +50,7 @@ import { Button } from "@/components/ui/button";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { computeDashboardMetrics } from "@/modules/accounting/services/dashboardReportService";
 import { buildCanonicalReportingScope } from "@/modules/accounting/services/reportingScope";
-import type { Ledger } from "@/modules/accounting/types";
+import type { Ledger, Voucher } from "@/modules/accounting/types";
 import { useEffect, useState, useMemo } from "react";
 import { firebaseDb } from "@/config/firebase";
 import { ref, onValue, off } from "firebase/database";
@@ -162,9 +162,11 @@ function Dashboard() {
   const salesReturns = salesReturnsState.data;
   const creditNotes = creditNotesState.data;
 
-  // Cloud Realtime Ledgers for authoritative accounting calculations
+  // Cloud Realtime Ledgers & Vouchers for authoritative accounting calculations
   const [ledgers, setLedgers] = useState<Ledger[]>([]);
+  const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [ledgersLoaded, setLedgersLoaded] = useState(false);
+  const [vouchersLoaded, setVouchersLoaded] = useState(false);
 
   // Deferred chart rendering for instant header & KPI display (PRD #36)
   const [renderCharts, setRenderCharts] = useState(false);
@@ -176,12 +178,17 @@ function Dashboard() {
   useEffect(() => {
     if (!activeCompany?.id || !firebaseDb) {
       setLedgers([]);
+      setVouchers([]);
       setLedgersLoaded(true);
+      setVouchersLoaded(true);
       return;
     }
 
     setLedgersLoaded(false);
+    setVouchersLoaded(false);
     const ledgersRef = ref(firebaseDb, `companyData/${activeCompany.id}/ledgers`);
+    const vouchersRef = ref(firebaseDb, `companyData/${activeCompany.id}/vouchers`);
+
     const onData = (snap: any) => {
       if (snap.exists()) {
         const val = snap.val();
@@ -192,10 +199,22 @@ function Dashboard() {
       setLedgersLoaded(true);
     };
 
+    const onVouchers = (snap: any) => {
+      if (snap.exists()) {
+        const val = snap.val();
+        setVouchers(Object.values(val));
+      } else {
+        setVouchers([]);
+      }
+      setVouchersLoaded(true);
+    };
+
     onValue(ledgersRef, onData);
+    onValue(vouchersRef, onVouchers);
 
     return () => {
       off(ledgersRef, "value", onData);
+      off(vouchersRef, "value", onVouchers);
     };
   }, [activeCompany?.id]);
 
@@ -208,7 +227,8 @@ function Dashboard() {
     customersState.isLoaded &&
     salesReturnsState.isLoaded &&
     creditNotesState.isLoaded &&
-    ledgersLoaded;
+    ledgersLoaded &&
+    vouchersLoaded;
   const cacheKey = `${activeCompany?.id || "default"}_${activeBranchId || "all"}_${activeFinancialYear?.id || "all"}`;
 
   const canonicalScope = useMemo(() => {
@@ -226,6 +246,7 @@ function Dashboard() {
     }
     const computed = computeDashboardMetrics({
       ledgers,
+      vouchers,
       invoices,
       purchases,
       products,

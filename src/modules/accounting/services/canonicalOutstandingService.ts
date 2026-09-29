@@ -88,6 +88,9 @@ export interface InvoiceSettlementDetail {
   invoiceId: string;
   invoiceNumber: string;
   grandTotal: number;
+  openingAr: number;
+  debitAdjustments: number;
+  effectiveBilledTotal: number;
   totalSettled: number;
   remainingBalance: number;
   isPaid: boolean;
@@ -95,12 +98,15 @@ export interface InvoiceSettlementDetail {
     receiptAllocations: number;
     creditNoteAllocations: number;
     advanceAllocations: number;
+    writeOffs: number;
   };
 }
 
 /**
  * Authoritatively calculates the outstanding balance for an Invoice.
- * Resolves bill-wise across posted receipts, credit notes, and customer advances.
+ * Resolves bill-wise across:
+ * Opening AR + Posted Invoices + Debit Adjustments - Posted Receipts - Posted Credit Notes
+ * - Advance / Customer Credit Allocations - Write-offs / Refund Adjustments ± Reversals = Closing AR.
  * Draft documents contribute 0.00 to AR.
  */
 export function resolveCanonicalInvoiceOutstanding(
@@ -114,6 +120,9 @@ export function resolveCanonicalInvoiceOutstanding(
       invoiceId: invoice.id,
       invoiceNumber: invoice.number,
       grandTotal: invoice.grandTotal || 0,
+      openingAr: 0,
+      debitAdjustments: 0,
+      effectiveBilledTotal: 0,
       totalSettled: 0,
       remainingBalance: 0, // Drafts have ZERO accounting receivable
       isPaid: false,
@@ -121,13 +130,24 @@ export function resolveCanonicalInvoiceOutstanding(
         receiptAllocations: 0,
         creditNoteAllocations: 0,
         advanceAllocations: 0,
+        writeOffs: 0,
       },
     };
   }
 
   const grandTotalPaise = Math.round((invoice.grandTotal || 0) * 100);
+  const openingArPaise = (invoice as any).openingArPaise !== undefined
+    ? (invoice as any).openingArPaise
+    : (invoice as any).isOpeningBalance
+    ? Math.round(((invoice as any).openingAr || (invoice as any).openingBalance || 0) * 100)
+    : 0;
+  const debitAdjustmentsPaise = (invoice as any).debitAdjustmentsPaise !== undefined
+    ? (invoice as any).debitAdjustmentsPaise
+    : Math.round(((invoice as any).debitAdjustments || (invoice as any).debitAdjustment || 0) * 100);
 
-  // 1. Receipts allocated specifically to this invoice
+  const effectiveBilledPaise = openingArPaise + grandTotalPaise + debitAdjustmentsPaise;
+
+  // 1. Receipts allocated specifically to this invoice (Posted only, reversed excluded)
   let receiptAllocatedPaise = 0;
   for (const r of receipts) {
     if (!isPostedReceipt(r)) continue;
@@ -147,7 +167,7 @@ export function resolveCanonicalInvoiceOutstanding(
     }
   }
 
-  // 2. Sales Returns / Credit Notes allocated to this invoice
+  // 2. Sales Returns / Credit Notes allocated to this invoice (Posted only)
   let creditNoteAllocatedPaise = 0;
   for (const ret of salesReturns) {
     if (!isPostedSalesReturn(ret)) continue;
@@ -186,22 +206,27 @@ export function resolveCanonicalInvoiceOutstanding(
     }
   }
 
-  // 4. Stored invoice.amountPaid / invoice.balance fallback
+  // 4. Bad debt / dispute write-offs and approved refund adjustments
+  const writeOffPaise = (invoice as any).writeOffPaise !== undefined
+    ? (invoice as any).writeOffPaise
+    : Math.round(((invoice as any).writeOffAmount || (invoice as any).writeOff || (invoice as any).discountAdjustment || 0) * 100);
+
+  // 5. Stored invoice.amountPaid / invoice.balance fallback
   const storedPaidPaise = Math.round((invoice.amountPaid || 0) * 100);
   const storedBalancePaise = invoice.balance !== undefined ? Math.round(invoice.balance * 100) : undefined;
-  const storedPaidFromBalance = storedBalancePaise !== undefined ? Math.max(0, grandTotalPaise - storedBalancePaise) : 0;
+  const storedPaidFromBalance = storedBalancePaise !== undefined ? Math.max(0, effectiveBilledPaise - storedBalancePaise) : 0;
 
   // Maximum proven paid amount
   const totalSettledPaise = Math.min(
-    grandTotalPaise,
+    effectiveBilledPaise,
     Math.max(
-      receiptAllocatedPaise + creditNoteAllocatedPaise + advanceAllocatedPaise,
+      receiptAllocatedPaise + creditNoteAllocatedPaise + advanceAllocatedPaise + writeOffPaise,
       storedPaidPaise,
       storedPaidFromBalance
     )
   );
 
-  const remainingBalancePaise = Math.max(0, grandTotalPaise - totalSettledPaise);
+  const remainingBalancePaise = Math.max(0, effectiveBilledPaise - totalSettledPaise);
   const remainingBalance = remainingBalancePaise / 100;
   const isPaid = remainingBalance <= 0.01;
 
@@ -209,6 +234,9 @@ export function resolveCanonicalInvoiceOutstanding(
     invoiceId: invoice.id,
     invoiceNumber: invoice.number,
     grandTotal: invoice.grandTotal || 0,
+    openingAr: openingArPaise / 100,
+    debitAdjustments: debitAdjustmentsPaise / 100,
+    effectiveBilledTotal: effectiveBilledPaise / 100,
     totalSettled: totalSettledPaise / 100,
     remainingBalance: isPaid ? 0 : remainingBalance,
     isPaid,
@@ -216,6 +244,7 @@ export function resolveCanonicalInvoiceOutstanding(
       receiptAllocations: receiptAllocatedPaise / 100,
       creditNoteAllocations: creditNoteAllocatedPaise / 100,
       advanceAllocations: advanceAllocatedPaise / 100,
+      writeOffs: writeOffPaise / 100,
     },
   };
 }
@@ -224,13 +253,25 @@ export interface PurchaseSettlementDetail {
   purchaseId: string;
   purchaseNumber: string;
   grandTotal: number;
+  openingAp: number;
+  creditAdjustments: number;
+  effectiveBilledTotal: number;
   totalSettled: number;
   remainingBalance: number;
   isPaid: boolean;
+  allocations: {
+    paymentAllocations: number;
+    debitNoteAllocations: number;
+    advanceAllocations: number;
+    discounts: number;
+  };
 }
 
 /**
  * Authoritatively calculates the outstanding balance for a Purchase.
+ * Resolves bill-wise across:
+ * Opening AP + Posted Purchases + Credit Adjustments - Posted Supplier Payments - Debit Notes
+ * - Supplier Advances Applied - Discounts / Refunds ± Reversals = Closing AP.
  * Draft documents contribute 0.00 to AP.
  */
 export function resolveCanonicalPurchaseOutstanding(
@@ -242,14 +283,34 @@ export function resolveCanonicalPurchaseOutstanding(
       purchaseId: purchase.id,
       purchaseNumber: purchase.number,
       grandTotal: purchase.grandTotal || 0,
+      openingAp: 0,
+      creditAdjustments: 0,
+      effectiveBilledTotal: 0,
       totalSettled: 0,
       remainingBalance: 0, // Draft purchases have ZERO AP
       isPaid: false,
+      allocations: {
+        paymentAllocations: 0,
+        debitNoteAllocations: 0,
+        advanceAllocations: 0,
+        discounts: 0,
+      },
     };
   }
 
   const grandTotalPaise = Math.round((purchase.grandTotal || 0) * 100);
+  const openingApPaise = (purchase as any).openingApPaise !== undefined
+    ? (purchase as any).openingApPaise
+    : (purchase as any).isOpeningBalance
+    ? Math.round(((purchase as any).openingAp || (purchase as any).openingBalance || 0) * 100)
+    : 0;
+  const creditAdjustmentsPaise = (purchase as any).creditAdjustmentsPaise !== undefined
+    ? (purchase as any).creditAdjustmentsPaise
+    : Math.round(((purchase as any).creditAdjustments || (purchase as any).creditAdjustment || 0) * 100);
 
+  const effectiveBilledPaise = openingApPaise + grandTotalPaise + creditAdjustmentsPaise;
+
+  // 1. Supplier payments allocated to this purchase bill
   let paymentAllocatedPaise = 0;
   for (const p of payments) {
     if (!isPostedPayment(p)) continue;
@@ -265,16 +326,36 @@ export function resolveCanonicalPurchaseOutstanding(
     }
   }
 
+  // 2. Debit Notes / Purchase Returns allocated
+  const debitNoteAllocatedPaise = (purchase as any).debitNoteAllocatedPaise !== undefined
+    ? (purchase as any).debitNoteAllocatedPaise
+    : Math.round(((purchase as any).debitNotesTotal || (purchase as any).debitNoteAmount || 0) * 100);
+
+  // 3. Supplier Advances Applied
+  const supplierAdvancePaise = (purchase as any).supplierAdvancesAppliedPaise !== undefined
+    ? (purchase as any).supplierAdvancesAppliedPaise
+    : (purchase as any).advanceAllocatedPaise || 0;
+
+  // 4. Settlement discounts / rebates
+  const discountPaise = (purchase as any).discountPaise !== undefined
+    ? (purchase as any).discountPaise
+    : Math.round(((purchase as any).settlementDiscount || (purchase as any).discountAdjustment || (purchase as any).discountTotal || 0) * 100);
+
+  // 5. Stored fallbacks
   const storedPaidPaise = Math.round((purchase.amountPaid || 0) * 100);
   const storedBalancePaise = purchase.balance !== undefined ? Math.round(purchase.balance * 100) : undefined;
-  const storedPaidFromBalance = storedBalancePaise !== undefined ? Math.max(0, grandTotalPaise - storedBalancePaise) : 0;
+  const storedPaidFromBalance = storedBalancePaise !== undefined ? Math.max(0, effectiveBilledPaise - storedBalancePaise) : 0;
 
   const totalSettledPaise = Math.min(
-    grandTotalPaise,
-    Math.max(paymentAllocatedPaise, storedPaidPaise, storedPaidFromBalance)
+    effectiveBilledPaise,
+    Math.max(
+      paymentAllocatedPaise + debitNoteAllocatedPaise + supplierAdvancePaise + discountPaise,
+      storedPaidPaise,
+      storedPaidFromBalance
+    )
   );
 
-  const remainingBalancePaise = Math.max(0, grandTotalPaise - totalSettledPaise);
+  const remainingBalancePaise = Math.max(0, effectiveBilledPaise - totalSettledPaise);
   const remainingBalance = remainingBalancePaise / 100;
   const isPaid = remainingBalance <= 0.01;
 
@@ -282,24 +363,43 @@ export function resolveCanonicalPurchaseOutstanding(
     purchaseId: purchase.id,
     purchaseNumber: purchase.number,
     grandTotal: purchase.grandTotal || 0,
+    openingAp: openingApPaise / 100,
+    creditAdjustments: creditAdjustmentsPaise / 100,
+    effectiveBilledTotal: effectiveBilledPaise / 100,
     totalSettled: totalSettledPaise / 100,
     remainingBalance: isPaid ? 0 : remainingBalance,
     isPaid,
+    allocations: {
+      paymentAllocations: paymentAllocatedPaise / 100,
+      debitNoteAllocations: debitNoteAllocatedPaise / 100,
+      advanceAllocations: supplierAdvancePaise / 100,
+      discounts: discountPaise / 100,
+    },
   };
 }
 
 export interface CustomerCreditItem {
+  id?: string;
   originatingType: "RECEIPT" | "CREDIT_NOTE";
   originatingId: string;
   originatingNumber: string;
+  receiptId?: string;
+  receiptNumber?: string;
   customerId: string;
+  invoiceId?: string;
+  invoiceNumber?: string;
+  branchId?: string;
+  amountCreated: number;
   originalAmount: number;
   amountAllocated: number;
+  amountApplied: number;
+  remainingAmount: number;
   remainingCredit: number;
   appliedInvoiceNumber?: string;
   date: number;
-  branchId?: string;
-  status: "available" | "applied" | "partial";
+  createdAt?: number;
+  status: "available" | "applied" | "partial" | "reversed" | "cancelled";
+  reversalVoucherId?: string;
 }
 
 export function calculateAuthoritativeCustomerCredits(
@@ -349,6 +449,7 @@ export function calculateAuthoritativeCustomerCredits(
     const receiptTotalPaise = Math.round((r.amount || 0) * 100);
     let allocatedPaise = 0;
     let appliedInvoiceNumber: string | undefined;
+    let matchedInvoiceId: string | undefined;
 
     if (r.allocatedInvoices && r.allocatedInvoices.length > 0) {
       for (const a of r.allocatedInvoices) {
@@ -356,10 +457,14 @@ export function calculateAuthoritativeCustomerCredits(
         if (!appliedInvoiceNumber && a.invoiceNumber) {
           appliedInvoiceNumber = a.invoiceNumber;
         }
+        if (!matchedInvoiceId && a.invoiceId) {
+          matchedInvoiceId = a.invoiceId;
+        }
       }
     } else if (r.invoiceId && r.invoiceId !== "none") {
       const targetInv = invoices.find((i) => i.id === r.invoiceId || i.number === (r as any).invoiceNumber);
       if (targetInv) {
+        matchedInvoiceId = targetInv.id;
         appliedInvoiceNumber = targetInv.number;
         const targetGrandPaise = Math.round(targetInv.grandTotal * 100);
         allocatedPaise = Math.min(receiptTotalPaise, targetGrandPaise);
@@ -375,17 +480,28 @@ export function calculateAuthoritativeCustomerCredits(
 
     if (remainingPaise > 0) {
       totalCustomerCreditsPaise += remainingPaise;
+      const remainingRupees = remainingPaise / 100;
+      const allocatedRupees = allocatedPaise / 100;
       creditItems.push({
+        id: `cc_${r.id}`,
         originatingType: "RECEIPT",
         originatingId: r.id,
         originatingNumber: r.number,
+        receiptId: r.id,
+        receiptNumber: r.number,
         customerId: r.customerId,
+        invoiceId: matchedInvoiceId || (r.invoiceId !== "none" ? r.invoiceId : undefined),
+        invoiceNumber: appliedInvoiceNumber || (r as any).invoiceNumber,
+        branchId: r.branchId,
+        amountCreated: remainingRupees,
         originalAmount: r.amount,
-        amountAllocated: allocatedPaise / 100,
-        remainingCredit: remainingPaise / 100,
+        amountAllocated: allocatedRupees,
+        amountApplied: allocatedRupees,
+        remainingAmount: remainingRupees,
+        remainingCredit: remainingRupees,
         appliedInvoiceNumber,
         date: r.date,
-        branchId: r.branchId,
+        createdAt: r.date,
         status: remainingPaise === receiptTotalPaise ? "available" : "partial",
       });
     }
@@ -418,17 +534,26 @@ export function calculateAuthoritativeCustomerCredits(
 
     if (creditGenerated > 0) {
       totalCustomerCreditsPaise += creditGenerated;
+      const creditRupees = creditGenerated / 100;
+      const allocatedRupees = amountAllocatedPaise / 100;
       creditItems.push({
+        id: `cc_${ret.id}`,
         originatingType: "CREDIT_NOTE",
         originatingId: ret.creditNoteId || ret.id,
         originatingNumber: ret.creditNoteNumber || ret.number,
         customerId: ret.customerId,
+        invoiceId: targetInv?.id || ret.originalInvoiceId,
+        invoiceNumber: ret.originalInvoiceNumber || targetInv?.number,
+        branchId: ret.branchId,
+        amountCreated: creditRupees,
         originalAmount: ret.grandTotal,
-        amountAllocated: amountAllocatedPaise / 100,
-        remainingCredit: creditGenerated / 100,
+        amountAllocated: allocatedRupees,
+        amountApplied: allocatedRupees,
+        remainingAmount: creditRupees,
+        remainingCredit: creditRupees,
         appliedInvoiceNumber: ret.originalInvoiceNumber || targetInv?.number,
         date: ret.date,
-        branchId: ret.branchId,
+        createdAt: ret.date,
         status: "available",
       });
     }
@@ -464,17 +589,26 @@ export function calculateAuthoritativeCustomerCredits(
 
     if (creditGenerated > 0) {
       totalCustomerCreditsPaise += creditGenerated;
+      const creditRupees = creditGenerated / 100;
+      const allocatedRupees = amountAllocatedPaise / 100;
       creditItems.push({
+        id: `cc_${cn.id}`,
         originatingType: "CREDIT_NOTE",
         originatingId: cn.id,
         originatingNumber: (cn as any).creditNoteNumber || cn.number,
         customerId: cn.customerId,
+        invoiceId: targetInv?.id || cn.originalInvoiceId,
+        invoiceNumber: cn.originalInvoiceNumber || targetInv?.number,
+        branchId: cn.branchId,
+        amountCreated: creditRupees,
         originalAmount: cn.grandTotal,
-        amountAllocated: amountAllocatedPaise / 100,
-        remainingCredit: creditGenerated / 100,
+        amountAllocated: allocatedRupees,
+        amountApplied: allocatedRupees,
+        remainingAmount: creditRupees,
+        remainingCredit: creditRupees,
         appliedInvoiceNumber: cn.originalInvoiceNumber || targetInv?.number,
         date: cn.date,
-        branchId: cn.branchId,
+        createdAt: cn.date,
         status: "available",
       });
     }
