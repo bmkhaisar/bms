@@ -1052,3 +1052,352 @@ test("Hardening 13: Customer Credit Audit — REC/0005 (₹31,999.98) unapplied 
   assert.equal(residualCustomerCredit, 445.98, "Residual customer credit is exactly ₹445.98");
 });
 
+test("Hardening 14: Receipt allocation by internal invoice ID", () => {
+  const invoice = {
+    id: "inv_internal_uuid_101",
+    number: "INV/2026-27/0002",
+    customerId: "cust_alpha",
+    companyId: "comp_1",
+    grandTotal: 63786,
+    status: "posted",
+    postingStatus: "posted",
+  };
+  const receipt = {
+    id: "rec_by_id",
+    number: "REC-ID-1",
+    customerId: "cust_alpha",
+    companyId: "comp_1",
+    status: "posted",
+    postingStatus: "posted",
+    amount: 63786,
+    allocatedInvoices: [
+      {
+        invoiceId: "inv_internal_uuid_101",
+        amountPaise: 6378600,
+      },
+    ],
+  };
+
+  const settlement = resolveCanonicalInvoiceOutstanding(invoice, [receipt]);
+  assert.equal(settlement.remainingBalance, 0);
+  assert.equal(settlement.isPaid, true);
+  assert.equal(settlement.totalSettled, 63786);
+});
+
+test("Hardening 15: Receipt allocation by invoice number", () => {
+  const invoice = {
+    id: "inv_internal_uuid_102",
+    number: "INV/2026-27/0002",
+    customerId: "cust_alpha",
+    companyId: "comp_1",
+    grandTotal: 63786,
+    status: "posted",
+    postingStatus: "posted",
+  };
+  const receipt = {
+    id: "rec_by_num",
+    number: "REC-NUM-1",
+    customerId: "cust_alpha",
+    companyId: "comp_1",
+    status: "posted",
+    postingStatus: "posted",
+    amount: 63786,
+    allocatedInvoices: [
+      {
+        invoiceId: "",
+        invoiceNumber: "INV/2026-27/0002",
+        amountPaise: 6378600,
+      },
+    ],
+  };
+
+  const settlement = resolveCanonicalInvoiceOutstanding(invoice, [receipt]);
+  assert.equal(settlement.remainingBalance, 0);
+  assert.equal(settlement.isPaid, true);
+});
+
+test("Hardening 16: Wrong-party allocation rejection", () => {
+  const invoiceCustomerAlpha = {
+    id: "inv_party_test_1",
+    number: "INV/2026-27/0002",
+    customerId: "cust_alpha",
+    companyId: "comp_1",
+    grandTotal: 63786,
+    status: "posted",
+    postingStatus: "posted",
+  };
+
+  // Receipt is from Customer Beta with an allocation trying to reference Alpha's invoice number
+  const receiptCustomerBeta = {
+    id: "rec_wrong_party",
+    number: "REC-BETA-1",
+    customerId: "cust_beta", // DIFFERENT CUSTOMER
+    companyId: "comp_1",
+    status: "posted",
+    postingStatus: "posted",
+    amount: 63786,
+    allocatedInvoices: [
+      {
+        invoiceId: "inv_party_test_1",
+        invoiceNumber: "INV/2026-27/0002",
+        amountPaise: 6378600,
+      },
+    ],
+  };
+
+  // Must reject wrong-party allocation
+  const settlement = resolveCanonicalInvoiceOutstanding(invoiceCustomerAlpha, [receiptCustomerBeta]);
+  assert.equal(settlement.remainingBalance, 63786, "Wrong-party receipt cannot settle Customer Alpha's invoice");
+  assert.equal(settlement.isPaid, false);
+});
+
+test("Hardening 17: Wrong-branch allocation rejection", () => {
+  const invoiceBranch1 = {
+    id: "inv_branch_test_1",
+    number: "INV/2026-27/0002",
+    customerId: "cust_alpha",
+    companyId: "comp_1",
+    branchId: "branch_mumbai",
+    grandTotal: 63786,
+    status: "posted",
+    postingStatus: "posted",
+  };
+
+  // Receipt is from Delhi branch
+  const receiptBranch2 = {
+    id: "rec_wrong_branch",
+    number: "REC-DELHI-1",
+    customerId: "cust_alpha",
+    companyId: "comp_1",
+    branchId: "branch_delhi", // DIFFERENT BRANCH
+    status: "posted",
+    postingStatus: "posted",
+    amount: 63786,
+    allocatedInvoices: [
+      {
+        invoiceId: "inv_branch_test_1",
+        invoiceNumber: "INV/2026-27/0002",
+        amountPaise: 6378600,
+      },
+    ],
+  };
+
+  const settlement = resolveCanonicalInvoiceOutstanding(invoiceBranch1, [receiptBranch2]);
+  assert.equal(settlement.remainingBalance, 63786, "Wrong-branch receipt cannot settle Branch 1's invoice");
+  assert.equal(settlement.isPaid, false);
+});
+
+test("Hardening 18: Authoritative Customer Credit: Creation vs Explicit Application vs Available Residual", () => {
+  const rec0003 = {
+    id: "rec_003",
+    number: "REC/2026-27/0003",
+    customerId: "cust_alpha",
+    amount: 32232.0,
+    status: "posted",
+    postingStatus: "posted",
+    allocatedInvoices: [
+      {
+        invoiceId: "inv_002",
+        invoiceNumber: "INV/2026-27/0002",
+        amountPaise: 3223200,
+      },
+    ],
+  };
+
+  const rec0005 = {
+    id: "rec_005",
+    number: "REC/2026-27/0005",
+    customerId: "cust_alpha",
+    amount: 31999.98,
+    status: "posted",
+    postingStatus: "posted",
+    customerCreditPaise: 293298, // ₹2,932.98 created
+    allocatedInvoices: [
+      {
+        invoiceId: "inv_002",
+        invoiceNumber: "INV/2026-27/0002",
+        amountPaise: 2906700,
+      },
+    ],
+  };
+
+  // Case A: Before explicit credit application
+  const inv0002Unapplied = {
+    id: "inv_002",
+    number: "INV/2026-27/0002",
+    customerId: "cust_alpha",
+    grandTotal: 63786,
+    status: "posted",
+    postingStatus: "posted",
+  };
+
+  const settlementBefore = resolveCanonicalInvoiceOutstanding(inv0002Unapplied, [rec0003, rec0005]);
+  assert.equal(settlementBefore.remainingBalance, 2487, "Without explicit credit application, invoice outstanding is ₹2,487.00");
+  assert.equal(settlementBefore.isPaid, false);
+
+  const creditsBefore = calculateAuthoritativeCustomerCredits({
+    receipts: [rec0003, rec0005],
+    invoices: [inv0002Unapplied],
+  });
+  assert.equal(creditsBefore.customerCreditsCreated, 2932.98, "Credit Created = ₹2,932.98");
+  assert.equal(creditsBefore.customerCreditsApplied, 0, "Credit Applied = ₹0.00");
+  assert.equal(creditsBefore.customerCreditsAvailable, 2932.98, "Credit Available = ₹2,932.98");
+
+  // Case B: After explicit credit application of ₹2,487.00
+  const inv0002Applied = {
+    id: "inv_002",
+    number: "INV/2026-27/0002",
+    customerId: "cust_alpha",
+    grandTotal: 63786,
+    customerCreditAppliedPaise: 248700, // Explicit allocation of ₹2,487.00
+    status: "posted",
+    postingStatus: "posted",
+  };
+
+  const settlementAfter = resolveCanonicalInvoiceOutstanding(inv0002Applied, [rec0003, rec0005]);
+  assert.equal(settlementAfter.remainingBalance, 0, "With explicit credit application, invoice outstanding is ₹0.00 (PAID)");
+  assert.equal(settlementAfter.isPaid, true);
+
+  const creditsAfter = calculateAuthoritativeCustomerCredits({
+    receipts: [rec0003, rec0005],
+    invoices: [inv0002Applied],
+  });
+  assert.equal(creditsAfter.customerCreditsCreated, 2932.98, "Credit Created = ₹2,932.98");
+  assert.equal(creditsAfter.customerCreditsApplied, 2487.0, "Credit Applied = ₹2,487.00");
+  assert.equal(creditsAfter.customerCreditsAvailable, 445.98, "Credit Available = ₹445.98");
+});
+
+test("Hardening 19: Accounting Invariant — Gross Open Dues - Available Credits = Net AR Control Balance = ₹67,203.02", () => {
+  // Scenario A: Before explicit credit application
+  // Open Invoices:
+  // INV/0002: Grand Total ₹63,786 - ₹61,299 receipt allocation = ₹2,487 outstanding
+  // INV/0015: Grand Total ₹67,649 - ₹0 allocation = ₹67,649 outstanding
+  // Gross Open Invoice Dues = ₹2,487 + ₹67,649 = ₹70,136.00
+  // Available Customer Credit = ₹2,932.98
+  // Net AR = ₹70,136.00 - ₹2,932.98 = ₹67,203.02
+
+  const inv0002Before = {
+    id: "inv_002",
+    number: "INV/2026-27/0002",
+    customerId: "cust_alpha",
+    grandTotal: 63786,
+    status: "posted",
+    postingStatus: "posted",
+    date: 1775010000000,
+  };
+  const inv0015 = {
+    id: "inv_015",
+    number: "INV/2026-27/0015",
+    customerId: "cust_beta",
+    grandTotal: 67649,
+    status: "posted",
+    postingStatus: "posted",
+    date: 1775020000000,
+  };
+
+  const rec0003 = {
+    id: "rec_003",
+    number: "REC/2026-27/0003",
+    customerId: "cust_alpha",
+    amount: 32232.0,
+    status: "posted",
+    postingStatus: "posted",
+    date: 1775030000000,
+    allocatedInvoices: [{ invoiceId: "inv_002", amountPaise: 3223200 }],
+  };
+
+  const rec0005 = {
+    id: "rec_005",
+    number: "REC/2026-27/0005",
+    customerId: "cust_alpha",
+    amount: 31999.98,
+    status: "posted",
+    postingStatus: "posted",
+    date: 1775040000000,
+    customerCreditPaise: 293298,
+    allocatedInvoices: [{ invoiceId: "inv_002", amountPaise: 2906700 }],
+  };
+
+  const debtorLedger = {
+    id: "led_debtor",
+    name: "Sundry Debtors",
+    groupId: "grp_sundry_debtors",
+    partyType: "SUNDRY_DEBTOR",
+    openingBalance: 0,
+    openingBalanceType: "dr",
+  };
+
+  // Double-entry vouchers:
+  // Voucher 1: Sale 1 (INV/0002) Dr Sundry Debtors 63,786
+  // Voucher 2: Sale 2 (INV/0015) Dr Sundry Debtors 67,649
+  // Voucher 3: Receipt 1 (REC/0003) Cr Sundry Debtors 32,232
+  // Voucher 4: Receipt 2 (REC/0005) Cr Sundry Debtors 31,999.98
+  const vouchers = [
+    {
+      id: "v_1",
+      status: "posted",
+      date: 1775010000000,
+      lines: [{ ledgerId: "led_debtor", debit: 63786, credit: 0 }],
+    },
+    {
+      id: "v_2",
+      status: "posted",
+      date: 1775020000000,
+      lines: [{ ledgerId: "led_debtor", debit: 67649, credit: 0 }],
+    },
+    {
+      id: "v_3",
+      status: "posted",
+      date: 1775030000000,
+      lines: [{ ledgerId: "led_debtor", debit: 0, credit: 32232 }],
+    },
+    {
+      id: "v_4",
+      status: "posted",
+      date: 1775040000000,
+      lines: [{ ledgerId: "led_debtor", debit: 0, credit: 31999.98 }],
+    },
+  ];
+
+  const metricsBefore = computeDashboardMetrics({
+    invoices: [inv0002Before, inv0015],
+    purchases: [],
+    receipts: [rec0003, rec0005],
+    payments: [],
+    products: [],
+    ledgers: [debtorLedger],
+    vouchers,
+  });
+
+  assert.equal(metricsBefore.grossReceivables, 70136, "Gross Open Invoice Dues = ₹70,136.00");
+  assert.equal(metricsBefore.customerCreditsAvailable, 2932.98, "Available Customer Credit = ₹2,932.98");
+  assert.equal(metricsBefore.netReceivables, 67203.02, "Net AR = ₹67,203.02");
+  assert.equal(metricsBefore.controlLedgerReceivable, 67203.02, "Control Ledger = ₹67,203.02");
+  assert.equal(metricsBefore.isArReconciled, true, "AR is 100% reconciled with customer control ledger");
+
+  // Scenario B: After explicit credit application of ₹2,487 to INV/0002
+  const inv0002After = {
+    ...inv0002Before,
+    customerCreditAppliedPaise: 248700,
+  };
+
+  const metricsAfter = computeDashboardMetrics({
+    invoices: [inv0002After, inv0015],
+    purchases: [],
+    receipts: [rec0003, rec0005],
+    payments: [],
+    products: [],
+    ledgers: [debtorLedger],
+    vouchers,
+  });
+
+  assert.equal(metricsAfter.grossReceivables, 67649, "Gross Open Invoice Dues = ₹67,649.00");
+  assert.equal(metricsAfter.customerCreditsCreated, 2932.98, "Credit Created = ₹2,932.98");
+  assert.equal(metricsAfter.customerCreditsApplied, 2487, "Credit Applied = ₹2,487.00");
+  assert.equal(metricsAfter.customerCreditsAvailable, 445.98, "Credit Available = ₹445.98");
+  assert.equal(metricsAfter.netReceivables, 67203.02, "Net AR remains exactly ₹67,203.02");
+  assert.equal(metricsAfter.controlLedgerReceivable, 67203.02, "Control Ledger remains exactly ₹67,203.02");
+  assert.equal(metricsAfter.isArReconciled, true, "AR remains 100% reconciled");
+});
+
+

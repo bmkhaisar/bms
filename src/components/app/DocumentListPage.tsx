@@ -1892,6 +1892,8 @@ async function openNew() {
                                     party={p}
                                     company={activeCompany || company}
                                     receipts={allReceipts}
+                                    salesReturns={allSalesReturns}
+                                    creditNotes={allCreditNotes}
                                     compact={true}
                                   />
                                 </div>
@@ -3289,6 +3291,8 @@ async function openNew() {
                 party={partyById((preview as any).customerId)}
                 company={activeCompany || company}
                 receipts={allReceipts}
+                salesReturns={allSalesReturns}
+                creditNotes={allCreditNotes}
                 onSendReminder={() => setShareTargetDoc({ doc: preview as unknown as Invoice, mode: "reminder" })}
               />
             </div>

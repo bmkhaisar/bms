@@ -19,8 +19,17 @@ export interface DashboardMetrics {
   totalSales: number;
   totalPurchases: number;
   totalReceivables: number;
+  grossReceivables?: number;
+  netReceivables?: number;
   totalCustomerCredits?: number;
+  customerCreditsCreated?: number;
+  customerCreditsApplied?: number;
+  customerCreditsAvailable?: number;
+  controlLedgerReceivable?: number;
+  isArReconciled?: boolean;
   totalPayables: number;
+  grossPayables?: number;
+  netPayables?: number;
   totalAmountReceived: number;
   receivedByPaymentMode: {
     cash: number;
@@ -321,16 +330,80 @@ export function computeDashboardMetrics(params: {
     branchId: isBranchScoped ? targetBranchId : undefined,
   });
 
-  let totalReceivables = 0;
   let totalCustomerCredits = customerCreditCalc.totalCustomerCredits;
-  let totalPayables = 0;
+  const customerCreditsCreated = customerCreditCalc.customerCreditsCreated ?? totalCustomerCredits;
+  const customerCreditsApplied = customerCreditCalc.customerCreditsApplied ?? 0;
+  const customerCreditsAvailable = customerCreditCalc.customerCreditsAvailable ?? totalCustomerCredits;
 
   // AR & AP Derivation
-  // Accounts Receivable and Accounts Payable derive authoritatively from canonical bill-wise settlements:
-  // Opening AR/AP + Posted Invoices/Purchases + Adjustments - Posted Receipts/Payments - Credit/Debit Notes - Advances - Write-offs
-  // This guarantees 100% cross-screen consistency between Invoice row balances, Dashboard AR, Aging, Customer Insights, and CA Review.
-  totalReceivables = invoiceSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
-  totalPayables = purchaseSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
+  // 1. Gross Open Invoice Dues (Sum of bill-wise remaining balances on open invoices)
+  const grossReceivables = invoiceSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
+  const totalPayables = purchaseSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
+  const grossPayables = totalPayables;
+
+  // 2. Net Accounts Receivable Control Balance = Gross Open Invoice Dues - Available Customer Credits
+  const netReceivables = Math.max(0, Math.round((grossReceivables - customerCreditsAvailable) * 100) / 100);
+
+  // 3. Double-entry Sundry Debtors (Customer Ledger) control derivation from posted vouchers
+  const isSundryDebtorLedger = (l: Ledger) =>
+    l.groupId === "grp_sundry_debtors" ||
+    (l.partyType as string) === "SUNDRY_DEBTOR" ||
+    (l.partyType as string) === "SUNDRY_DEBTORS" ||
+    (l.partyType as string) === "CUSTOMER" ||
+    (l.partyType as string) === "customer" ||
+    l.code === "1003";
+
+  const sundryDebtorLedgers = ledgers.filter(isSundryDebtorLedger);
+  let controlLedgerReceivablePaise = 0;
+  let hasDebtorLedgers = false;
+
+  if (vouchers && vouchers.length > 0 && sundryDebtorLedgers.length > 0) {
+    const eligibleVouchers = vouchers.filter((v: any) => {
+      if (v.status !== "posted") return false;
+      if (isBranchScoped && v.branchId && v.branchId !== targetBranchId) return false;
+      return true;
+    });
+
+    for (const l of sundryDebtorLedgers) {
+      const rawOpen = Math.abs(l.openingBalance || 0);
+      const openType = (l.openingBalanceType || "dr").toLowerCase() === "cr" ? "cr" : "dr";
+      let signedOpeningPaise = openType === "dr" ? Math.round(rawOpen * 100) : -Math.round(rawOpen * 100);
+
+      let periodDrPaise = 0;
+      let periodCrPaise = 0;
+      let ledgerHasLines = false;
+
+      for (const v of eligibleVouchers) {
+        const vTime = typeof v.date === "number" ? v.date : new Date(v.date).getTime();
+        if (financialYearStart && vTime < financialYearStart) continue;
+        if (financialYearEnd && vTime > financialYearEnd) continue;
+
+        if (v.lines && Array.isArray(v.lines)) {
+          for (const line of v.lines) {
+            if (line.ledgerId === l.id) {
+              ledgerHasLines = true;
+              periodDrPaise += Math.round((line.debit || 0) * 100);
+              periodCrPaise += Math.round((line.credit || 0) * 100);
+            }
+          }
+        }
+      }
+
+      if (ledgerHasLines || signedOpeningPaise !== 0) {
+        hasDebtorLedgers = true;
+        controlLedgerReceivablePaise += (signedOpeningPaise + periodDrPaise - periodCrPaise);
+      }
+    }
+  }
+
+  const controlLedgerReceivable = hasDebtorLedgers
+    ? controlLedgerReceivablePaise / 100
+    : netReceivables;
+
+  const isArReconciled = Math.abs(netReceivables - controlLedgerReceivable) < 0.05;
+
+  // Total open invoice receivables (Gross Open Invoice Dues)
+  const totalReceivables = grossReceivables;
 
   // 4b. CANONICAL DOUBLE-ENTRY CASH & BANK DERIVATION
   // Canonical Cash & Bank equals signed closing balances of active Cash and Bank ledgers
@@ -744,8 +817,17 @@ export function computeDashboardMetrics(params: {
     netSales,
     totalPurchases,
     totalReceivables,
-    totalCustomerCredits,
+    grossReceivables,
+    netReceivables,
+    totalCustomerCredits: customerCreditsAvailable,
+    customerCreditsCreated,
+    customerCreditsApplied,
+    customerCreditsAvailable,
+    controlLedgerReceivable,
+    isArReconciled,
     totalPayables,
+    grossPayables,
+    netPayables: totalPayables,
     totalAmountReceived,
     receivedByPaymentMode,
     totalPaymentsMade,

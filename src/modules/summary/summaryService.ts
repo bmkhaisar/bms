@@ -82,6 +82,7 @@ export async function computeCustomerSummary(
   let receipts = options?.receipts;
   let customer = options?.customer;
 
+  let salesReturns: any[] = [];
   if (typeof window !== "undefined") {
     if (!invoices) {
       invoices = await db().invoices.where("customerId").equals(customerId).toArray();
@@ -96,6 +97,7 @@ export async function computeCustomerSummary(
     if (!customer) {
       customer = await db().customers.get(customerId);
     }
+    salesReturns = await db().salesReturns.where("customerId").equals(customerId).toArray();
   } else {
     invoices = invoices?.filter((i) => i.customerId === customerId) || [];
     receipts = receipts?.filter((r) => r.customerId === customerId) || [];
@@ -114,7 +116,7 @@ export async function computeCustomerSummary(
 
   // Authoritative bill-wise settlement resolution
   const invoiceSettlements = postedInvoices.map((inv) =>
-    resolveCanonicalInvoiceOutstanding(inv, receipts, [], options?.creditNotes as any)
+    resolveCanonicalInvoiceOutstanding(inv, receipts, salesReturns, options?.creditNotes as any)
   );
 
   const outstanding = invoiceSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);

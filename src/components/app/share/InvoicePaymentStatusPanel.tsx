@@ -3,7 +3,7 @@ import { formatMoney, formatDate } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar, CheckCircle2, Clock, AlertTriangle, AlertCircle, HandCoins, Bell } from "lucide-react";
-import type { Invoice, Party, CompanySettings, Receipt } from "@/lib/db";
+import type { Invoice, Party, CompanySettings, Receipt, SalesReturn, CreditNote } from "@/lib/db";
 import { computeInvoicePaymentInsight } from "@/modules/documents/sharing/paymentInsightService";
 
 interface InvoicePaymentStatusPanelProps {
@@ -11,6 +11,8 @@ interface InvoicePaymentStatusPanelProps {
   party?: Partial<Party> | null;
   company?: { defaultCreditDays?: number; creditDays?: number; [key: string]: any } | null;
   receipts?: Receipt[];
+  salesReturns?: SalesReturn[];
+  creditNotes?: CreditNote[];
   onSendReminder?: () => void;
   className?: string;
   compact?: boolean;
@@ -21,6 +23,8 @@ export function InvoicePaymentStatusPanel({
   party,
   company,
   receipts = [],
+  salesReturns = [],
+  creditNotes = [],
   onSendReminder,
   className = "",
   compact = false,
@@ -31,8 +35,10 @@ export function InvoicePaymentStatusPanel({
       party,
       company,
       receipts,
+      salesReturns,
+      creditNotes,
     });
-  }, [invoice, party, company, receipts]);
+  }, [invoice, party, company, receipts, salesReturns, creditNotes]);
 
   const {
     invoiceTotal,

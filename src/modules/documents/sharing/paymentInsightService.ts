@@ -1,4 +1,4 @@
-import type { Invoice, Party, CompanySettings, Receipt } from "../../../lib/db.ts";
+import type { Invoice, Party, CompanySettings, Receipt, SalesReturn, CreditNote } from "../../../lib/db.ts";
 import type { PaymentDueInsight } from "./bmsShareTypes";
 import {
   resolveCanonicalInvoiceOutstanding,
@@ -110,9 +110,11 @@ export function computeInvoicePaymentInsight(params: {
   party?: Partial<Party> | null;
   company?: { defaultCreditDays?: number; creditDays?: number; [key: string]: any } | null;
   receipts?: Receipt[];
+  salesReturns?: SalesReturn[];
+  creditNotes?: CreditNote[];
   asOfDate?: number; // Defaults to Date.now()
 }): PaymentDueInsight {
-  const { invoice, party, company, receipts = [] } = params;
+  const { invoice, party, company, receipts = [], salesReturns = [], creditNotes = [] } = params;
   const asOf = params.asOfDate ?? Date.now();
 
   // Correction 1: For existing/posted invoice, ALWAYS use frozen dueDate!
@@ -137,7 +139,7 @@ export function computeInvoicePaymentInsight(params: {
   );
 
   // Authoritative financial totals derived from canonical bill-wise settlement
-  const settlement = resolveCanonicalInvoiceOutstanding(invoice, receipts);
+  const settlement = resolveCanonicalInvoiceOutstanding(invoice, receipts, salesReturns, creditNotes);
   const invoiceTotal = invoice.grandTotal ?? 0;
   const balance = settlement.remainingBalance;
   const totalReceived = settlement.totalSettled;

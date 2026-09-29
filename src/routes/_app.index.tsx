@@ -49,6 +49,7 @@ import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { computeDashboardMetrics } from "@/modules/accounting/services/dashboardReportService";
+import { resolveCanonicalInvoiceOutstanding } from "@/modules/accounting/services/canonicalOutstandingService";
 import { buildCanonicalReportingScope } from "@/modules/accounting/services/reportingScope";
 import type { Ledger, Voucher } from "@/modules/accounting/types";
 import { useEffect, useState, useMemo } from "react";
@@ -310,12 +311,12 @@ function Dashboard() {
       href: "/receipts",
     },
     {
-      label: "Accounts Receivable",
-      value: formatMoney(metrics.totalReceivables),
+      label: "Accounts Receivable (Net)",
+      value: formatMoney(metrics.netReceivables ?? (metrics.totalReceivables - (metrics.totalCustomerCredits || 0))),
       icon: ArrowUpRight,
       tint: "text-amber-600 dark:text-amber-400",
-      subtext: metrics.totalCustomerCredits && metrics.totalCustomerCredits > 0
-        ? `Pending dues (Credits: ${formatMoney(metrics.totalCustomerCredits)})`
+      subtext: (metrics.customerCreditsAvailable ?? metrics.totalCustomerCredits ?? 0) > 0
+        ? `Gross: ${formatMoney(metrics.grossReceivables ?? metrics.totalReceivables)} | Available Credit: ${formatMoney(metrics.customerCreditsAvailable ?? metrics.totalCustomerCredits ?? 0)}`
         : "Pending customer dues",
       href: "/invoices",
     },
@@ -866,31 +867,38 @@ function Dashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50">
-                    {recentInvoices.map((inv) => (
-                      <tr key={inv.id} className="hover:bg-secondary/30 transition-colors">
-                        <td className="px-6 py-3 font-mono font-medium tabular-nums">{inv.number}</td>
-                        <td className="px-6 py-3 text-xs text-muted-foreground">{formatDate(inv.date)}</td>
-                        <td className="px-6 py-3">
-                          {inv.customerSnapshot?.name || customers.find((c) => c.id === inv.customerId)?.name || "—"}
-                        </td>
-                        <td className="px-6 py-3 text-right font-mono font-semibold tabular-nums">
-                          {formatMoney(inv.grandTotal)}
-                        </td>
-                        <td className="px-6 py-3">
-                          <span
-                            className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                              inv.status === "paid"
-                                ? "bg-mint/15 text-mint"
-                                : inv.status === "partial"
-                                ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                                : "bg-rose-500/15 text-rose-700 dark:text-rose-400"
-                            }`}
-                          >
-                            {inv.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {recentInvoices.map((inv) => {
+                      const settlement = resolveCanonicalInvoiceOutstanding(inv, receipts, salesReturns, creditNotes);
+                      const isSettled = settlement.isPaid || settlement.remainingBalance <= 0.01;
+                      const isPartial = !isSettled && (settlement.totalSettled > 0 || settlement.remainingBalance < inv.grandTotal);
+                      const displayStatus = isSettled ? "Paid" : isPartial ? "Partial" : ((inv as any).status || "Active");
+
+                      return (
+                        <tr key={inv.id} className="hover:bg-secondary/30 transition-colors">
+                          <td className="px-6 py-3 font-mono font-medium tabular-nums">{inv.number}</td>
+                          <td className="px-6 py-3 text-xs text-muted-foreground">{formatDate(inv.date)}</td>
+                          <td className="px-6 py-3">
+                            {inv.customerSnapshot?.name || customers.find((c) => c.id === inv.customerId)?.name || "—"}
+                          </td>
+                          <td className="px-6 py-3 text-right font-mono font-semibold tabular-nums">
+                            {formatMoney(inv.grandTotal)}
+                          </td>
+                          <td className="px-6 py-3">
+                            <span
+                              className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                                isSettled
+                                  ? "bg-mint/15 text-mint"
+                                  : isPartial
+                                  ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                                  : "bg-rose-500/15 text-rose-700 dark:text-rose-400"
+                              }`}
+                            >
+                              {displayStatus}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
