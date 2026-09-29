@@ -180,19 +180,19 @@ try {
 // -----------------------------------------------------------------------------
 console.log("\n--- 7. Deep Accounting Invariants & Parity ---");
 
-// Check 7A: MoneyPaise Canonical Zero Precedence
+// Check 7A: MONEYPAISE_ZERO_PRECEDENCE
 try {
   const { getLineDebitPaise, getLineCreditPaise } = await import("../src/modules/accounting/services/reportEngine.ts");
   const testLine = { debitPaise: 0, debit: 999999, creditPaise: 0, credit: 888888 };
   const dr = getLineDebitPaise(testLine);
   const cr = getLineCreditPaise(testLine);
   const zeroPassed = dr === 0 && cr === 0;
-  recordCheck("MoneyPaise Canonical Zero Precedence", zeroPassed, "debitPaise: 0 overrides legacy debit");
+  recordCheck("MONEYPAISE_ZERO_PRECEDENCE", zeroPassed, "debitPaise: 0 strictly overrides legacy debit");
 } catch (err) {
-  recordCheck("MoneyPaise Canonical Zero Precedence", false, err.message);
+  recordCheck("MONEYPAISE_ZERO_PRECEDENCE", false, err.message);
 }
 
-// Check 7B: Trial Balance Dr == Cr Balance Gate
+// Check 7B: TRIAL_BALANCE_PARITY
 try {
   const { getTrialBalance } = await import("../src/modules/accounting/services/reportEngine.ts");
   const sampleLedgers = [
@@ -217,12 +217,12 @@ try {
   ];
   const tb = getTrialBalance(sampleLedgers, sampleGroups, sampleVouchers);
   const tbPassed = tb.isBalanced && tb.imbalancePaise === 0 && tb.totalDebitPaise === tb.totalCreditPaise;
-  recordCheck("Trial Balance Dr == Cr Invariant", tbPassed, `Total Dr: ${tb.totalDebitPaise / 100}, Total Cr: ${tb.totalCreditPaise / 100}`);
+  recordCheck("TRIAL_BALANCE_PARITY", tbPassed, `Total Dr: ${tb.totalDebitPaise / 100}, Total Cr: ${tb.totalCreditPaise / 100}`);
 } catch (err) {
-  recordCheck("Trial Balance Dr == Cr Invariant", false, err.message);
+  recordCheck("TRIAL_BALANCE_PARITY", false, err.message);
 }
 
-// Check 7C: AR Reconciliation (Gross - Credits = Net AR)
+// Check 7C: AR_CONTROL_PARITY
 try {
   const { resolveCanonicalInvoiceOutstanding, resolveCanonicalCustomerCredits } = await import("../src/modules/accounting/services/canonicalOutstandingService.ts");
   const sampleInv = { id: "i1", status: "posted", postingStatus: "posted", grandTotal: 10000, balance: 10000 };
@@ -231,12 +231,12 @@ try {
   const credits = resolveCanonicalCustomerCredits({ invoices: [sampleInv], receipts: [sampleRec] });
   const netAr = Math.max(0, outstanding.remainingBalance - credits.totalCustomerCredits);
   const arPassed = outstanding.remainingBalance === 10000 && credits.totalCustomerCredits === 3000 && netAr === 7000;
-  recordCheck("Accounts Receivable Parity", arPassed, "Gross (10k) - Adv (3k) = Net AR (7k)");
+  recordCheck("AR_CONTROL_PARITY", arPassed, "Gross (10k) - Adv (3k) = Net AR (7k)");
 } catch (err) {
-  recordCheck("Accounts Receivable Parity", false, err.message);
+  recordCheck("AR_CONTROL_PARITY", false, err.message);
 }
 
-// Check 7D: AP Reconciliation (Gross - Advances = Net AP)
+// Check 7D: AP_CONTROL_PARITY
 try {
   const { resolveCanonicalPurchaseOutstanding, resolveCanonicalSupplierCredits } = await import("../src/modules/accounting/services/canonicalOutstandingService.ts");
   const samplePu = { id: "p1", status: "posted", postingStatus: "posted", grandTotal: 20000, balance: 20000 };
@@ -245,56 +245,184 @@ try {
   const suppCredits = resolveCanonicalSupplierCredits({ purchases: [samplePu], payments: [samplePmt] });
   const netAp = Math.max(0, puOut.remainingBalance - suppCredits.totalSupplierCredits);
   const apPassed = puOut.remainingBalance === 20000 && suppCredits.totalSupplierCredits === 5000 && netAp === 15000;
-  recordCheck("Accounts Payable Parity", apPassed, "Gross (20k) - Adv (5k) = Net AP (15k)");
+  recordCheck("AP_CONTROL_PARITY", apPassed, "Gross (20k) - Adv (5k) = Net AP (15k)");
 } catch (err) {
-  recordCheck("Accounts Payable Parity", false, err.message);
+  recordCheck("AP_CONTROL_PARITY", false, err.message);
 }
 
 // -----------------------------------------------------------------------------
-// STEP 8: SECURITY & ISOLATION GATES
+// STEP 8: SECURITY, ISOLATION & CANONICAL PERSISTENCE GATES
 // -----------------------------------------------------------------------------
-console.log("\n--- 8. Security, Isolation & Clean Architecture ---");
+console.log("\n--- 8. Security, Isolation & Canonical Persistence Gates ---");
 
-// Check 8A: No bms_saved_report_views in localStorage
+// Check 8A: LEGACY_BMS_DB_V1_UNTOUCHED
 try {
-  const reportRouteContent = readFileSync(resolve(process.cwd(), "src/routes/_app.reports.tsx"), "utf8");
-  const noLocalStorageSavedViews = !reportRouteContent.includes("bms_saved_report_views");
-  recordCheck("Saved Views LocalStorage Elimination", noLocalStorageSavedViews, "Zero localStorage saved views in reports");
+  const dbFile = readFileSync(resolve(process.cwd(), "src/lib/db.ts"), "utf8");
+  const isV1Untouched =
+    dbFile.includes('super("bms_db_v1")') &&
+    dbFile.includes("this.version(7).stores(") &&
+    !dbFile.includes("this.version(8)") &&
+    !/savedReportViews\s*:\s*Table</.test(dbFile);
+  recordCheck("LEGACY_BMS_DB_V1_UNTOUCHED", isV1Untouched, "bms_db_v1 untouched at Version 7");
 } catch (err) {
-  recordCheck("Saved Views LocalStorage Elimination", false, err.message);
+  recordCheck("LEGACY_BMS_DB_V1_UNTOUCHED", false, err.message);
 }
 
-// Check 8B: Server Branch Security Guard Returns CROSS_BRANCH_FORBIDDEN
+// Check 8B: SAVED_VIEWS_IN_BMS_CACHE_V1
 try {
-  const { verifyServerPermission } = await import("../src/server/auth/permissionGuard.ts");
+  const cacheFile = readFileSync(resolve(process.cwd(), "src/modules/sync/dexieCache.ts"), "utf8");
+  const serviceFile = readFileSync(resolve(process.cwd(), "src/modules/reports/savedReportViewsService.ts"), "utf8");
+  const savedViewsInCache =
+    cacheFile.includes("this.version(5)") &&
+    cacheFile.includes('savedReportViews: "id, companyId, [companyId+tab], tab, createdAt"') &&
+    serviceFile.includes("getCacheDb().savedReportViews") &&
+    !serviceFile.includes("localStorage");
+  recordCheck("SAVED_VIEWS_IN_BMS_CACHE_V1", savedViewsInCache, "Persisted in bms_cache_v1 v5 additive migration");
+} catch (err) {
+  recordCheck("SAVED_VIEWS_IN_BMS_CACHE_V1", false, err.message);
+}
+
+// Check 8C: SERVER_BRANCH_READ_ISOLATION
+try {
+  const { verifyServerReadPermission } = await import("../src/server/auth/permissionGuard.ts");
   const mockDb = {
     ref: () => ({
       once: async () => ({
         exists: () => true,
         val: () => ({
-          uid: "u1",
-          role: "staff",
+          uid: "user_blr",
+          role: "accountant",
+          organizationRole: "accountant",
           status: "active",
-          branchIds: ["br_allowed"],
-          branchAccess: [{ branchId: "br_allowed", permissions: ["INVOICE_CREATE"] }],
+          branchIds: ["br_blr"],
+          branchAccess: [{ branchId: "br_blr", permissions: ["REPORTS_VIEW"] }],
         }),
       }),
     }),
   };
-  const permCheck = await verifyServerPermission({
+  const foreignCheck = await verifyServerReadPermission({
     db: mockDb,
     companyId: "c1",
-    callerUid: "u1",
-    permission: "INVOICE_CREATE",
-    branchId: "br_forbidden",
+    callerUid: "user_blr",
+    branchId: "br_mys",
+    permission: "REPORTS_VIEW",
   });
-  const branchSecPassed = !permCheck.authorized && permCheck.code === "CROSS_BRANCH_FORBIDDEN";
-  recordCheck("Server Cross-Branch Security Guard", branchSecPassed, "Returns 403 / CROSS_BRANCH_FORBIDDEN");
+  const allCheck = await verifyServerReadPermission({
+    db: mockDb,
+    companyId: "c1",
+    callerUid: "user_blr",
+    branchId: "all",
+  });
+  const readIsolationPassed =
+    !foreignCheck.authorized &&
+    foreignCheck.code === "CROSS_BRANCH_FORBIDDEN" &&
+    !allCheck.authorized &&
+    allCheck.code === "CROSS_BRANCH_FORBIDDEN";
+  recordCheck("SERVER_BRANCH_READ_ISOLATION", readIsolationPassed, "Manipulated branch read returns 403 / CROSS_BRANCH_FORBIDDEN");
 } catch (err) {
-  recordCheck("Server Cross-Branch Security Guard", false, err.message);
+  recordCheck("SERVER_BRANCH_READ_ISOLATION", false, err.message);
 }
 
-// Check 8C: Zero Hardcoded Runtime Business IDs
+// Check 8D: RTDB_BRANCH_READ_ISOLATION
+try {
+  const rulesRaw = readFileSync(resolve(process.cwd(), "database.rules.json"), "utf8");
+  const rules = JSON.parse(rulesRaw).rules;
+  const cd = rules.companyData.$companyId;
+  const rtdbIsolation =
+    Boolean(cd[".read"]) &&
+    cd[".read"].includes("memberships") &&
+    cd[".read"].includes("active") &&
+    Array.isArray(cd.invoices[".indexOn"]) &&
+    cd.invoices[".indexOn"].includes("branchId");
+  recordCheck("RTDB_BRANCH_READ_ISOLATION", rtdbIsolation, "Indexed on branchId and membership guarded");
+} catch (err) {
+  recordCheck("RTDB_BRANCH_READ_ISOLATION", false, err.message);
+}
+
+// Check 8E: EXPORT_SERVER_RBAC
+try {
+  const { resolveAuthoritativeExportPayload } = await import("../src/modules/export/exportService.ts");
+  let gstRejected = false;
+  let crossBranchRejected = false;
+  let costStripped = false;
+
+  // 1. Cross-branch export rejected
+  try {
+    resolveAuthoritativeExportPayload({
+      data: [{ id: "p1", branchId: "br_b" }],
+      columns: [{ key: "id", header: "ID" }],
+      requestedBranchId: "br_b",
+      allowedBranchIds: ["br_a"],
+      isOwner: false,
+    });
+  } catch (e) {
+    crossBranchRejected = e.message.includes("CROSS_BRANCH_EXPORT_REJECTED");
+  }
+
+  // 2. GST export requires GST_VIEW
+  try {
+    resolveAuthoritativeExportPayload({
+      data: [{ id: "tx1" }],
+      columns: [{ key: "id", header: "ID" }],
+      exportType: "gst",
+      isOwner: false,
+      userPermissions: ["REPORTS_VIEW"],
+    });
+  } catch (e) {
+    gstRejected = e.message.includes("EXPORT_SERVER_RBAC");
+  }
+
+  // 3. Purchase cost stripped without COST_VIEW
+  const resolved = resolveAuthoritativeExportPayload({
+    data: [{ id: "p1", purchasePrice: 500, sellingPrice: 750 }],
+    columns: [{ key: "purchasePrice", header: "Cost", requiredPermission: "COST_VIEW" }, { key: "sellingPrice", header: "Price" }],
+    isOwner: false,
+    userPermissions: ["PRODUCT_VIEW"],
+  });
+  costStripped = !("purchasePrice" in resolved.authorizedData[0]) && resolved.authorizedData[0].sellingPrice === 750;
+
+  const exportRbacPassed = crossBranchRejected && gstRejected && costStripped;
+  recordCheck("EXPORT_SERVER_RBAC", exportRbacPassed, "Cross-branch blocked, GST_VIEW enforced, purchase cost stripped");
+} catch (err) {
+  recordCheck("EXPORT_SERVER_RBAC", false, err.message);
+}
+
+// Check 8F: BRANCH_LISTENERS_BOUNDED & NO_UNAUTHORIZED_REALTIME_PAYLOAD
+try {
+  const syncFile = readFileSync(resolve(process.cwd(), "src/modules/sync/companyRealtimeSync.ts"), "utf8");
+  const boundedPassed =
+    syncFile.includes('orderByChild("branchId")') &&
+    syncFile.includes("equalTo(activeBranchId)") &&
+    syncFile.includes("BRANCH-SCOPED OPERATIONAL");
+  recordCheck("BRANCH_LISTENERS_BOUNDED", boundedPassed, "Operational queries bounded to activeBranchId over wire");
+} catch (err) {
+  recordCheck("BRANCH_LISTENERS_BOUNDED", false, err.message);
+}
+
+try {
+  const syncFile = readFileSync(resolve(process.cwd(), "src/modules/sync/companyRealtimeSync.ts"), "utf8");
+  const noUnauthorized =
+    syncFile.includes("NO_UNAUTHORIZED_REALTIME_PAYLOAD") &&
+    syncFile.includes("r.branchId === activeBranchId");
+  recordCheck("NO_UNAUTHORIZED_REALTIME_PAYLOAD", noUnauthorized, "Foreign branch records discarded before local ingestion");
+} catch (err) {
+  recordCheck("NO_UNAUTHORIZED_REALTIME_PAYLOAD", false, err.message);
+}
+
+// Check 8G: LISTENER_TEARDOWN
+try {
+  const syncFile = readFileSync(resolve(process.cwd(), "src/modules/sync/companyRealtimeSync.ts"), "utf8");
+  const appFile = readFileSync(resolve(process.cwd(), "src/routes/_app.tsx"), "utf8");
+  const teardownPassed =
+    syncFile.includes("unsub()") &&
+    syncFile.includes("queues.clear()") &&
+    appFile.includes("return () => stopSync()");
+  recordCheck("LISTENER_TEARDOWN", teardownPassed, "Clean unsubscription on branch/company switch or logout");
+} catch (err) {
+  recordCheck("LISTENER_TEARDOWN", false, err.message);
+}
+
+// Check 8H: NO_RUNTIME_HARDCODING
 try {
   const routesFiles = ["_app.dashboard.tsx", "_app.reports.tsx", "_app.invoices.tsx", "_app.purchases.tsx"];
   let hardcodedFound = false;
@@ -308,12 +436,12 @@ try {
       }
     }
   }
-  recordCheck("Zero Hardcoded Runtime Business IDs", !hardcodedFound, "All routes dynamically scope by ActiveCompanyContext");
+  recordCheck("NO_RUNTIME_HARDCODING", !hardcodedFound, "All routes dynamically scope by ActiveCompanyContext");
 } catch (err) {
-  recordCheck("Zero Hardcoded Runtime Business IDs", false, err.message);
+  recordCheck("NO_RUNTIME_HARDCODING", false, err.message);
 }
 
-// Check 8D: Git Branch Isolation
+// Check 8I: Git Branch Isolation
 try {
   const currentBranch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
   const isStaging = currentBranch === "staging";

@@ -728,10 +728,29 @@ export class FirebaseSalesReturnRepository implements ISalesReturnRepository {
     return snap.val();
   }
 
-  async listSalesReturns(companyId: string, branchId?: string): Promise<SalesReturn[]> {
+  async listSalesReturns(companyId: string, branchId?: string, callerUid?: string): Promise<SalesReturn[]> {
     const adminApp = getFirebaseAdmin();
     if (!adminApp) return [];
     const db = adminApp.database();
+
+    // Verify caller membership and branch boundaries if callerUid provided
+    let allowedBranchIds: string[] | null = null;
+    let isOwner = false;
+    if (callerUid) {
+      const memSnap = await db.ref(`memberships/${companyId}/${callerUid}`).once("value");
+      if (!memSnap.exists()) return [];
+      const membership = memSnap.val();
+      if (membership.status !== "active") return [];
+      const role = (membership.organizationRole || membership.role || "").toLowerCase();
+      isOwner = role === "owner";
+      if (!isOwner) {
+        allowedBranchIds = membership.branchIds || (membership.branchAccess || []).map((ba: any) => ba.branchId);
+        if (branchId && branchId !== "all" && !allowedBranchIds?.includes(branchId)) {
+          // Cross-branch read attempt: return empty authorized result
+          return [];
+        }
+      }
+    }
 
     const snap = await db.ref(`companyData/${companyId}/salesReturns`).once("value");
     if (!snap.exists()) return [];
@@ -741,6 +760,11 @@ export class FirebaseSalesReturnRepository implements ISalesReturnRepository {
 
     if (branchId && branchId !== "all") {
       return list.filter((r) => r.branchId === branchId);
+    }
+
+    if (!isOwner && allowedBranchIds) {
+      const allowedSet = new Set(allowedBranchIds);
+      return list.filter((r) => !r.branchId || allowedSet.has(r.branchId));
     }
 
     return list;

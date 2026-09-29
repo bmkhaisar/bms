@@ -30,18 +30,21 @@ function AppGuard() {
     isAuthenticated,
     isPlatformAdmin,
   } = useAuth();
-  const { activeCompany, loading: companyLoading, companies, activeFinancialYear } = useActiveCompany();
+  const { activeCompany, loading: companyLoading, companies, activeFinancialYear, activeBranchId, branches, isOwner } = useActiveCompany();
 
-  // Central multi-device realtime company synchronization (PRD §§ 49, 56-59, 77-78)
+  // Central multi-device realtime company synchronization (PRD §§ 49, 56-59, 77-78, Pre-Merge Blocker 4)
   useEffect(() => {
     if (!activeCompany?.id || !isAuthenticated) return;
     const stopSync = startCompanyRealtimeSync({
       companyId: activeCompany.id,
       uid: user?.uid,
       financialYearId: activeFinancialYear?.id,
+      activeBranchId,
+      authorizedBranchIds: branches?.map((b) => b.id) || [],
+      isOwner,
     });
     return () => stopSync();
-  }, [activeCompany?.id, isAuthenticated, user?.uid, activeFinancialYear?.id]);
+  }, [activeCompany?.id, isAuthenticated, user?.uid, activeFinancialYear?.id, activeBranchId, isOwner, branches]);
 
   // Concurrently signal startup readiness as soon as auth & active company resolve
   useEffect(() => {

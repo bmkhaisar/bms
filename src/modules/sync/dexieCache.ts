@@ -14,6 +14,7 @@ class BmsCacheDatabase extends Dexie {
   outbox!: EntityTable<OutboxMutation, "id">;
   cachedEntities!: EntityTable<CachedEntity, "id">;
   sessionState!: EntityTable<UserSessionState, "key">;
+  savedReportViews!: EntityTable<import("@/lib/db").SavedReportView, "id">;
 
   constructor() {
     super("bms_cache_v1");
@@ -48,6 +49,44 @@ class BmsCacheDatabase extends Dexie {
         "id, uid, companyId, branchId, financialYearId, entityType, nameLower, sku, gstin, numberLower, status, date, [companyId+entityType], [companyId+branchId], [companyId+branchId+entityType], [uid+companyId], [uid+companyId+entityType], [uid+companyId+financialYearId], [companyId+entityType+nameLower], [companyId+entityType+status], [companyId+financialYearId+date], updatedAt",
       sessionState: "key",
     });
+
+    // Version 5: Additive Saved Report Views support (BMS NEXT Canonical Cache)
+    this.version(5)
+      .stores({
+        outbox:
+          "id, clientMutationId, uid, companyId, branchId, financialYearId, [companyId+status], [companyId+branchId+status], [uid+companyId], createdAt, status",
+        cachedEntities:
+          "id, uid, companyId, branchId, financialYearId, entityType, nameLower, sku, gstin, numberLower, status, date, [companyId+entityType], [companyId+branchId], [companyId+branchId+entityType], [uid+companyId], [uid+companyId+entityType], [uid+companyId+financialYearId], [companyId+entityType+nameLower], [companyId+entityType+status], [companyId+financialYearId+date], updatedAt",
+        sessionState: "key",
+        savedReportViews: "id, companyId, [companyId+tab], tab, createdAt",
+      })
+      .upgrade(async (tx) => {
+        // Safe non-destructive migration: copy any saved views from legacy staging if present
+        try {
+          if (typeof indexedDB !== "undefined") {
+            const req = indexedDB.open("bms_db_v1");
+            req.onsuccess = () => {
+              const legacyDb = req.result;
+              if (legacyDb.objectStoreNames.contains("savedReportViews")) {
+                const legacyTx = legacyDb.transaction("savedReportViews", "readonly");
+                const store = legacyTx.objectStore("savedReportViews");
+                const getAllReq = store.getAll();
+                getAllReq.onsuccess = () => {
+                  const records = getAllReq.result || [];
+                  if (records.length > 0) {
+                    const targetStore = tx.table("savedReportViews");
+                    for (const r of records) {
+                      targetStore.put(r);
+                    }
+                  }
+                };
+              }
+            };
+          }
+        } catch {
+          // Non-blocking fallback
+        }
+      });
   }
 }
 

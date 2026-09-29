@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getFirebaseAdmin } from "@/server/firebaseAdmin";
 import { FirebaseSalesReturnRepository } from "@/server/repositories/firebaseSalesReturnRepository";
 import type { PostSalesReturnInput, SalesReturnResult } from "@/server/repositories/types";
+import { verifyServerReadPermission } from "@/server/auth/permissionGuard";
 
 const salesReturnRepo = new FirebaseSalesReturnRepository();
 
@@ -25,17 +26,27 @@ export const postSalesReturnServerFn = createServerFn({ method: "POST" })
 
 export const listSalesReturnsServerFn = createServerFn({ method: "POST" })
   .validator((data: { companyId: string; branchId?: string; idToken: string }) => data)
-  .handler(async ({ data }): Promise<{ success: boolean; salesReturns?: any[]; error?: string }> => {
+  .handler(async ({ data }): Promise<{ success: boolean; salesReturns?: any[]; error?: string; code?: string }> => {
     const admin = getFirebaseAdmin();
     if (!admin) return { success: false, error: "Firebase Admin configuration missing on server" };
 
     try {
-      await admin.auth().verifyIdToken(data.idToken);
-      const salesReturns = await salesReturnRepo.listSalesReturns(data.companyId, data.branchId);
+      const decoded = await admin.auth().verifyIdToken(data.idToken);
+      const readCheck = await verifyServerReadPermission({
+        db: admin.database(),
+        companyId: data.companyId,
+        callerUid: decoded.uid,
+        branchId: data.branchId,
+        permission: "SALES_RETURN_VIEW",
+      });
+      if (!readCheck.authorized) {
+        return { success: false, error: readCheck.error, code: readCheck.code || "FORBIDDEN" };
+      }
+      const salesReturns = await salesReturnRepo.listSalesReturns(data.companyId, data.branchId, decoded.uid);
       return { success: true, salesReturns };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Authentication failed";
-      return { success: false, error: msg };
+      return { success: false, error: msg, code: "UNAUTHORIZED" };
     }
   });
 

@@ -352,20 +352,157 @@ export function getActiveColumns<T>(options: ExportOptions<T>): ExportColumnDefi
   return permittedCols.filter((c) => !c.hiddenByDefault);
 }
 
+export interface AuthoritativeExportResolutionParams<T> {
+  data: T[];
+  columns: ExportColumnDefinition<T>[];
+  requestedBranchId?: string;
+  allowedBranchIds?: string[];
+  isOwner?: boolean;
+  exportType?: "standard" | "gst" | "ca" | "inventory" | string;
+  userPermissions?: string[] | Set<string>;
+  can?: (perm: string) => boolean;
+}
+
+export interface AuthoritativeExportPayload<T> {
+  authorizedData: T[];
+  sanitizedColumns: ExportColumnDefinition<T>[];
+  hasCostView: boolean;
+  allowedBranchIds?: string[];
+}
+
+/**
+ * Server-Authoritative Export Resolver (Pre-Merge Blocker 3)
+ * Guarantees that:
+ * 1. Branch-A user cannot request/export Branch-B records (CROSS_BRANCH_EXPORT_REJECTED).
+ * 2. User without COST_VIEW never receives purchase cost / cost price in memory or output (COST_FIELD_SERVER_PROTECTION).
+ * 3. GST export requires GST_VIEW permission (EXPORT_SERVER_RBAC).
+ * 4. CA export requires CA_REVIEW_VIEW permission (EXPORT_SERVER_RBAC).
+ */
+export function resolveAuthoritativeExportPayload<T>(
+  params: AuthoritativeExportResolutionParams<T>
+): AuthoritativeExportPayload<T> {
+  const {
+    data,
+    columns,
+    requestedBranchId,
+    allowedBranchIds = [],
+    isOwner = false,
+    exportType = "standard",
+    userPermissions,
+    can,
+  } = params;
+
+  const checkPerm = (perm: string): boolean => {
+    if (isOwner) return true;
+    if (can) return can(perm);
+    if (userPermissions) {
+      if (Array.isArray(userPermissions)) return userPermissions.includes(perm);
+      if (userPermissions instanceof Set) return userPermissions.has(perm);
+    }
+    return false;
+  };
+
+  // 1. Authoritative Branch Isolation
+  if (requestedBranchId === "all" && !isOwner) {
+    throw new Error(
+      "CROSS_BRANCH_EXPORT_REJECTED: Consolidated 'All Branches' export is strictly restricted to Organization Owners."
+    );
+  }
+
+  if (requestedBranchId && requestedBranchId !== "all" && !isOwner) {
+    if (!allowedBranchIds.includes(requestedBranchId)) {
+      throw new Error(
+        `CROSS_BRANCH_EXPORT_REJECTED: User is not authorized to export branch '${requestedBranchId}'.`
+      );
+    }
+  }
+
+  // 2. Authoritative RBAC Gates for Specialized Exports
+  if (exportType === "gst" && !checkPerm("GST_VIEW")) {
+    throw new Error("EXPORT_SERVER_RBAC: GST export strictly requires GST_VIEW permission.");
+  }
+
+  if (exportType === "ca" && !checkPerm("CA_REVIEW_VIEW")) {
+    throw new Error("EXPORT_SERVER_RBAC: CA export strictly requires CA_REVIEW_VIEW permission.");
+  }
+
+  // 3. Filter rows strictly by branch boundaries
+  let authorizedRows = data;
+  if (!isOwner && allowedBranchIds.length > 0) {
+    const allowedSet = new Set(allowedBranchIds);
+    // If any row belongs to a foreign branch and was explicitly requested, reject
+    const foreignRows = data.filter((r: any) => r && r.branchId && !allowedSet.has(r.branchId));
+    if (foreignRows.length > 0 && requestedBranchId && !allowedSet.has(requestedBranchId)) {
+      throw new Error(
+        `CROSS_BRANCH_EXPORT_REJECTED: Payload contains ${foreignRows.length} records from unauthorized branch '${requestedBranchId}'.`
+      );
+    }
+    authorizedRows = data.filter((r: any) => !r || !r.branchId || allowedSet.has(r.branchId));
+  }
+
+  // 4. Server-Authoritative COST_FIELD Protection
+  const hasCostView = checkPerm("COST_VIEW");
+  const costFieldNames = new Set([
+    "purchasePrice",
+    "costPrice",
+    "buyingPrice",
+    "lastCost",
+    "landingCost",
+    "unitCost",
+    "costPaise",
+  ]);
+
+  let sanitizedRows: T[];
+  if (!hasCostView) {
+    sanitizedRows = authorizedRows.map((row: any) => {
+      if (!row || typeof row !== "object") return row;
+      const clone = { ...row };
+      for (const field of costFieldNames) {
+        if (field in clone) {
+          delete clone[field];
+        }
+      }
+      return clone as T;
+    });
+  } else {
+    sanitizedRows = authorizedRows;
+  }
+
+  // 5. Sanitize columns: completely omit columns that require COST_VIEW if user lacks it
+  const sanitizedColumns = columns.filter((col) => {
+    if (col.requiredPermission === "COST_VIEW" && !hasCostView) {
+      return false;
+    }
+    if (costFieldNames.has(String(col.key)) && !hasCostView) {
+      return false;
+    }
+    return true;
+  });
+
+  return {
+    authorizedData: sanitizedRows,
+    sanitizedColumns,
+    hasCostView,
+    allowedBranchIds,
+  };
+}
+
 /**
  * Filters rows to ensure strict multi-branch authorization isolation.
  * Hardening Item 3: A Branch-A user strictly CANNOT export Branch-B transactions.
  */
 export function getAuthorizedData<T>(options: ExportOptions<T>): T[] {
-  if (options.isOwner) return options.data;
-  if (!options.allowedBranchIds || options.allowedBranchIds.length === 0) {
-    return options.data;
-  }
-  const allowedSet = new Set(options.allowedBranchIds);
-  return options.data.filter((row: any) => {
-    if (!row || !row.branchId) return true; // Global records allowed
-    return allowedSet.has(row.branchId);
+  const resolved = resolveAuthoritativeExportPayload({
+    data: options.data,
+    columns: options.columns,
+    requestedBranchId: options.requestedBranchId,
+    allowedBranchIds: options.allowedBranchIds,
+    isOwner: options.isOwner,
+    exportType: options.exportType,
+    userPermissions: options.userPermissions,
+    can: options.can,
   });
+  return resolved.authorizedData;
 }
 
 /**
@@ -391,11 +528,22 @@ export function executeExport<T>(options: ExportOptions<T>) {
     ? options.filename
     : `${options.filename}_${dateStr}`;
 
-  // Enforce branch-level row security
-  const authorizedData = getAuthorizedData(options);
+  // Enforce authoritative server/RBAC protection on rows and columns
+  const resolution = resolveAuthoritativeExportPayload({
+    data: options.data,
+    columns: options.columns,
+    requestedBranchId: options.requestedBranchId,
+    allowedBranchIds: options.allowedBranchIds,
+    isOwner: options.isOwner,
+    exportType: options.exportType,
+    userPermissions: options.userPermissions,
+    can: options.can,
+  });
+
   const secureOptions: ExportOptions<T> = {
     ...options,
-    data: authorizedData,
+    data: resolution.authorizedData,
+    columns: resolution.sanitizedColumns,
   };
 
   let blob: Blob;
@@ -425,3 +573,4 @@ export function executeExport<T>(options: ExportOptions<T>) {
 
   triggerDownload(blob, `${baseName}${extension}`);
 }
+

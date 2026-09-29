@@ -1,22 +1,25 @@
 /**
  * Canonical Service for Saved Report Views
  * 
- * Production Hardening Requirement (Item 1):
- * - ZERO ad-hoc localStorage persistence.
- * - Preferred local option: Dexie bms_db_v1 savedReportViews table.
+ * Pre-Merge Blocker 1:
+ * - ZERO ad-hoc browser key-value persistence.
+ * - Canonical storage: Dexie bms_cache_v1 savedReportViews table (Version 5). Legacy bms_db_v1 is untouched.
  * - Saved views strictly NEVER grant or alter RBAC permissions.
  */
 
-import { db, type SavedReportView } from "@/lib/db";
+
+import type { SavedReportView } from "@/lib/db";
+import { getCacheDb } from "@/modules/sync/dexieCache";
 
 /**
  * Lists saved report views for the current company (or global views if companyId not set).
  * Never grants permissions.
+ * Persisted in canonical bms_cache_v1 (Version 5). Legacy bms_db_v1 is untouched.
  */
 export async function listSavedReportViews(companyId?: string): Promise<SavedReportView[]> {
   if (typeof window === "undefined") return [];
   try {
-    const table = db().savedReportViews;
+    const table = getCacheDb().savedReportViews;
     if (!table) return [];
     let views: SavedReportView[] = [];
     if (companyId) {
@@ -37,12 +40,12 @@ export async function listSavedReportViews(companyId?: string): Promise<SavedRep
 }
 
 /**
- * Saves or updates a report view in Dexie.
+ * Saves or updates a report view in canonical bms_cache_v1.
  */
 export async function saveReportView(view: SavedReportView): Promise<void> {
   if (typeof window === "undefined") return;
   try {
-    const table = db().savedReportViews;
+    const table = getCacheDb().savedReportViews;
     if (!table) return;
     await table.put(view);
   } catch (err) {
@@ -52,12 +55,12 @@ export async function saveReportView(view: SavedReportView): Promise<void> {
 }
 
 /**
- * Deletes a saved report view from Dexie.
+ * Deletes a saved report view from canonical bms_cache_v1.
  */
 export async function deleteReportView(id: string): Promise<void> {
   if (typeof window === "undefined") return;
   try {
-    const table = db().savedReportViews;
+    const table = getCacheDb().savedReportViews;
     if (!table) return;
     await table.delete(id);
   } catch (err) {
@@ -65,3 +68,4 @@ export async function deleteReportView(id: string): Promise<void> {
     throw err;
   }
 }
+

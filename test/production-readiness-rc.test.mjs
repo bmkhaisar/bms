@@ -35,6 +35,7 @@ import {
   generateExcelWorkbook,
   getActiveColumns,
   getAuthorizedData,
+  resolveAuthoritativeExportPayload,
 } from "../src/modules/export/exportService.ts";
 import {
   PRODUCT_EXPORT_COLUMNS,
@@ -44,7 +45,14 @@ import {
   PAYABLES_AGING_EXPORT_COLUMNS,
   MONTH_END_SNAPSHOT_EXPORT_COLUMNS,
 } from "../src/modules/export/exportColumnDefinitions.ts";
-import { verifyServerPermission } from "../src/server/auth/permissionGuard.ts";
+import {
+  verifyServerPermission,
+  verifyServerReadPermission,
+  verifyDocumentReadPermission,
+} from "../src/server/auth/permissionGuard.ts";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 
 // ============================================================================
 // SUITE 1: SECTION 0 — FINAL ACCOUNTING CODE SAFETY AUDIT & DIRECTIONALITY
@@ -920,3 +928,401 @@ test("Cross-Screen Accounting Parity: Single integrated fixture proves Invoice L
   assert.equal(salesBalance.periodCrPaise / 100, 50000, "CA Review Sales Revenue = ₹50,000");
   assert.equal(gstBalance.periodCrPaise / 100, 9000, "CA Review GST Liability = ₹9,000");
 });
+
+// ============================================================================
+// SUITE 8: FINAL PRE-MERGE BLOCKERS — DEXIE CANONICAL ARCHITECTURE
+// ============================================================================
+
+test("Pre-Merge Gate 1: LEGACY_BMS_DB_V1_UNTOUCHED (Remains strictly Version 7)", () => {
+  const dbFile = readFileSync(resolve(process.cwd(), "src/lib/db.ts"), "utf8");
+
+  // Verify constructor name
+  assert.ok(dbFile.includes('super("bms_db_v1")'), "BizDB must remain legacy bms_db_v1");
+
+  // Verify highest version in db.ts is 7
+  assert.ok(dbFile.includes("this.version(7).stores("), "Must contain version(7)");
+  assert.equal(dbFile.includes("this.version(8)"), false, "bms_db_v1 must NEVER contain version(8)");
+
+  // Verify savedReportViews table is NOT defined in BizDB
+  assert.equal(
+    /savedReportViews\s*:\s*Table</.test(dbFile),
+    false,
+    "BizDB in bms_db_v1 must NOT declare savedReportViews table"
+  );
+});
+
+test("Pre-Merge Gate 1: SAVED_VIEWS_IN_CANONICAL_CACHE (Moved to bms_cache_v1 v5 via additive bump)", () => {
+  const cacheFile = readFileSync(resolve(process.cwd(), "src/modules/sync/dexieCache.ts"), "utf8");
+
+  // Verify constructor name
+  assert.ok(cacheFile.includes('super("bms_cache_v1")'), "Cache DB must be canonical bms_cache_v1");
+
+  // Verify additive version 5 schema bump
+  assert.ok(cacheFile.includes("this.version(5)"), "bms_cache_v1 must have additive version(5)");
+  assert.ok(
+    cacheFile.includes('savedReportViews: "id, companyId, [companyId+tab], tab, createdAt"'),
+    "bms_cache_v1 v5 must declare savedReportViews store"
+  );
+
+  // Verify upgrade handler exists for safe migration without cache reset
+  assert.ok(cacheFile.includes(".upgrade("), "Must contain non-destructive .upgrade() handler");
+
+  // Verify savedReportViewsService uses canonical cache
+  const serviceFile = readFileSync(
+    resolve(process.cwd(), "src/modules/reports/savedReportViewsService.ts"),
+    "utf8"
+  );
+  assert.ok(
+    serviceFile.includes("getCacheDb().savedReportViews"),
+    "savedReportViewsService must use getCacheDb().savedReportViews"
+  );
+  assert.equal(
+    serviceFile.includes("db().savedReportViews"),
+    false,
+    "savedReportViewsService must NOT use legacy db()"
+  );
+  assert.equal(
+    serviceFile.includes("localStorage"),
+    false,
+    "savedReportViewsService must contain zero localStorage fallback"
+  );
+});
+
+// ============================================================================
+// SUITE 9: FINAL PRE-MERGE BLOCKERS — SERVER & RTDB READ ISOLATION
+// ============================================================================
+
+test("Pre-Merge Gate 2: SERVER_BRANCH_READ_ISOLATION (Manipulated branch IDs rejected with 403 / CROSS_BRANCH_FORBIDDEN)", async () => {
+  const mockDb = {
+    ref: (path) => ({
+      once: async () => {
+        if (path === "memberships/comp_alpha/user_blr") {
+          return {
+            exists: () => true,
+            val: () => ({
+              uid: "user_blr",
+              role: "accountant",
+              organizationRole: "accountant",
+              status: "active",
+              branchIds: ["br_blr"],
+              branchAccess: [{ branchId: "br_blr", permissions: ["REPORTS_VIEW", "INVOICE_VIEW"] }],
+            }),
+          };
+        }
+        if (path === "memberships/comp_alpha/user_owner") {
+          return {
+            exists: () => true,
+            val: () => ({
+              uid: "user_owner",
+              role: "owner",
+              organizationRole: "owner",
+              status: "active",
+              branchIds: ["br_blr", "br_mys", "br_delhi"],
+              allBranches: true,
+            }),
+          };
+        }
+        return { exists: () => false, val: () => null };
+      },
+    }),
+  };
+
+  // Case 1: BLR user requests authorized branch (br_blr) -> ALLOWED
+  const checkAuthorized = await verifyServerReadPermission({
+    db: mockDb,
+    companyId: "comp_alpha",
+    callerUid: "user_blr",
+    branchId: "br_blr",
+    permission: "REPORTS_VIEW",
+  });
+  assert.equal(checkAuthorized.authorized, true, "Authorized branch read must succeed");
+
+  // Case 2: BLR user attempts to read foreign branch (br_mys) -> 403 CROSS_BRANCH_FORBIDDEN
+  const checkForeign = await verifyServerReadPermission({
+    db: mockDb,
+    companyId: "comp_alpha",
+    callerUid: "user_blr",
+    branchId: "br_mys",
+    permission: "REPORTS_VIEW",
+  });
+  assert.equal(checkForeign.authorized, false, "Manipulated branch read must be rejected");
+  assert.equal(checkForeign.code, "CROSS_BRANCH_FORBIDDEN", "Must return CROSS_BRANCH_FORBIDDEN");
+
+  // Case 3: BLR user attempts consolidated "all" branches read -> 403 CROSS_BRANCH_FORBIDDEN
+  const checkAllRestricted = await verifyServerReadPermission({
+    db: mockDb,
+    companyId: "comp_alpha",
+    callerUid: "user_blr",
+    branchId: "all",
+    permission: "REPORTS_VIEW",
+  });
+  assert.equal(checkAllRestricted.authorized, false, "Non-owner cannot read consolidated 'all'");
+  assert.equal(checkAllRestricted.code, "CROSS_BRANCH_FORBIDDEN");
+
+  // Case 4: Owner reading "all" branches -> ALLOWED
+  const checkOwnerAll = await verifyServerReadPermission({
+    db: mockDb,
+    companyId: "comp_alpha",
+    callerUid: "user_owner",
+    branchId: "all",
+    permission: "REPORTS_VIEW",
+  });
+  assert.equal(checkOwnerAll.authorized, true, "Owner must be allowed to read consolidated 'all'");
+});
+
+test("Pre-Merge Gate 2: DOCUMENT_READ_ISOLATION (Foreign branch document fetch & PDF rejected)", async () => {
+  const membershipBlr = {
+    uid: "user_blr",
+    role: "accountant",
+    organizationRole: "accountant",
+    status: "active",
+    branchIds: ["br_blr"],
+    branchAccess: [{ branchId: "br_blr", permissions: ["INVOICE_VIEW"] }],
+  };
+
+  // Document 1: Belongs to Bangalore branch (authorized)
+  const docBlr = { id: "inv_blr_100", branchId: "br_blr", companyId: "comp_alpha" };
+  const readBlr = await verifyDocumentReadPermission({
+    companyId: "comp_alpha",
+    callerUid: "user_blr",
+    document: docBlr,
+    membership: membershipBlr,
+  });
+  assert.equal(readBlr.authorized, true, "Caller can read own branch document");
+
+  // Document 2: Belongs to Mysore branch (foreign / manipulated ID)
+  const docMys = { id: "inv_mys_200", branchId: "br_mys", companyId: "comp_alpha" };
+  const readMys = await verifyDocumentReadPermission({
+    companyId: "comp_alpha",
+    callerUid: "user_blr",
+    document: docMys,
+    membership: membershipBlr,
+  });
+  assert.equal(readMys.authorized, false, "Caller CANNOT read foreign branch document");
+  assert.equal(readMys.code, "CROSS_BRANCH_FORBIDDEN");
+});
+
+test("Pre-Merge Gate 2: REPORT_READ_ISOLATION (Report execution enforces branch isolation)", () => {
+  const sampleRecords = [
+    { id: "inv_1", branchId: "br_blr", date: 1788500000000, total: 1000 },
+    { id: "inv_2", branchId: "br_mys", date: 1788500000000, total: 2000 },
+  ];
+
+  // Bangalore scope
+  const scopeBlr = buildBusinessScope({
+    companyId: "comp_alpha",
+    activeBranchId: "br_blr",
+    datePreset: "all_time",
+  });
+  const filteredBlr = filterRecordsByBusinessScope(sampleRecords, scopeBlr);
+  assert.equal(filteredBlr.length, 1, "Only BLR records survive");
+  assert.equal(filteredBlr[0].branchId, "br_blr");
+
+  // Mysore scope
+  const scopeMys = buildBusinessScope({
+    companyId: "comp_alpha",
+    activeBranchId: "br_mys",
+    datePreset: "all_time",
+  });
+  const filteredMys = filterRecordsByBusinessScope(sampleRecords, scopeMys);
+  assert.equal(filteredMys.length, 1, "Only MYS records survive");
+  assert.equal(filteredMys[0].branchId, "br_mys");
+});
+
+// ============================================================================
+// SUITE 10: FINAL PRE-MERGE BLOCKERS — AUTHORITATIVE EXPORT RBAC & COST PROTECTION
+// ============================================================================
+
+test("Pre-Merge Gate 3: CROSS_BRANCH_EXPORT_REJECTED (Branch-A user cannot export Branch-B records)", () => {
+  const sampleProducts = [
+    { id: "p1", name: "Steel Bar", branchId: "br_blr", purchasePrice: 400, sellingPrice: 600 },
+    { id: "p2", name: "Copper Wire", branchId: "br_mys", purchasePrice: 800, sellingPrice: 1200 },
+  ];
+
+  // Case 1: BLR user requests Mysore branch export -> Throws CROSS_BRANCH_EXPORT_REJECTED
+  assert.throws(
+    () => {
+      resolveAuthoritativeExportPayload({
+        data: sampleProducts,
+        columns: PRODUCT_EXPORT_COLUMNS,
+        requestedBranchId: "br_mys",
+        allowedBranchIds: ["br_blr"],
+        isOwner: false,
+      });
+    },
+    /CROSS_BRANCH_EXPORT_REJECTED/,
+    "Must reject foreign branch export"
+  );
+
+  // Case 2: BLR user requests consolidated 'all' branches export -> Throws CROSS_BRANCH_EXPORT_REJECTED
+  assert.throws(
+    () => {
+      resolveAuthoritativeExportPayload({
+        data: sampleProducts,
+        columns: PRODUCT_EXPORT_COLUMNS,
+        requestedBranchId: "all",
+        allowedBranchIds: ["br_blr"],
+        isOwner: false,
+      });
+    },
+    /CROSS_BRANCH_EXPORT_REJECTED/,
+    "Must reject consolidated 'all' export for non-owner"
+  );
+});
+
+test("Pre-Merge Gate 3: COST_FIELD_SERVER_PROTECTION (User without COST_VIEW never receives purchase cost)", () => {
+  const products = [
+    { id: "p1", name: "Steel", purchasePrice: 450, costPrice: 450, sellingPrice: 600 },
+    { id: "p2", name: "Iron", purchasePrice: 200, costPrice: 200, sellingPrice: 300 },
+  ];
+
+  // Case A: User without COST_VIEW
+  const resolvedWithoutCost = resolveAuthoritativeExportPayload({
+    data: products,
+    columns: PRODUCT_EXPORT_COLUMNS,
+    isOwner: false,
+    userPermissions: ["PRODUCT_VIEW"], // Does NOT have COST_VIEW
+  });
+
+  // Verify purchasePrice and costPrice are completely stripped from row objects
+  for (const row of resolvedWithoutCost.authorizedData) {
+    assert.equal("purchasePrice" in row, false, "purchasePrice must be deleted from row object");
+    assert.equal("costPrice" in row, false, "costPrice must be deleted from row object");
+    assert.equal(row.sellingPrice, row.sellingPrice, "sellingPrice remains intact");
+  }
+
+  // Verify columns requiring COST_VIEW are stripped
+  const hasCostCol = resolvedWithoutCost.sanitizedColumns.some(
+    (c) => c.key === "purchasePrice" || c.requiredPermission === "COST_VIEW"
+  );
+  assert.equal(hasCostCol, false, "Cost columns must be stripped from definition");
+
+  // Case B: User WITH COST_VIEW
+  const resolvedWithCost = resolveAuthoritativeExportPayload({
+    data: products,
+    columns: PRODUCT_EXPORT_COLUMNS,
+    isOwner: false,
+    userPermissions: ["PRODUCT_VIEW", "COST_VIEW"],
+  });
+  assert.equal(resolvedWithCost.authorizedData[0].purchasePrice, 450, "purchasePrice preserved for authorized user");
+  assert.equal(
+    resolvedWithCost.sanitizedColumns.some((c) => c.key === "purchasePrice"),
+    true,
+    "purchasePrice column preserved"
+  );
+});
+
+test("Pre-Merge Gate 3: EXPORT_SERVER_RBAC (GST export requires GST_VIEW; CA export requires CA_REVIEW_VIEW)", () => {
+  const dummyData = [{ id: "tx1", amount: 1000 }];
+  const dummyCols = [{ key: "amount", header: "Amount" }];
+
+  // Case 1: GST export without GST_VIEW -> REJECTED
+  assert.throws(
+    () => {
+      resolveAuthoritativeExportPayload({
+        data: dummyData,
+        columns: dummyCols,
+        exportType: "gst",
+        isOwner: false,
+        userPermissions: ["REPORTS_VIEW"],
+      });
+    },
+    /EXPORT_SERVER_RBAC: GST export strictly requires GST_VIEW permission/,
+    "GST export without GST_VIEW must be rejected"
+  );
+
+  // Case 2: GST export with GST_VIEW -> ALLOWED
+  const gstAllowed = resolveAuthoritativeExportPayload({
+    data: dummyData,
+    columns: dummyCols,
+    exportType: "gst",
+    isOwner: false,
+    userPermissions: ["GST_VIEW"],
+  });
+  assert.equal(gstAllowed.authorizedData.length, 1);
+
+  // Case 3: CA export without CA_REVIEW_VIEW -> REJECTED
+  assert.throws(
+    () => {
+      resolveAuthoritativeExportPayload({
+        data: dummyData,
+        columns: dummyCols,
+        exportType: "ca",
+        isOwner: false,
+        userPermissions: ["REPORTS_VIEW"],
+      });
+    },
+    /EXPORT_SERVER_RBAC: CA export strictly requires CA_REVIEW_VIEW permission/,
+    "CA export without CA_REVIEW_VIEW must be rejected"
+  );
+
+  // Case 4: CA export with CA_REVIEW_VIEW -> ALLOWED
+  const caAllowed = resolveAuthoritativeExportPayload({
+    data: dummyData,
+    columns: dummyCols,
+    exportType: "ca",
+    isOwner: false,
+    userPermissions: ["CA_REVIEW_VIEW"],
+  });
+  assert.equal(caAllowed.authorizedData.length, 1);
+});
+
+// ============================================================================
+// SUITE 11: FINAL PRE-MERGE BLOCKERS — REALTIME LISTENER SCOPE & TEARDOWN
+// ============================================================================
+
+test("Pre-Merge Gate 4: REALTIME_LISTENER_SCOPE_AND_TEARDOWN (Bounded operational subscriptions and clean cleanup)", () => {
+  const syncFile = readFileSync(resolve(process.cwd(), "src/modules/sync/companyRealtimeSync.ts"), "utf8");
+
+  // 1. Classification documentation
+  assert.ok(
+    syncFile.includes("ORGANIZATION-WIDE MASTER"),
+    "Must document ORGANIZATION-WIDE MASTER classification"
+  );
+  assert.ok(
+    syncFile.includes("BRANCH-SCOPED OPERATIONAL"),
+    "Must document BRANCH-SCOPED OPERATIONAL classification"
+  );
+  assert.ok(
+    syncFile.includes("OWNER CONSOLIDATED"),
+    "Must document OWNER CONSOLIDATED classification"
+  );
+
+  // 2. Bounded operational query using orderByChild("branchId")
+  assert.ok(
+    syncFile.includes('orderByChild("branchId")'),
+    "Operational listeners must bound queries using orderByChild('branchId')"
+  );
+  assert.ok(
+    syncFile.includes("equalTo(activeBranchId)"),
+    "Operational queries must match equalTo(activeBranchId) for branch-restricted users"
+  );
+
+  // 3. NO_UNAUTHORIZED_REALTIME_PAYLOAD protection
+  assert.ok(
+    syncFile.includes("NO_UNAUTHORIZED_REALTIME_PAYLOAD"),
+    "Must implement NO_UNAUTHORIZED_REALTIME_PAYLOAD filter"
+  );
+
+  // 4. Listener teardown
+  assert.ok(
+    syncFile.includes("unsub()"),
+    "Cleanup function must unregister every active Firebase listener"
+  );
+  assert.ok(
+    syncFile.includes("queues.clear()"),
+    "Cleanup must clear asynchronous queue"
+  );
+
+  // 5. Verification of route attachment in _app.tsx
+  const appFile = readFileSync(resolve(process.cwd(), "src/routes/_app.tsx"), "utf8");
+  assert.ok(
+    appFile.includes("activeBranchId"),
+    "_app.tsx must pass activeBranchId to startCompanyRealtimeSync"
+  );
+  assert.ok(
+    appFile.includes("isOwner"),
+    "_app.tsx must pass isOwner to startCompanyRealtimeSync"
+  );
+});
+

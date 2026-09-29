@@ -921,7 +921,6 @@ class BizDB extends Dexie {
   salesReturns!: Table<SalesReturn, ID>;
   creditNotes!: Table<CreditNote, ID>;
   branches!: Table<any, ID>;
-  savedReportViews!: Table<SavedReportView, ID>;
 
   constructor() {
     super("bms_db_v1");
@@ -966,9 +965,6 @@ class BizDB extends Dexie {
       receipts: "id, number, date, customerId, branchId, invoiceId, createdAt",
       purchases: "id, number, date, supplierId, branchId, supplierInvoiceNumber, createdAt",
       payments: "id, number, date, supplierId, branchId, createdAt",
-    });
-    this.version(8).stores({
-      savedReportViews: "id, companyId, tab, createdAt",
     });
   }
 }

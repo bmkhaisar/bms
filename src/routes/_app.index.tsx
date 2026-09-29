@@ -283,15 +283,6 @@ function Dashboard() {
     cacheKey,
   ]);
 
-  // If data is still querying and no memory cache exists yet, show skeleton rather than flashing fake ₹0 (PRD § 9)
-  if (!isDataLoaded || !metrics) {
-    return (
-      <AppShell title="Dashboard">
-        <DashboardSkeleton />
-      </AppShell>
-    );
-  }
-
   const kpiComparisons = useMemo(() => {
     if (!isDataLoaded) return null;
     try {
@@ -335,6 +326,15 @@ function Dashboard() {
       return null;
     }
   }, [isDataLoaded, invoices, purchases, receipts, activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
+
+  // If data is still querying and no memory cache exists yet, show skeleton rather than flashing fake ₹0 (PRD § 9)
+  if (!isDataLoaded || !metrics) {
+    return (
+      <AppShell title="Dashboard">
+        <DashboardSkeleton />
+      </AppShell>
+    );
+  }
 
   const kpiCards = [
     {

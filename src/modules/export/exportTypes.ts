@@ -30,4 +30,7 @@ export interface ExportOptions<T = any> {
   can?: (permission: string) => boolean;
   allowedBranchIds?: string[];
   isOwner?: boolean;
+  requestedBranchId?: string;
+  exportType?: "standard" | "gst" | "ca" | "inventory" | string;
 }
+
