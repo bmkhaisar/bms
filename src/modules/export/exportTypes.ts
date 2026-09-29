@@ -10,6 +10,7 @@ export interface ExportColumnDefinition<T = any> {
   align?: "left" | "right" | "center";
   hidden?: boolean;
   hiddenByDefault?: boolean;
+  requiredPermission?: string; // e.g. "COST_VIEW", "GST_VIEW"
   getter?: (row: T, index: number) => any;
   formatForDisplay?: (value: any, row: T) => string;
 }
@@ -25,4 +26,8 @@ export interface ExportOptions<T = any> {
   format: ExportFormat;
   includeTotals?: boolean;
   selectedColumnKeys?: string[];
+  userPermissions?: string[] | Set<string>;
+  can?: (permission: string) => boolean;
+  allowedBranchIds?: string[];
+  isOwner?: boolean;
 }

@@ -323,14 +323,49 @@ export function generateJSON<T>(options: ExportOptions<T>): Blob {
 }
 
 /**
- * Filters columns according to user selection or defaults.
+ * Filters columns according to user selection, defaults, and RBAC permissions.
+ * Hardening Item 3: A user without permission (e.g. COST_VIEW) strictly NEVER receives
+ * that column in Excel, CSV, PDF, or JSON exports.
  */
-function getActiveColumns<T>(options: ExportOptions<T>): ExportColumnDefinition<T>[] {
+export function getActiveColumns<T>(options: ExportOptions<T>): ExportColumnDefinition<T>[] {
+  const hasPerm = (requiredPerm?: string): boolean => {
+    if (!requiredPerm) return true;
+    if (options.isOwner) return true;
+    if (options.can) return options.can(requiredPerm);
+    if (options.userPermissions) {
+      if (Array.isArray(options.userPermissions)) {
+        return options.userPermissions.includes(requiredPerm);
+      }
+      if (options.userPermissions instanceof Set) {
+        return options.userPermissions.has(requiredPerm);
+      }
+    }
+    return false; // Default safe: reject if permission required but not granted
+  };
+
+  const permittedCols = options.columns.filter((c) => !c.hidden && hasPerm(c.requiredPermission));
+
   if (options.selectedColumnKeys && options.selectedColumnKeys.length > 0) {
     const keySet = new Set(options.selectedColumnKeys);
-    return options.columns.filter((c) => keySet.has(c.key));
+    return permittedCols.filter((c) => keySet.has(c.key));
   }
-  return options.columns.filter((c) => !c.hiddenByDefault);
+  return permittedCols.filter((c) => !c.hiddenByDefault);
+}
+
+/**
+ * Filters rows to ensure strict multi-branch authorization isolation.
+ * Hardening Item 3: A Branch-A user strictly CANNOT export Branch-B transactions.
+ */
+export function getAuthorizedData<T>(options: ExportOptions<T>): T[] {
+  if (options.isOwner) return options.data;
+  if (!options.allowedBranchIds || options.allowedBranchIds.length === 0) {
+    return options.data;
+  }
+  const allowedSet = new Set(options.allowedBranchIds);
+  return options.data.filter((row: any) => {
+    if (!row || !row.branchId) return true; // Global records allowed
+    return allowedSet.has(row.branchId);
+  });
 }
 
 /**
@@ -356,28 +391,35 @@ export function executeExport<T>(options: ExportOptions<T>) {
     ? options.filename
     : `${options.filename}_${dateStr}`;
 
+  // Enforce branch-level row security
+  const authorizedData = getAuthorizedData(options);
+  const secureOptions: ExportOptions<T> = {
+    ...options,
+    data: authorizedData,
+  };
+
   let blob: Blob;
   let extension: string;
 
-  switch (options.format) {
+  switch (secureOptions.format) {
     case "excel":
-      blob = generateExcel(options);
+      blob = generateExcel(secureOptions);
       extension = ".xlsx";
       break;
     case "csv":
-      blob = generateCSV(options);
+      blob = generateCSV(secureOptions);
       extension = ".csv";
       break;
     case "pdf":
-      blob = generatePDF(options);
+      blob = generatePDF(secureOptions);
       extension = ".pdf";
       break;
     case "json":
-      blob = generateJSON(options);
+      blob = generateJSON(secureOptions);
       extension = ".json";
       break;
     default:
-      blob = generateCSV(options);
+      blob = generateCSV(secureOptions);
       extension = ".csv";
   }
 

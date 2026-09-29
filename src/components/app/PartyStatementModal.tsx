@@ -31,8 +31,8 @@ import { formatDate, formatMoney } from "@/lib/format";
 import { executeExport } from "@/modules/export/exportService";
 import type { ExportColumnDefinition } from "@/modules/export/exportTypes";
 import { toast } from "sonner";
-import { isPostedInvoice, isPostedPurchase, isPostedReceipt, isPostedPayment, isPostedCreditNote } from "@/modules/accounting/services/canonicalOutstandingService";
 import { resolveDatePreset, type DatePreset } from "@/modules/accounting/services/reportingScope";
+import { getPartyStatement } from "@/modules/accounting/services/reportEngine";
 
 export interface StatementTransactionRow {
   id: string;
@@ -74,182 +74,46 @@ export function PartyStatementModal({
   const partyType = party?.partyType || (party?.isCustomer ? "SUNDRY_DEBTOR" : "SUNDRY_CREDITOR");
   const isDebtor = partyType === "SUNDRY_DEBTOR" || partyType === "BOTH" || party?.isCustomer;
 
-  // Build statement timeline
+  // Build statement timeline using authoritative getPartyStatement (Item 4)
   const { openingBalance, rows, closingBalance, totalDebits, totalCredits } = useMemo(() => {
     if (!party) {
       return { openingBalance: 0, rows: [], closingBalance: 0, totalDebits: 0, totalCredits: 0 };
     }
 
-    const partyId = party.id;
-    const fromTs = dateRange.fromTimestamp;
-    const toTs = dateRange.toTimestamp;
-
-    // Static opening from master
-    const baseOpening = Number(party.openingBalance) || 0;
-    const openingType = (party.openingBalanceType || "dr").toLowerCase();
-    let prePeriodRunning = openingType === "cr" ? -Math.abs(baseOpening) : Math.abs(baseOpening);
-
-    // Collect all transactions related to this party
-    interface RawEvent {
-      id: string;
-      timestamp: number;
-      date: string;
-      type: "Invoice" | "Purchase" | "Receipt" | "Payment" | "Credit Note";
-      documentNumber: string;
-      reference?: string;
-      debit: number;
-      credit: number;
-      branchId?: string;
-    }
-
-    const allEvents: RawEvent[] = [];
-
-    // 1. Invoices
-    for (const inv of invoicesState.data) {
-      if (!isPostedInvoice(inv)) continue;
-      if (inv.customerId !== partyId && (inv as any).partyId !== partyId) continue;
-      const t = inv.date || inv.createdAt;
-      const total = Number(inv.grandTotal ?? (inv as any).total) || 0;
-      allEvents.push({
-        id: inv.id,
-        timestamp: t,
-        date: formatDate(t),
-        type: "Invoice",
-        documentNumber: inv.number,
-        reference: (inv as any).reference || "",
-        debit: total, // Customer debit
-        credit: 0,
-        branchId: inv.branchId,
-      });
-    }
-
-    // 2. Receipts
-    for (const rec of receiptsState.data) {
-      if (!isPostedReceipt(rec)) continue;
-      if (rec.customerId !== partyId && (rec as any).partyId !== partyId) continue;
-      const t = rec.date || rec.createdAt;
-      const amount = Number(rec.amount) || 0;
-      allEvents.push({
-        id: rec.id,
-        timestamp: t,
-        date: formatDate(t),
-        type: "Receipt",
-        documentNumber: rec.number || (rec as any).receiptNumber || "",
-        reference: rec.reference || (rec as any).referenceNumber || "",
-        debit: 0,
-        credit: amount, // Customer credit (reduces AR)
-        branchId: rec.branchId,
-      });
-    }
-
-    // 3. Purchases
-    for (const pu of purchasesState.data) {
-      if (!isPostedPurchase(pu)) continue;
-      if (pu.supplierId !== partyId && (pu as any).partyId !== partyId) continue;
-      const t = pu.date || pu.createdAt;
-      const total = Number(pu.grandTotal ?? (pu as any).total) || 0;
-      allEvents.push({
-        id: pu.id,
-        timestamp: t,
-        date: formatDate(t),
-        type: "Purchase",
-        documentNumber: pu.number,
-        reference: (pu as any).supplierInvoiceNumber || "",
-        debit: 0,
-        credit: total, // Supplier credit (increases AP)
-        branchId: pu.branchId,
-      });
-    }
-
-    // 4. Payments
-    for (const pay of paymentsState.data) {
-      if (!isPostedPayment(pay)) continue;
-      if (pay.supplierId !== partyId && (pay as any).partyId !== partyId) continue;
-      const t = pay.date || pay.createdAt;
-      const amount = Number(pay.amount) || 0;
-      allEvents.push({
-        id: pay.id,
-        timestamp: t,
-        date: formatDate(t),
-        type: "Payment",
-        documentNumber: pay.number || (pay as any).paymentNumber || "",
-        reference: pay.reference || (pay as any).referenceNumber || "",
-        debit: amount, // Supplier debit (reduces AP)
-        credit: 0,
-        branchId: pay.branchId,
-      });
-    }
-
-    // 5. Credit Notes
-    for (const cn of creditNotesState.data) {
-      if (!isPostedCreditNote(cn)) continue;
-      if (cn.customerId !== partyId && (cn as any).partyId !== partyId) continue;
-      const t = cn.date || cn.createdAt;
-      const total = Number(cn.grandTotal ?? (cn as any).total) || 0;
-      allEvents.push({
-        id: cn.id,
-        timestamp: t,
-        date: formatDate(t),
-        type: "Credit Note",
-        documentNumber: cn.number,
-        reference: (cn as any).originalInvoiceNumber ? `Against ${(cn as any).originalInvoiceNumber}` : "",
-        debit: 0,
-        credit: total, // Customer credit note reduces customer balance
-        branchId: cn.branchId,
-      });
-    }
-
-    // Filter by branch
-    const branchFilteredEvents = allEvents.filter((ev) => {
-      if (selectedBranchId !== "all") {
-        return ev.branchId === selectedBranchId;
-      }
-      return true;
+    const stmt = getPartyStatement({
+      party,
+      invoices: invoicesState.data,
+      purchases: purchasesState.data,
+      receipts: receiptsState.data,
+      payments: paymentsState.data,
+      creditNotes: creditNotesState.data,
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
+      branchId: selectedBranchId,
     });
 
-    // Sort chronologically
-    branchFilteredEvents.sort((a, b) => a.timestamp - b.timestamp);
-
-    // Roll pre-period events into opening balance
-    for (const ev of branchFilteredEvents) {
-      if (ev.timestamp < fromTs) {
-        prePeriodRunning += ev.debit - ev.credit;
-      }
-    }
-
-    // Accumulate period rows
-    let running = prePeriodRunning;
-    const periodRows: StatementTransactionRow[] = [];
-    let totDr = 0;
-    let totCr = 0;
-
-    for (const ev of branchFilteredEvents) {
-      if (ev.timestamp >= fromTs && ev.timestamp <= toTs) {
-        running += ev.debit - ev.credit;
-        totDr += ev.debit;
-        totCr += ev.credit;
-        const bObj = branches.find((b) => b.id === ev.branchId);
-        periodRows.push({
-          id: ev.id,
-          date: ev.date,
-          timestamp: ev.timestamp,
-          type: ev.type,
-          documentNumber: ev.documentNumber,
-          reference: ev.reference,
-          debit: ev.debit,
-          credit: ev.credit,
-          runningBalance: running,
-          branchName: bObj?.name || "Main Branch",
-        });
-      }
-    }
+    const periodRows: StatementTransactionRow[] = stmt.rows.map((r) => {
+      const bObj = branches.find((b) => b.id === r.branchId);
+      return {
+        id: r.id,
+        date: r.date,
+        timestamp: r.timestamp,
+        type: r.type as any,
+        documentNumber: r.documentNumber,
+        reference: r.reference,
+        debit: r.debit,
+        credit: r.credit,
+        runningBalance: r.runningBalance,
+        branchName: bObj?.name || "Main Branch",
+      };
+    });
 
     return {
-      openingBalance: prePeriodRunning,
+      openingBalance: stmt.openingBalance,
       rows: periodRows,
-      closingBalance: running,
-      totalDebits: totDr,
-      totalCredits: totCr,
+      closingBalance: stmt.closingBalance,
+      totalDebits: stmt.periodDebit,
+      totalCredits: stmt.periodCredit,
     };
   }, [
     party,

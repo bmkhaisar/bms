@@ -923,3 +923,179 @@ export function calculateAuthoritativeCustomerCredits(
     creditItems,
   };
 }
+
+export interface SupplierCreditItem {
+  id?: string;
+  originatingType: "PAYMENT" | "DEBIT_NOTE";
+  originatingId: string;
+  originatingNumber: string;
+  paymentId?: string;
+  paymentNumber?: string;
+  supplierId: string;
+  purchaseId?: string;
+  purchaseNumber?: string;
+  branchId?: string;
+  amountCreated: number;
+  originalAmount: number;
+  amountAllocated: number;
+  amountApplied: number;
+  creditCreated?: number;
+  creditApplied?: number;
+  creditAvailable?: number;
+  remainingAmount: number;
+  remainingCredit: number;
+  appliedPurchaseNumber?: string;
+  date: number;
+  createdAt?: number;
+  status: "available" | "applied" | "partial" | "reversed" | "cancelled";
+}
+
+export const resolveCanonicalSupplierCredits = calculateAuthoritativeSupplierCredits;
+
+/**
+ * Authoritatively calculates supplier advances, advance payments, and unapplied debits.
+ * Enforces AP parity with AR (Item 5):
+ * Gross Supplier Dues - Available Supplier Advances = Net Accounts Payable.
+ */
+export function calculateAuthoritativeSupplierCredits(
+  paramsOrPurchases:
+    | {
+        payments: Payment[];
+        purchases: Purchase[];
+        branchId?: string | null;
+      }
+    | Purchase[],
+  paymentsArg?: Payment[]
+): {
+  totalSupplierCredits: number;
+  supplierCreditsCreated?: number;
+  supplierCreditsApplied?: number;
+  supplierCreditsAvailable?: number;
+  creditItems: SupplierCreditItem[];
+  supplierCreditsByParty: Record<string, number>;
+} {
+  let payments: Payment[] = [];
+  let purchases: Purchase[] = [];
+  let branchId: string | null | undefined = undefined;
+
+  if (Array.isArray(paramsOrPurchases)) {
+    purchases = paramsOrPurchases;
+    payments = paymentsArg || [];
+  } else if (paramsOrPurchases && typeof paramsOrPurchases === "object") {
+    payments = paramsOrPurchases.payments || [];
+    purchases = paramsOrPurchases.purchases || [];
+    branchId = paramsOrPurchases.branchId;
+  }
+
+  const creditItems: SupplierCreditItem[] = [];
+  let totalSupplierCreditsPaise = 0;
+  let totalCreditsCreatedPaise = 0;
+  let totalCreditsAppliedPaise = 0;
+  const supplierCreditsByParty: Record<string, number> = {};
+
+  // Process valid posted payments for unapplied excess / advances
+  for (const p of payments) {
+    if (!isPostedPayment(p)) continue;
+    if (branchId && branchId !== "all" && p.branchId && p.branchId !== branchId) continue;
+
+    const paymentTotalPaise = Math.round((p.amount || 0) * 100);
+    let allocatedPaise = 0;
+    let appliedPurchaseNumber: string | undefined;
+    let matchedPurchaseId: string | undefined;
+
+    if (p.allocatedPurchases && p.allocatedPurchases.length > 0) {
+      for (const a of p.allocatedPurchases) {
+        allocatedPaise += extractAllocationPaise(a);
+        if (!appliedPurchaseNumber && (a.purchaseNumber || (a as any).billNumber)) {
+          appliedPurchaseNumber = a.purchaseNumber || (a as any).billNumber;
+        }
+        if (!matchedPurchaseId && a.purchaseId) {
+          matchedPurchaseId = a.purchaseId;
+        }
+      }
+    } else if (p.purchaseId && p.purchaseId !== "none") {
+      const targetPu = purchases.find((pu) => isAllocationForPurchase(p.purchaseId, pu));
+      if (targetPu) {
+        matchedPurchaseId = targetPu.id;
+        appliedPurchaseNumber = targetPu.number;
+        const targetGrandPaise = Math.round(targetPu.grandTotal * 100);
+        allocatedPaise = Math.min(paymentTotalPaise, targetGrandPaise);
+      } else {
+        allocatedPaise = paymentTotalPaise;
+      }
+    }
+
+    const explicitCredit = (p as any).supplierCreditPaise ?? (p as any).advanceAvailablePaise ?? (p as any).unappliedCreditPaise;
+    const isExplicitAdvance = (p as any).allocationType === "ADVANCE" || (p as any).isAdvance;
+    const creditCreatedPaise = typeof explicitCredit === "number" && explicitCredit > 0
+      ? explicitCredit
+      : isExplicitAdvance
+      ? paymentTotalPaise
+      : Math.max(0, paymentTotalPaise - allocatedPaise);
+
+    // Trace explicit application against purchases
+    let creditAppliedPaise = 0;
+    for (const pu of purchases) {
+      if ((pu as any).advanceAllocations && Array.isArray((pu as any).advanceAllocations)) {
+        for (const aa of (pu as any).advanceAllocations) {
+          if (aa.paymentId === p.id || aa.paymentNumber === p.number) {
+            creditAppliedPaise += aa.amountPaise || 0;
+          }
+        }
+      }
+    }
+
+    const remainingCreditPaise = Math.max(0, creditCreatedPaise - creditAppliedPaise);
+
+    if (creditCreatedPaise > 0) {
+      totalCreditsCreatedPaise += creditCreatedPaise;
+      totalCreditsAppliedPaise += creditAppliedPaise;
+      totalSupplierCreditsPaise += remainingCreditPaise;
+
+      const supplierId = p.supplierId || (p as any).partyId || "unknown";
+      supplierCreditsByParty[supplierId] = (supplierCreditsByParty[supplierId] || 0) + (remainingCreditPaise / 100);
+
+      const status: "available" | "applied" | "partial" =
+        remainingCreditPaise <= 0
+          ? "applied"
+          : remainingCreditPaise < creditCreatedPaise
+          ? "partial"
+          : "available";
+
+      creditItems.push({
+        id: `sc_${p.id}`,
+        originatingType: "PAYMENT",
+        originatingId: p.id,
+        originatingNumber: p.number || (p as any).paymentNumber || "",
+        paymentId: p.id,
+        paymentNumber: p.number || (p as any).paymentNumber || "",
+        supplierId,
+        purchaseId: matchedPurchaseId,
+        purchaseNumber: appliedPurchaseNumber,
+        branchId: p.branchId,
+        amountCreated: creditCreatedPaise / 100,
+        originalAmount: p.amount,
+        amountAllocated: allocatedPaise / 100,
+        amountApplied: creditAppliedPaise / 100,
+        creditCreated: creditCreatedPaise / 100,
+        creditApplied: creditAppliedPaise / 100,
+        creditAvailable: remainingCreditPaise / 100,
+        remainingAmount: remainingCreditPaise / 100,
+        remainingCredit: remainingCreditPaise / 100,
+        appliedPurchaseNumber,
+        date: p.date,
+        createdAt: p.date,
+        status,
+      });
+    }
+  }
+
+  return {
+    totalSupplierCredits: totalSupplierCreditsPaise / 100,
+    supplierCreditsCreated: totalCreditsCreatedPaise / 100,
+    supplierCreditsApplied: totalCreditsAppliedPaise / 100,
+    supplierCreditsAvailable: totalSupplierCreditsPaise / 100,
+    creditItems,
+    supplierCreditsByParty,
+  };
+}

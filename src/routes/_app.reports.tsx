@@ -12,7 +12,13 @@ import {
   type Party,
   type CreditNote,
   type SalesReturn,
+  type SavedReportView,
 } from "@/lib/db";
+import {
+  listSavedReportViews,
+  saveReportView,
+  deleteReportView,
+} from "@/modules/reports/savedReportViewsService";
 import {
   isPostedInvoice,
   isPostedPurchase,
@@ -81,16 +87,6 @@ export const Route = createFileRoute("/_app/reports")({
   component: ReportsPage,
 });
 
-interface SavedReportView {
-  id: string;
-  name: string;
-  tab: string;
-  from?: number;
-  to?: number;
-  preset?: string;
-  createdAt: number;
-}
-
 function ReportsPage() {
   const { scope, setDatePreset, setCustomDateRange } = useBusinessScope();
   const [from, setFrom] = useState<number | undefined>(
@@ -112,18 +108,21 @@ function ReportsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [docTypeFilter, setDocTypeFilter] = useState<string>("all");
 
-  // Saved views state
-  const [savedViews, setSavedViews] = useState<SavedReportView[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = localStorage.getItem("bms_saved_report_views");
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Saved views state — Dexie backed (PRD Item 1, zero localStorage)
+  const [savedViews, setSavedViews] = useState<SavedReportView[]>([]);
   const [isSaveViewOpen, setIsSaveViewOpen] = useState(false);
   const [newViewName, setNewViewName] = useState("");
+
+  // Load saved views from Dexie database
+  useEffect(() => {
+    let active = true;
+    listSavedReportViews(scope.companyId).then((views) => {
+      if (active) setSavedViews(views);
+    });
+    return () => {
+      active = false;
+    };
+  }, [scope.companyId]);
 
   // Sync with global BusinessScopeBar
   useEffect(() => {
@@ -154,13 +153,14 @@ function ReportsPage() {
     }
   };
 
-  const handleSaveView = () => {
+  const handleSaveView = async () => {
     if (!newViewName.trim()) {
       toast.error("Please enter a name for this view");
       return;
     }
     const view: SavedReportView = {
       id: `view_${Date.now()}`,
+      companyId: scope.companyId,
       name: newViewName.trim(),
       tab,
       from,
@@ -168,14 +168,15 @@ function ReportsPage() {
       preset: scope.dateRange.preset,
       createdAt: Date.now(),
     };
-    const next = [view, ...savedViews.slice(0, 19)];
-    setSavedViews(next);
     try {
-      localStorage.setItem("bms_saved_report_views", JSON.stringify(next));
-    } catch {}
-    toast.success(`Saved view "${view.name}" created`);
-    setNewViewName("");
-    setIsSaveViewOpen(false);
+      await saveReportView(view);
+      setSavedViews((prev) => [view, ...prev.filter((v) => v.id !== view.id)]);
+      toast.success(`Saved view "${view.name}" created`);
+      setNewViewName("");
+      setIsSaveViewOpen(false);
+    } catch {
+      toast.error("Failed to save view");
+    }
   };
 
   const handleLoadView = (v: SavedReportView) => {
@@ -191,14 +192,15 @@ function ReportsPage() {
     toast.info(`Loaded view: ${v.name}`);
   };
 
-  const handleDeleteView = (id: string, e: React.MouseEvent) => {
+  const handleDeleteView = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const next = savedViews.filter((v) => v.id !== id);
-    setSavedViews(next);
     try {
-      localStorage.setItem("bms_saved_report_views", JSON.stringify(next));
-    } catch {}
-    toast.success("Saved view removed");
+      await deleteReportView(id);
+      setSavedViews((prev) => prev.filter((v) => v.id !== id));
+      toast.success("Saved view removed");
+    } catch {
+      toast.error("Failed to delete saved view");
+    }
   };
 
   const activeFilterCount = useMemo(() => {

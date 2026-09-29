@@ -19,14 +19,18 @@
  */
 
 import type { Database } from "firebase-admin/database";
-import { hasBranchPermission, type CanonicalPermission } from "../../modules/auth/permissions.ts";
+import {
+  hasBranchPermission,
+  hasBranchAccess,
+  type CanonicalPermission,
+} from "../../modules/auth/permissions.ts";
 import type { Membership } from "../../modules/company/types.ts";
 
 export interface PermissionCheckResult {
   authorized: boolean;
   membership?: Membership;
   error?: string;
-  code?: "FORBIDDEN" | "NOT_FOUND" | "INVALID_INPUT";
+  code?: "FORBIDDEN" | "CROSS_BRANCH_FORBIDDEN" | "NOT_FOUND" | "INVALID_INPUT";
 }
 
 export async function verifyServerPermission(params: {
@@ -72,6 +76,18 @@ export async function verifyServerPermission(params: {
         authorized: false,
         error: "Forbidden: Consolidated 'All Branches' mode is strictly an Organization Owner privilege.",
         code: "FORBIDDEN",
+      };
+    }
+  }
+
+  // Hardening Item 2: Strict server-side cross-branch validation
+  if (branchId && branchId !== "all") {
+    const role = (membership.organizationRole || membership.role || "").toLowerCase();
+    if (role !== "owner" && !hasBranchAccess(membership, branchId)) {
+      return {
+        authorized: false,
+        error: `Cross-Branch Forbidden: You do not have authorization for branch '${branchId}'.`,
+        code: "CROSS_BRANCH_FORBIDDEN",
       };
     }
   }

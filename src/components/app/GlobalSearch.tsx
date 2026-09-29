@@ -35,7 +35,7 @@ import {
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { searchCachedEntitiesRecords } from "@/modules/sync/dexieCache";
 import type { CachedEntity } from "@/modules/sync/types";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { firebaseDb } from "@/config/firebase";
 import { ref, onValue, off } from "firebase/database";
 import type { Ledger } from "@/modules/accounting/types";
@@ -49,10 +49,20 @@ export function GlobalSearch({
   onOpenChange: (o: boolean) => void;
 }) {
   const nav = useNavigate();
-  const { activeCompany } = useActiveCompany();
+  const { activeCompany, activeBranchId, branches, isOwner } = useActiveCompany();
   const [query, setQuery] = useState("");
   const [cachedMatches, setCachedMatches] = useState<CachedEntity[]>([]);
   const [ledgers, setLedgers] = useState<Ledger[]>([]);
+
+  // Authorized branch set for the current user
+  const authorizedBranchIds = useMemo(() => new Set(branches.map((b) => b.id)), [branches]);
+
+  const isBranchAllowed = (entityBranchId?: string): boolean => {
+    if (isOwner) return true;
+    if (!entityBranchId) return true; // Master entities or non-branch records are permitted
+    if (activeBranchId !== "all" && entityBranchId !== activeBranchId) return false;
+    return authorizedBranchIds.has(entityBranchId);
+  };
 
   const customers = useLive<Customer>(() => db().customers.limit(60).toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.limit(60).toArray());
@@ -98,13 +108,22 @@ export function GlobalSearch({
       return;
     }
     let active = true;
-    searchCachedEntitiesRecords(activeCompany.id, query.trim(), 25).then((matches) => {
-      if (active) setCachedMatches(matches);
-    });
+    const timer = setTimeout(() => {
+      searchCachedEntitiesRecords(activeCompany.id, query.trim(), 25).then((matches) => {
+        if (active) {
+          const authorizedMatches = matches.filter((m) =>
+            isBranchAllowed(m.branchId || (m.data as any)?.branchId)
+          );
+          setCachedMatches(authorizedMatches);
+        }
+      });
+    }, 150);
+
     return () => {
       active = false;
+      clearTimeout(timer);
     };
-  }, [activeCompany?.id, query]);
+  }, [activeCompany?.id, query, activeBranchId, isOwner, authorizedBranchIds]);
 
   function go(url: string) {
     onOpenChange(false);
@@ -113,33 +132,53 @@ export function GlobalSearch({
 
   const q = query.toLowerCase().trim();
 
-  // Filtered in-memory records
-  const matchedInvoices = q ? invoices.filter((i) =>
-    (i.number || "").toLowerCase().includes(q) ||
-    (i.customerSnapshot?.name || "").toLowerCase().includes(q)
-  ) : invoices.slice(0, 5);
+  // Filtered in-memory records with strict branch authorization
+  const matchedInvoices = (q
+    ? invoices.filter((i) =>
+        isBranchAllowed(i.branchId) &&
+        ((i.number || "").toLowerCase().includes(q) ||
+          (i.customerSnapshot?.name || "").toLowerCase().includes(q))
+      )
+    : invoices.filter((i) => isBranchAllowed(i.branchId))
+  ).slice(0, 5);
 
-  const matchedQuotations = q ? quotations.filter((qt) =>
-    (qt.number || "").toLowerCase().includes(q) ||
-    (qt.customerSnapshot?.name || "").toLowerCase().includes(q)
-  ) : quotations.slice(0, 5);
+  const matchedQuotations = (q
+    ? quotations.filter((qt) =>
+        isBranchAllowed(qt.branchId) &&
+        ((qt.number || "").toLowerCase().includes(q) ||
+          (qt.customerSnapshot?.name || "").toLowerCase().includes(q))
+      )
+    : quotations.filter((qt) => isBranchAllowed(qt.branchId))
+  ).slice(0, 5);
 
-  const matchedPurchases = q ? purchases.filter((pu) =>
-    (pu.number || "").toLowerCase().includes(q) ||
-    (pu.supplierInvoiceNumber || "").toLowerCase().includes(q) ||
-    (pu.supplierSnapshot?.name || "").toLowerCase().includes(q)
-  ) : purchases.slice(0, 5);
+  const matchedPurchases = (q
+    ? purchases.filter((pu) =>
+        isBranchAllowed(pu.branchId) &&
+        ((pu.number || "").toLowerCase().includes(q) ||
+          (pu.supplierInvoiceNumber || "").toLowerCase().includes(q) ||
+          (pu.supplierSnapshot?.name || "").toLowerCase().includes(q))
+      )
+    : purchases.filter((pu) => isBranchAllowed(pu.branchId))
+  ).slice(0, 5);
 
-  const matchedReceipts = q ? receipts.filter((rc) =>
-    (rc.number || (rc as any).receiptNumber || "").toLowerCase().includes(q) ||
-    ((rc as any).customerName || (rc as any).partyName || "").toLowerCase().includes(q)
-  ) : receipts.slice(0, 5);
+  const matchedReceipts = (q
+    ? receipts.filter((rc) =>
+        isBranchAllowed(rc.branchId) &&
+        (((rc.number || (rc as any).receiptNumber || "").toLowerCase().includes(q)) ||
+          (((rc as any).customerName || (rc as any).partyName || "").toLowerCase().includes(q)))
+      )
+    : receipts.filter((rc) => isBranchAllowed(rc.branchId))
+  ).slice(0, 5);
 
-  const matchedCreditNotes = q ? creditNotes.filter((cn) =>
-    (cn.number || "").toLowerCase().includes(q) ||
-    (cn.originalInvoiceNumber || "").toLowerCase().includes(q) ||
-    ((cn as any).customerName || (cn as any).partyName || "").toLowerCase().includes(q)
-  ) : creditNotes.slice(0, 5);
+  const matchedCreditNotes = (q
+    ? creditNotes.filter((cn) =>
+        isBranchAllowed(cn.branchId) &&
+        (((cn.number || "").toLowerCase().includes(q)) ||
+          ((cn.originalInvoiceNumber || "").toLowerCase().includes(q)) ||
+          (((cn as any).customerName || (cn as any).partyName || "").toLowerCase().includes(q)))
+      )
+    : creditNotes.filter((cn) => isBranchAllowed(cn.branchId))
+  ).slice(0, 5);
 
   const matchedParties = q ? parties.filter((p) =>
     (p.name || "").toLowerCase().includes(q) ||

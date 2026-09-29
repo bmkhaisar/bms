@@ -56,9 +56,11 @@
           ".write": false
         },
         "vouchers": {
+          ".indexOn": ["financialYearId", "branchId", "voucherType", "date", "createdAt"],
           ".write": false
         },
         "voucherLines": {
+          ".indexOn": ["voucherId", "ledgerId"],
           ".write": false
         },
         "stockMovements": {

@@ -480,7 +480,7 @@ export function buildCanonicalReportingScope(params: {
  */
 export function filterRecordsByBusinessScope<
   T extends { branchId?: string; companyId?: string; date?: number | string; createdAt?: number }
->(records: T[], scope: BusinessScope): T[] {
+>(records: T[], scope: BusinessScope, options?: { ignoreDateRange?: boolean }): T[] {
   return records.filter((r) => {
     // 1. Branch filter
     if (scope.scopeMode === "BRANCH") {
@@ -496,8 +496,8 @@ export function filterRecordsByBusinessScope<
       }
     }
 
-    // 2. Date filter (if not "all_time")
-    if (scope.dateRange.preset !== "all_time") {
+    // 2. Date filter (if not "all_time" and date filtering is not explicitly ignored)
+    if (!options?.ignoreDateRange && scope.dateRange.preset !== "all_time") {
       const rawDate = r.date ?? r.createdAt;
       if (rawDate !== undefined && rawDate !== null) {
         const time = typeof rawDate === "number"

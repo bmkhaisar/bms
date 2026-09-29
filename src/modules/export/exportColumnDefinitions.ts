@@ -38,6 +38,7 @@ export const PRODUCT_EXPORT_COLUMNS: ExportColumnDefinition<any>[] = [
     header: "Purchase/Cost Rate (₹)",
     type: "currency",
     width: 18,
+    requiredPermission: "COST_VIEW",
     getter: (p) => p.purchasePrice ?? p.costPrice ?? 0,
   },
   {

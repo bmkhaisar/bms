@@ -17,6 +17,7 @@
     "repair:company-foundation": "node scripts/repair-company-foundation.mjs",
     "reset:company-data": "node scripts/reset-company-data.mjs",
     "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit",
     "verify:release": "node scripts/verify-release.mjs",
     "arch:doctor": "node scripts/architecture.mjs doctor",
     "arch:validate": "node scripts/architecture.mjs validate",

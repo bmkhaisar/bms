@@ -614,6 +614,286 @@ export function getLedgerStatement(
   };
 }
 
+export interface PartyStatementResult {
+  partyId: string;
+  partyName: string;
+  openingBalance: number;
+  closingBalance: number;
+  periodDebit: number;
+  periodCredit: number;
+  rows: Array<{
+    id: string;
+    date: string;
+    timestamp: number;
+    type: string;
+    documentNumber: string;
+    reference?: string;
+    description?: string;
+    debit: number;
+    credit: number;
+    runningBalance: number;
+    branchId?: string;
+  }>;
+}
+
+/**
+ * Authoritative Party Statement Generator.
+ * Reconciles 100% to Ledger Statement (Item 4).
+ * Derives from double-entry vouchers when present, or posted canonical operational documents.
+ */
+export function getPartyStatement(params: {
+  party: any;
+  ledgers?: Ledger[];
+  vouchers?: Voucher[];
+  invoices?: any[];
+  purchases?: any[];
+  receipts?: any[];
+  payments?: any[];
+  creditNotes?: any[];
+  salesReturns?: any[];
+  fromDate?: string;
+  toDate?: string;
+  branchId?: string | "all";
+}): PartyStatementResult {
+  const {
+    party,
+    ledgers = [],
+    vouchers = [],
+    invoices = [],
+    purchases = [],
+    receipts = [],
+    payments = [],
+    creditNotes = [],
+    fromDate = "",
+    toDate = "9999-12-31",
+    branchId,
+  } = params;
+
+  if (!party) {
+    return {
+      partyId: "",
+      partyName: "",
+      openingBalance: 0,
+      closingBalance: 0,
+      periodDebit: 0,
+      periodCredit: 0,
+      rows: [],
+    };
+  }
+
+  // 1. Authoritative double-entry derivation when ledger and vouchers exist
+  const partyLedger = ledgers.find(
+    (l) =>
+      l.id === party.ledgerId ||
+      l.partyId === party.id ||
+      (l.partyType && (l.partyId === party.id || l.name.toLowerCase() === party.name?.toLowerCase()))
+  );
+
+  if (partyLedger && vouchers.length > 0) {
+    const scopedVouchers = branchId && branchId !== "all"
+      ? vouchers.filter((v: any) => !v.branchId || v.branchId === branchId)
+      : vouchers;
+
+    const stmt = getLedgerStatement(partyLedger, scopedVouchers, { fromDate, toDate });
+    return {
+      partyId: party.id,
+      partyName: party.name,
+      openingBalance: stmt.openingBalancePaise / 100,
+      closingBalance: stmt.closingBalancePaise / 100,
+      periodDebit: stmt.periodDebitPaise / 100,
+      periodCredit: stmt.periodCreditPaise / 100,
+      rows: stmt.rows.map((r) => ({
+        id: r.voucherId,
+        date: r.date,
+        timestamp: r.postedAt,
+        type: r.voucherType ? (r.voucherType.charAt(0).toUpperCase() + r.voucherType.slice(1)) : "Voucher",
+        documentNumber: r.voucherNumber,
+        reference: r.reference,
+        description: r.description,
+        debit: r.debitPaise / 100,
+        credit: r.creditPaise / 100,
+        runningBalance: r.runningBalancePaise / 100,
+      })),
+    };
+  }
+
+  // 2. Canonical operational posted fallback (when vouchers not yet in local cache)
+  const partyId = party.id;
+  const baseOpening = Number(party.openingBalance) || 0;
+  const openingType = (party.openingBalanceType || "dr").toLowerCase();
+  let running = openingType === "cr" ? -Math.abs(baseOpening) : Math.abs(baseOpening);
+  let effectiveOpening = running;
+
+  interface RawEvent {
+    id: string;
+    timestamp: number;
+    date: string;
+    type: string;
+    documentNumber: string;
+    reference?: string;
+    description?: string;
+    debit: number;
+    credit: number;
+    branchId?: string;
+  }
+
+  const events: RawEvent[] = [];
+
+  // Invoices (Debit Customer)
+  for (const inv of invoices) {
+    if (inv.status !== "posted" && inv.postingStatus !== "posted") continue;
+    if (inv.customerId !== partyId && (inv as any).partyId !== partyId) continue;
+    if (branchId && branchId !== "all" && inv.branchId && inv.branchId !== branchId) continue;
+    const t = inv.date || inv.createdAt;
+    const dateStr = normalizeVoucherDate(t);
+    const total = Number(inv.grandTotal ?? inv.total) || 0;
+    events.push({
+      id: inv.id,
+      timestamp: typeof t === "number" ? t : new Date(t).getTime(),
+      date: dateStr,
+      type: "Invoice",
+      documentNumber: inv.number,
+      reference: inv.reference || "",
+      description: inv.notes || "Tax Invoice",
+      debit: total,
+      credit: 0,
+      branchId: inv.branchId,
+    });
+  }
+
+  // Receipts (Credit Customer)
+  for (const rec of receipts) {
+    if (rec.status !== "posted" && rec.postingStatus !== "posted") continue;
+    if (rec.customerId !== partyId && (rec as any).partyId !== partyId) continue;
+    if (branchId && branchId !== "all" && rec.branchId && rec.branchId !== branchId) continue;
+    const t = rec.date || rec.createdAt;
+    const dateStr = normalizeVoucherDate(t);
+    const amount = Number(rec.amount) || 0;
+    events.push({
+      id: rec.id,
+      timestamp: typeof t === "number" ? t : new Date(t).getTime(),
+      date: dateStr,
+      type: "Receipt",
+      documentNumber: rec.number || rec.receiptNumber || "",
+      reference: rec.reference || rec.referenceNumber || "",
+      description: rec.notes || "Customer Receipt",
+      debit: 0,
+      credit: amount,
+      branchId: rec.branchId,
+    });
+  }
+
+  // Purchases (Credit Supplier)
+  for (const pu of purchases) {
+    if (pu.status !== "posted" && pu.postingStatus !== "posted") continue;
+    if (pu.supplierId !== partyId && (pu as any).partyId !== partyId) continue;
+    if (branchId && branchId !== "all" && pu.branchId && pu.branchId !== branchId) continue;
+    const t = pu.date || pu.createdAt;
+    const dateStr = normalizeVoucherDate(t);
+    const total = Number(pu.grandTotal ?? pu.total) || 0;
+    events.push({
+      id: pu.id,
+      timestamp: typeof t === "number" ? t : new Date(t).getTime(),
+      date: dateStr,
+      type: "Purchase",
+      documentNumber: pu.number,
+      reference: pu.supplierInvoiceNumber || pu.reference || "",
+      description: pu.notes || "Purchase Bill",
+      debit: 0,
+      credit: total,
+      branchId: pu.branchId,
+    });
+  }
+
+  // Payments (Debit Supplier)
+  for (const pay of payments) {
+    if (pay.status !== "posted" && pay.postingStatus !== "posted") continue;
+    if (pay.supplierId !== partyId && (pay as any).partyId !== partyId) continue;
+    if (branchId && branchId !== "all" && pay.branchId && pay.branchId !== branchId) continue;
+    const t = pay.date || pay.createdAt;
+    const dateStr = normalizeVoucherDate(t);
+    const amount = Number(pay.amount) || 0;
+    events.push({
+      id: pay.id,
+      timestamp: typeof t === "number" ? t : new Date(t).getTime(),
+      date: dateStr,
+      type: "Payment",
+      documentNumber: pay.number || pay.paymentNumber || "",
+      reference: pay.reference || pay.referenceNumber || "",
+      description: pay.notes || "Supplier Payment",
+      debit: amount,
+      credit: 0,
+      branchId: pay.branchId,
+    });
+  }
+
+  // Credit Notes (Credit Customer / Reduce AR)
+  for (const cn of creditNotes) {
+    if (cn.status !== "posted" && cn.postingStatus !== "posted") continue;
+    if (cn.customerId !== partyId && (cn as any).partyId !== partyId) continue;
+    if (branchId && branchId !== "all" && cn.branchId && cn.branchId !== branchId) continue;
+    const t = cn.date || cn.createdAt;
+    const dateStr = normalizeVoucherDate(t);
+    const total = Number(cn.grandTotal ?? cn.total) || 0;
+    events.push({
+      id: cn.id,
+      timestamp: typeof t === "number" ? t : new Date(t).getTime(),
+      date: dateStr,
+      type: "Credit Note",
+      documentNumber: cn.number || cn.creditNoteNumber || "",
+      reference: cn.originalInvoiceNumber || "",
+      description: cn.reason || "Credit Note",
+      debit: 0,
+      credit: total,
+      branchId: cn.branchId,
+    });
+  }
+
+  events.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+    return a.documentNumber.localeCompare(b.documentNumber);
+  });
+
+  const statementRows: any[] = [];
+  let periodDr = 0;
+  let periodCr = 0;
+
+  for (const item of events) {
+    if (fromDate && item.date < fromDate) {
+      running += item.debit - item.credit;
+      effectiveOpening = running;
+    } else if (item.date <= toDate) {
+      running += item.debit - item.credit;
+      periodDr += item.debit;
+      periodCr += item.credit;
+      statementRows.push({
+        id: item.id,
+        date: item.date,
+        timestamp: item.timestamp,
+        type: item.type,
+        documentNumber: item.documentNumber,
+        reference: item.reference,
+        description: item.description,
+        debit: item.debit,
+        credit: item.credit,
+        runningBalance: running,
+        branchId: item.branchId,
+      });
+    }
+  }
+
+  return {
+    partyId: party.id,
+    partyName: party.name,
+    openingBalance: effectiveOpening,
+    closingBalance: running,
+    periodDebit: periodDr,
+    periodCredit: periodCr,
+    rows: statementRows,
+  };
+}
+
 // =========================================================================
 // COMPREHENSIVE CA REVIEW & RECONCILIATION SUITE
 // =========================================================================

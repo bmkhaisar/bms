@@ -149,7 +149,7 @@ test("Server-Side Permission Enforcement: Manipulated direct requests rejected w
     false,
     "Manipulated direct request for Branch 2 by user assigned only to Branch 1 must be REJECTED"
   );
-  assert.equal(crossBranchAction.code, "FORBIDDEN");
+  assert.equal(crossBranchAction.code, "CROSS_BRANCH_FORBIDDEN");
 
   // 3. Prove that branch-scoped user CAN mutate Branch 1 where they have permission
   const validBranchAction = await verifyServerPermission({

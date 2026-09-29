@@ -46,7 +46,8 @@ export interface BusinessScopeContextValue {
   // Record filter helper
   filterRecords: <T extends { branchId?: string; companyId?: string; date?: any; createdAt?: number }>(
     records: T[],
-    dateField?: keyof T
+    dateField?: keyof T,
+    options?: { ignoreDateRange?: boolean }
   ) => T[];
 }
 
@@ -150,7 +151,8 @@ export function BusinessScopeProvider({ children }: { children: ReactNode }) {
   const filterRecords = useCallback(
     <T extends { branchId?: string; companyId?: string; date?: any; createdAt?: number }>(
       records: T[],
-      dateField?: keyof T
+      dateField?: keyof T,
+      options?: { ignoreDateRange?: boolean }
     ): T[] => {
       if (!Array.isArray(records)) return [];
       return records.filter((r) => {
@@ -161,8 +163,8 @@ export function BusinessScopeProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        // 2. Date Filtering
-        if (scope.dateRange.preset !== "all_time") {
+        // 2. Date Filtering (bypassed if ignoreDateRange is true)
+        if (!options?.ignoreDateRange && scope.dateRange.preset !== "all_time") {
           const rawDate = dateField ? r[dateField] : (r.date ?? r.createdAt);
           if (rawDate !== undefined && rawDate !== null) {
             const time =
