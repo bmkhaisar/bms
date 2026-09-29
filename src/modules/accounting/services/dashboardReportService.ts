@@ -379,11 +379,20 @@ export function computeDashboardMetrics(params: {
         if (financialYearEnd && vTime > financialYearEnd) continue;
 
         if (v.lines && Array.isArray(v.lines)) {
+          // Detect whether this voucher stores line amounts in paise or rupees
+          const isStoredInPaise =
+            (v.totalAmountRupees !== undefined && v.totalDebit !== undefined && Math.abs(v.totalDebit - v.totalAmountRupees * 100) < 5) ||
+            (v.lines.some((ln: any) => typeof ln.debit === "number" && ln.debit > 1000000));
+
           for (const line of v.lines) {
             if (line.ledgerId === l.id) {
               ledgerHasLines = true;
-              periodDrPaise += Math.round((line.debit || 0) * 100);
-              periodCrPaise += Math.round((line.credit || 0) * 100);
+              const rawDr = line.debit || 0;
+              const rawCr = line.credit || 0;
+              const drPaise = isStoredInPaise ? Math.round(rawDr) : Math.round(rawDr * 100);
+              const crPaise = isStoredInPaise ? Math.round(rawCr) : Math.round(rawCr * 100);
+              periodDrPaise += drPaise;
+              periodCrPaise += crPaise;
             }
           }
         }
