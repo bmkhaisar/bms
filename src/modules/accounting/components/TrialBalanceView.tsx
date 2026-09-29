@@ -23,6 +23,8 @@ import type { Ledger, AccountGroup, Voucher } from "../types";
 import { getTrialBalance, getDayBook, type TrialBalanceItem } from "../services/reportEngine";
 import { Download, Printer, CheckCircle2, AlertTriangle, Scale, Calendar, ArrowRight, ShieldAlert } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
+import { ExportDialog } from "@/components/app/ExportDialog";
+import { TRIAL_BALANCE_EXPORT_COLUMNS } from "@/modules/export/exportColumnDefinitions";
 
 interface TrialBalanceViewProps {
   ledgers: Ledger[];
@@ -40,6 +42,7 @@ export function TrialBalanceView({
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedNature, setSelectedNature] = useState<string>("all");
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   // Period / Month Filters
   const [periodPreset, setPeriodPreset] = useState<"fy" | "this_month" | "prev_month" | "custom" | "specific_month">("fy");
@@ -115,27 +118,6 @@ export function TrialBalanceView({
       return true;
     });
   }, [report.items, selectedNature, searchQuery]);
-
-  const handleExportJson = () => {
-    const data = {
-      asOfDate: new Date().toISOString(),
-      period: periodPreset,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
-      totalDebit: report.totalDebitPaise,
-      totalCredit: report.totalCreditPaise,
-      balanced: report.isBalanced,
-      difference: report.imbalancePaise,
-      accounts: report.items,
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `trial-balance-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
 
   if (loading) {
     return <TrialBalanceSkeleton />;
@@ -307,11 +289,16 @@ export function TrialBalanceView({
           )}
 
           <div className="flex items-center gap-2 ml-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 text-xs"
+              onClick={() => setExportDialogOpen(true)}
+            >
+              <Download className="h-3.5 w-3.5" /> Export
+            </Button>
             <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => window.print()}>
               <Printer className="h-3.5 w-3.5" /> Print
-            </Button>
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleExportJson}>
-              <Download className="h-3.5 w-3.5" /> Export JSON
             </Button>
           </div>
         </div>
@@ -435,6 +422,21 @@ export function TrialBalanceView({
           </div>
         </div>
       </Card>
+
+      {/* Export Dialog */}
+      <ExportDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        title="Export Trial Balance"
+        filename={`BMS_TrialBalance_${new Date().toISOString().slice(0, 10)}`}
+        columns={TRIAL_BALANCE_EXPORT_COLUMNS}
+        filteredData={filteredRows}
+        allScopeData={report.items}
+        defaultFormat="excel"
+        scopeSummary={`Trial Balance • ${filteredRows.length} accounts • Total Debit: ${formatPaise(report.totalDebitPaise)} | Total Credit: ${formatPaise(report.totalCreditPaise)}`}
+        includeTotals={true}
+        allowJson={true}
+      />
     </div>
   );
 }

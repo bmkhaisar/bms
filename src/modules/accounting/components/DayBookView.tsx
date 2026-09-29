@@ -25,12 +25,15 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
+  DialogClose,
 } from "@/components/ui/dialog";
 import { formatPaise } from "../constants";
 import type { Voucher, VoucherType } from "../types";
 import { formatDate } from "@/lib/format";
-import { Download, Printer, RotateCcw, Eye, CheckCircle2 } from "lucide-react";
+import { Download, Printer, RotateCcw, Eye, CheckCircle2, X } from "lucide-react";
 import { toast } from "sonner";
+import { ExportDialog } from "@/components/app/ExportDialog";
+import { DAYBOOK_EXPORT_COLUMNS } from "@/modules/export/exportColumnDefinitions";
 
 interface DayBookViewProps {
   vouchers: Voucher[];
@@ -42,6 +45,7 @@ export function DayBookView({ vouchers, onReverse }: DayBookViewProps) {
   const [toDate, setToDate] = useState<string>("");
   const [selectedType, setSelectedType] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   // Inspect Modal
   const [inspectVoucher, setInspectVoucher] = useState<Voucher | null>(null);
@@ -187,6 +191,14 @@ export function DayBookView({ vouchers, onReverse }: DayBookViewProps) {
         )}
 
         <div className="flex items-center gap-2 ml-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5 text-xs"
+            onClick={() => setExportDialogOpen(true)}
+          >
+            <Download className="h-3.5 w-3.5" /> Export
+          </Button>
           <Button variant="outline" size="sm" className="h-9 gap-1.5 text-xs" onClick={() => window.print()}>
             <Printer className="h-3.5 w-3.5" /> Print
           </Button>
@@ -316,12 +328,32 @@ export function DayBookView({ vouchers, onReverse }: DayBookViewProps) {
       {/* Inspect Lines Modal */}
       {inspectVoucher && (
         <Dialog open={Boolean(inspectVoucher)} onOpenChange={() => setInspectVoucher(null)}>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle className="flex items-center justify-between">
-                <span>Voucher Detail: {inspectVoucher.voucherNumber}</span>
-                <Badge variant="outline">{inspectVoucher.voucherType.toUpperCase()}</Badge>
-              </DialogTitle>
+          <DialogContent className="max-w-2xl sm:p-6 p-4" hideCloseButton>
+            <DialogHeader className="space-y-0 pb-3 border-b border-border/60">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <DialogTitle className="text-base sm:text-lg font-bold tracking-tight text-foreground truncate min-w-0">
+                  Voucher Detail: <span className="font-mono">{inspectVoucher.voucherNumber}</span>
+                </DialogTitle>
+                <div className="flex items-center gap-2.5 flex-shrink-0 self-end sm:self-auto">
+                  <span
+                    className={`text-[11px] px-2.5 py-0.5 rounded-full border font-semibold uppercase tracking-wider whitespace-nowrap h-6 inline-flex items-center ${
+                      typeBadges[inspectVoucher.voucherType]?.color || "bg-secondary text-secondary-foreground"
+                    }`}
+                  >
+                    {typeBadges[inspectVoucher.voucherType]?.label || inspectVoucher.voucherType.toUpperCase()}
+                  </span>
+                  <DialogClose asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary flex-shrink-0 cursor-pointer"
+                      aria-label="Close"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </DialogClose>
+                </div>
+              </div>
             </DialogHeader>
 
             <div className="space-y-4 text-xs">
@@ -415,6 +447,21 @@ export function DayBookView({ vouchers, onReverse }: DayBookViewProps) {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Export Dialog */}
+      <ExportDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        title="Export Day Book"
+        filename={`BMS_DayBook_${new Date().toISOString().slice(0, 10)}`}
+        columns={DAYBOOK_EXPORT_COLUMNS}
+        filteredData={filtered}
+        allScopeData={vouchers}
+        defaultFormat="excel"
+        scopeSummary={`Exporting ${filtered.length} vouchers • Total Dr: ${formatPaise(totalDrPaise)} | Total Cr: ${formatPaise(totalCrPaise)}`}
+        includeTotals={true}
+        allowJson={true}
+      />
     </div>
   );
 }

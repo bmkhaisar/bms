@@ -22,6 +22,8 @@ import { formatPaise } from "../constants";
 import type { Voucher, Ledger } from "../types";
 import { formatDate } from "@/lib/format";
 import { Download, Printer, BookOpen, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { ExportDialog } from "@/components/app/ExportDialog";
+import { LEDGER_STATEMENT_EXPORT_COLUMNS } from "@/modules/export/exportColumnDefinitions";
 
 interface LedgerStatementViewProps {
   ledgers: Ledger[];
@@ -43,6 +45,7 @@ export function LedgerStatementView({ ledgers, vouchers }: LedgerStatementViewPr
   const [selectedLedgerId, setSelectedLedgerId] = useState<string>("");
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   const activeLedgers = useMemo(() => {
     return [...ledgers].sort((a, b) => a.name.localeCompare(b.name));
@@ -138,25 +141,20 @@ export function LedgerStatementView({ ledgers, vouchers }: LedgerStatementViewPr
     };
   }, [currentLedger, vouchers, fromDate, toDate]);
 
-  const handleExportJson = () => {
-    if (!currentLedger) return;
-    const exportData = {
-      ledger: currentLedger.name,
-      nature: currentLedger.groupNature,
-      openingBalance: openingBalPaise,
-      closingBalance: closingBalPaise,
-      periodDebit: periodDrPaise,
-      periodCredit: periodCrPaise,
-      entries: lines,
+  const exportRows = useMemo(() => {
+    if (!currentLedger) return [];
+    const openingRow: StatementLine = {
+      date: 0,
+      voucherNumber: "OPENING",
+      voucherType: "—",
+      reference: "—",
+      description: "Opening Balance Brought Forward",
+      debitPaise: openingBalPaise > 0 ? openingBalPaise : 0,
+      creditPaise: openingBalPaise < 0 ? Math.abs(openingBalPaise) : 0,
+      runningBalancePaise: openingBalPaise,
     };
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `ledger-statement-${currentLedger.name.replace(/\s+/g, "_")}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+    return [openingRow, ...lines];
+  }, [currentLedger, openingBalPaise, lines]);
 
   return (
     <div className="space-y-4">
@@ -217,19 +215,19 @@ export function LedgerStatementView({ ledgers, vouchers }: LedgerStatementViewPr
             variant="outline"
             size="sm"
             className="h-9 gap-1.5 text-xs"
-            onClick={() => window.print()}
+            onClick={() => setExportDialogOpen(true)}
             disabled={!currentLedger}
           >
-            <Printer className="h-3.5 w-3.5" /> Print
+            <Download className="h-3.5 w-3.5" /> Export
           </Button>
           <Button
             variant="outline"
             size="sm"
             className="h-9 gap-1.5 text-xs"
-            onClick={handleExportJson}
+            onClick={() => window.print()}
             disabled={!currentLedger}
           >
-            <Download className="h-3.5 w-3.5" /> Export JSON
+            <Printer className="h-3.5 w-3.5" /> Print
           </Button>
         </div>
       </Card>
@@ -371,6 +369,22 @@ export function LedgerStatementView({ ledgers, vouchers }: LedgerStatementViewPr
             </div>
           </Card>
         </>
+      )}
+
+      {currentLedger && (
+        <ExportDialog
+          open={exportDialogOpen}
+          onOpenChange={setExportDialogOpen}
+          title={`Ledger Statement — ${currentLedger.name}`}
+          filename={`BMS_Statement_${currentLedger.name.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0, 10)}`}
+          columns={LEDGER_STATEMENT_EXPORT_COLUMNS}
+          filteredData={exportRows}
+          allScopeData={exportRows}
+          defaultFormat="excel"
+          scopeSummary={`Account: ${currentLedger.name} • Opening: ${formatPaise(Math.abs(openingBalPaise))} ${openingBalPaise >= 0 ? "Dr" : "Cr"} • Closing: ${formatPaise(Math.abs(closingBalPaise))} ${closingBalPaise >= 0 ? "Dr" : "Cr"}`}
+          includeTotals={true}
+          allowJson={true}
+        />
       )}
     </div>
   );

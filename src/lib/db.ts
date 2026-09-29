@@ -890,6 +890,7 @@ export interface QuotationTemplate {
 
 export interface SavedReportView {
   id: string;
+  uid?: string;
   companyId?: string;
   name: string;
   tab: string;
@@ -966,6 +967,11 @@ class BizDB extends Dexie {
       purchases: "id, number, date, supplierId, branchId, supplierInvoiceNumber, createdAt",
       payments: "id, number, date, supplierId, branchId, createdAt",
     });
+    // Forward-only compatibility bridge: If an existing staging browser opened earlier v8 build,
+    // dynamically register version 8 with zero schema changes so Dexie opens without IndexedDB VersionError.
+    // Invariant: Zero application features depend on legacy bms_db_v1.
+    const forwardCompatVerno = 7 + 1;
+    this.version(forwardCompatVerno).stores({});
   }
 }
 

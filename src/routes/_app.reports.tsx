@@ -69,6 +69,7 @@ import { resolvePartyNameFromCollections } from "@/modules/accounting/domain/par
 import { toast } from "sonner";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useBusinessScope } from "@/modules/company/context/BusinessScopeContext";
+import { useAuth } from "@/modules/auth/context/AuthContext";
 import { ExportDialog } from "@/components/app/ExportDialog";
 import { PartyStatementModal } from "@/components/app/PartyStatementModal";
 import type { ExportColumnDefinition } from "@/modules/export/exportTypes";
@@ -88,6 +89,7 @@ export const Route = createFileRoute("/_app/reports")({
 });
 
 function ReportsPage() {
+  const { user } = useAuth();
   const { scope, setDatePreset, setCustomDateRange } = useBusinessScope();
   const [from, setFrom] = useState<number | undefined>(
     scope.dateRange.preset === "all_time" ? undefined : scope.dateRange.fromTimestamp
@@ -113,16 +115,20 @@ function ReportsPage() {
   const [isSaveViewOpen, setIsSaveViewOpen] = useState(false);
   const [newViewName, setNewViewName] = useState("");
 
-  // Load saved views from Dexie database
+  // Load saved views from Dexie database strictly scoped to authenticated user
   useEffect(() => {
     let active = true;
-    listSavedReportViews(scope.companyId).then((views) => {
+    if (!user?.uid) {
+      setSavedViews([]);
+      return;
+    }
+    listSavedReportViews({ uid: user.uid, companyId: scope.companyId, tab }).then((views) => {
       if (active) setSavedViews(views);
     });
     return () => {
       active = false;
     };
-  }, [scope.companyId]);
+  }, [user?.uid, scope.companyId, tab]);
 
   // Sync with global BusinessScopeBar
   useEffect(() => {
@@ -160,6 +166,7 @@ function ReportsPage() {
     }
     const view: SavedReportView = {
       id: `view_${Date.now()}`,
+      uid: user?.uid || "system",
       companyId: scope.companyId,
       name: newViewName.trim(),
       tab,
@@ -195,7 +202,7 @@ function ReportsPage() {
   const handleDeleteView = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await deleteReportView(id);
+      await deleteReportView(id, user?.uid);
       setSavedViews((prev) => prev.filter((v) => v.id !== id));
       toast.success("Saved view removed");
     } catch {

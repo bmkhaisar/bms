@@ -153,15 +153,34 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
   const bindCollectionListener = (col: (typeof masterCollections)[0], isOperational: boolean) => {
     let colRef: any;
 
-    if (isOperational && !isOwner && activeBranchId && activeBranchId !== "all") {
-      // BRANCH-SCOPED OPERATIONAL: Bound query subscription to caller's branch only
-      colRef = query(
-        ref(currentDb, `companyData/${companyId}/${col.name}`),
-        orderByChild("branchId"),
-        equalTo(activeBranchId)
-      );
+    if (isOperational) {
+      // Invariant Check 2: ALL_BRANCH_LISTENER_OWNER_ONLY
+      // Consolidated operational subscription strictly requires authoritative Owner access.
+      // Non-owner manipulating activeBranchId to "all" receives NO consolidated listener.
+      const isOwnerConsolidated = isOwner === true && (activeBranchId === "all" || !activeBranchId);
+
+      if (isOwnerConsolidated) {
+        // Authoritative Owner Consolidated operational subscription
+        colRef = ref(currentDb, `companyData/${companyId}/${col.name}`);
+      } else {
+        // BRANCH-SCOPED OPERATIONAL: Bound query subscription to caller's branch only
+        // Non-owner attempting activeBranchId === "all" is strictly rejected from consolidated listener
+        if (!isOwner && (activeBranchId === "all" || !activeBranchId)) {
+          colRef = query(
+            ref(currentDb, `companyData/${companyId}/${col.name}`),
+            orderByChild("branchId"),
+            equalTo(authorizedBranchIds[0] || "__UNAUTHORIZED_ALL_BRANCH_BYPASS__")
+          );
+        } else {
+          colRef = query(
+            ref(currentDb, `companyData/${companyId}/${col.name}`),
+            orderByChild("branchId"),
+            equalTo(activeBranchId!)
+          );
+        }
+      }
     } else {
-      // ORGANIZATION-WIDE MASTER or OWNER CONSOLIDATED
+      // Organization-wide master collection (parties, products, categories, branches, etc.)
       colRef = ref(currentDb, `companyData/${companyId}/${col.name}`);
     }
 
@@ -172,7 +191,7 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
         const next = prior.then(async () => {
           try {
             if (!snapshot.exists() || !snapshot.val()) {
-              if (!isOperational || isOwner || activeBranchId === "all") {
+              if (!isOperational || (isOwner && activeBranchId === "all")) {
                 const localRows = await (col.table as any).toArray();
                 if (localRows.length > 0) {
                   const idsToDelete = localRows.map((r: any) => r.id).filter(Boolean);
@@ -194,8 +213,11 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
             });
 
             // NO_UNAUTHORIZED_REALTIME_PAYLOAD: For branch-restricted users, ensure non-authorized branch records are discarded
-            if (isOperational && !isOwner && activeBranchId && activeBranchId !== "all") {
-              records = records.filter((r) => !r.branchId || r.branchId === activeBranchId);
+            if (isOperational && !isOwner) {
+              const effectiveAllowed = activeBranchId === "all" ? authorizedBranchIds[0] : activeBranchId;
+              records = records.filter(
+                (r) => r.branchId === activeBranchId || (effectiveAllowed && r.branchId === effectiveAllowed)
+              );
             }
 
             const cloudIds = new Set(records.map((r: any) => r.id));
@@ -205,8 +227,9 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
             const idsToDelete = localRows
               .filter((r: any) => {
                 if (!r.id) return false;
-                if (isOperational && !isOwner && activeBranchId && activeBranchId !== "all") {
-                  return r.branchId === activeBranchId && !cloudIds.has(r.id);
+                if (isOperational && !isOwner) {
+                  const effective = activeBranchId && activeBranchId !== "all" ? activeBranchId : authorizedBranchIds[0];
+                  return r.branchId === effective && !cloudIds.has(r.id);
                 }
                 return !cloudIds.has(r.id);
               })

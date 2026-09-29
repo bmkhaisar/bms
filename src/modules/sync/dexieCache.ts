@@ -87,6 +87,13 @@ class BmsCacheDatabase extends Dexie {
           // Non-blocking fallback
         }
       });
+
+    // Version 6: Additive User-scoped Saved Report Views isolation (PRD § 54)
+    // Every saved view is strictly indexed by [uid+companyId+tab], [uid+companyId], and uid.
+    this.version(6).stores({
+      savedReportViews:
+        "id, uid, companyId, tab, [uid+companyId+tab], [uid+companyId], [companyId+tab], createdAt",
+    });
   }
 }
 

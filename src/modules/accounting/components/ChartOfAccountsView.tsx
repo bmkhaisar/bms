@@ -29,8 +29,10 @@ import {
 import { formatPaise } from "../constants";
 import type { Ledger, AccountGroup, AccountNature, Voucher } from "../types";
 import { calculateCanonicalLedgerBalances } from "../services/reportEngine";
-import { Plus, FolderTree, Landmark, Tag, RefreshCw } from "lucide-react";
+import { Plus, FolderTree, Landmark, Tag, RefreshCw, Download } from "lucide-react";
 import { toast } from "sonner";
+import { ExportDialog } from "@/components/app/ExportDialog";
+import { CHART_OF_ACCOUNTS_EXPORT_COLUMNS } from "@/modules/export/exportColumnDefinitions";
 
 interface ChartOfAccountsViewProps {
   ledgers: Ledger[];
@@ -60,6 +62,7 @@ export function ChartOfAccountsView({
 }: ChartOfAccountsViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedNature, setSelectedNature] = useState<string>("all");
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   // Canonical signed ledger balances derived strictly from posted vouchers + opening
   const canonicalBalances = useMemo(() => {
@@ -111,6 +114,20 @@ export function ChartOfAccountsView({
       return true;
     });
   }, [ledgers, selectedNature, searchQuery, groupMap]);
+
+  const exportRows = useMemo(() => {
+    return filteredLedgers.map((l) => {
+      const canonical = canonicalBalances.get(l.id);
+      const displayPaise = canonical
+        ? (canonical.closingDrPaise > 0 ? canonical.closingDrPaise : -canonical.closingCrPaise)
+        : (l.currentBalance || 0);
+      return {
+        ...l,
+        groupName: groupMap.get(l.groupId)?.name || "",
+        currentBalance: displayPaise,
+      };
+    });
+  }, [filteredLedgers, groupMap, canonicalBalances]);
 
   const handleCreateGroup = async () => {
     if (!groupName.trim()) {
@@ -243,6 +260,15 @@ export function ChartOfAccountsView({
         </div>
 
         <div className="flex items-center gap-2 ml-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5 text-xs"
+            onClick={() => setExportDialogOpen(true)}
+          >
+            <Download className="h-3.5 w-3.5" /> Export
+          </Button>
+
           <Button
             variant="outline"
             size="sm"
@@ -541,6 +567,21 @@ export function ChartOfAccountsView({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Export Dialog */}
+      <ExportDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        title="Export Chart of Accounts"
+        filename={`BMS_ChartOfAccounts_${new Date().toISOString().slice(0, 10)}`}
+        columns={CHART_OF_ACCOUNTS_EXPORT_COLUMNS}
+        filteredData={exportRows}
+        allScopeData={exportRows}
+        defaultFormat="excel"
+        scopeSummary={`Chart of Accounts • ${exportRows.length} accounts`}
+        includeTotals={false}
+        allowJson={true}
+      />
     </div>
   );
 }

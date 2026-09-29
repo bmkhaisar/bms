@@ -11,6 +11,7 @@ export interface ExportColumnDefinition<T = any> {
   hidden?: boolean;
   hiddenByDefault?: boolean;
   requiredPermission?: string; // e.g. "COST_VIEW", "GST_VIEW"
+  excludeFromTotals?: boolean; // If true, column is omitted from totals calculation row in Excel & CSV
   getter?: (row: T, index: number) => any;
   formatForDisplay?: (value: any, row: T) => string;
 }

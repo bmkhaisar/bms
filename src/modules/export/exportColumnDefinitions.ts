@@ -467,24 +467,74 @@ export const CREDIT_NOTE_EXPORT_COLUMNS: ExportColumnDefinition<any>[] = [
 export const DAYBOOK_EXPORT_COLUMNS: ExportColumnDefinition<any>[] = [
   { key: "date", header: "Date", width: 14, getter: (v) => formatDate(v.date) },
   { key: "voucherNumber", header: "Voucher #", width: 16 },
-  { key: "voucherType", header: "Voucher Type", width: 16, formatForDisplay: (vt) => String(vt).toUpperCase() },
+  { key: "voucherType", header: "Voucher Type", width: 16, formatForDisplay: (vt) => String(vt || "").toUpperCase() },
   { key: "reference", header: "Reference", width: 16, getter: (v) => v.reference || "—" },
   {
     key: "debitPaise",
     header: "Debit (₹)",
     type: "currency",
     width: 16,
-    getter: (v) => (v.totalDebit ?? v.debitPaise ?? 0) / (v.totalDebit !== undefined ? 1 : 100),
+    getter: (v) => (v.totalDebit ?? v.debitPaise ?? 0) / 100,
   },
   {
     key: "creditPaise",
     header: "Credit (₹)",
     type: "currency",
     width: 16,
-    getter: (v) => (v.totalCredit ?? v.creditPaise ?? 0) / (v.totalCredit !== undefined ? 1 : 100),
+    getter: (v) => (v.totalCredit ?? v.creditPaise ?? 0) / 100,
   },
   { key: "narration", header: "Narration", width: 28, getter: (v) => v.narration || "" },
-  { key: "status", header: "Status", width: 12, getter: (v) => v.status || "posted" },
+  {
+    key: "status",
+    header: "Status",
+    width: 12,
+    getter: (v) => v.status || "posted",
+    formatForDisplay: (s) => String(s).toUpperCase(),
+  },
+];
+
+// ========================================================================
+// 9B. LEDGER STATEMENT EXPORT DEFINITIONS
+// ========================================================================
+export const LEDGER_STATEMENT_EXPORT_COLUMNS: ExportColumnDefinition<any>[] = [
+  { key: "date", header: "Date", width: 14, getter: (r) => (r.date ? formatDate(r.date) : "—") },
+  { key: "voucherNumber", header: "Voucher #", width: 16, getter: (r) => r.voucherNumber || "—" },
+  {
+    key: "voucherType",
+    header: "Voucher Type",
+    width: 16,
+    formatForDisplay: (vt) => String(vt || "—").toUpperCase(),
+  },
+  { key: "reference", header: "Reference", width: 16, getter: (r) => r.reference || "—" },
+  { key: "description", header: "Particulars / Narration", width: 32, getter: (r) => r.description || "" },
+  {
+    key: "debitPaise",
+    header: "Debit (₹)",
+    type: "currency",
+    width: 16,
+    getter: (r) => (r.debitPaise ?? 0) / 100,
+  },
+  {
+    key: "creditPaise",
+    header: "Credit (₹)",
+    type: "currency",
+    width: 16,
+    getter: (r) => (r.creditPaise ?? 0) / 100,
+  },
+  {
+    key: "runningBalancePaise",
+    header: "Running Balance (₹)",
+    type: "currency",
+    width: 18,
+    excludeFromTotals: true,
+    getter: (r) => Math.abs(r.runningBalancePaise ?? 0) / 100,
+    formatForDisplay: (val, r) => {
+      const paise = r?.runningBalancePaise ?? 0;
+      const amt = Math.abs(paise) / 100;
+      const sign = paise >= 0 ? "Dr" : "Cr";
+      return `${amt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${sign}`;
+    },
+  },
 ];
 
 // ========================================================================
@@ -494,20 +544,94 @@ export const TRIAL_BALANCE_EXPORT_COLUMNS: ExportColumnDefinition<any>[] = [
   { key: "code", header: "Ledger Code", width: 14, getter: (l) => l.code || "—" },
   { key: "name", header: "Ledger Name", width: 28 },
   { key: "groupName", header: "Account Group", width: 22 },
-  { key: "nature", header: "Nature", width: 14, formatForDisplay: (n) => String(n).toUpperCase() },
+  { key: "nature", header: "Nature", width: 14, formatForDisplay: (n) => String(n || "").toUpperCase() },
   {
-    key: "debit",
-    header: "Debit (₹)",
+    key: "openingBalance",
+    header: "Opening Balance (₹)",
+    type: "currency",
+    width: 18,
+    getter: (r) => {
+      const paise = r.effectiveOpeningSignedPaise ?? r.openingPaise ?? 0;
+      return Math.abs(paise) / 100;
+    },
+    formatForDisplay: (val, r) => {
+      const paise = r?.effectiveOpeningSignedPaise ?? r?.openingPaise ?? 0;
+      if (!paise) return "—";
+      const amt = Math.abs(paise) / 100;
+      const sign = paise >= 0 ? "Dr" : "Cr";
+      return `${amt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${sign}`;
+    },
+  },
+  {
+    key: "periodDebit",
+    header: "Period Debit (₹)",
     type: "currency",
     width: 16,
-    getter: (r) => (r.closingType === "dr" ? r.closingBalance : 0),
+    getter: (r) => (r.periodDrPaise ?? 0) / 100,
+  },
+  {
+    key: "periodCredit",
+    header: "Period Credit (₹)",
+    type: "currency",
+    width: 16,
+    getter: (r) => (r.periodCrPaise ?? 0) / 100,
+  },
+  {
+    key: "debit",
+    header: "Closing Debit (₹)",
+    type: "currency",
+    width: 16,
+    getter: (r) =>
+      r.closingDrPaise !== undefined
+        ? r.closingDrPaise / 100
+        : r.closingType === "dr"
+        ? (r.closingBalance || 0)
+        : 0,
   },
   {
     key: "credit",
-    header: "Credit (₹)",
+    header: "Closing Credit (₹)",
     type: "currency",
     width: 16,
-    getter: (r) => (r.closingType === "cr" ? r.closingBalance : 0),
+    getter: (r) =>
+      r.closingCrPaise !== undefined
+        ? r.closingCrPaise / 100
+        : r.closingType === "cr"
+        ? (r.closingBalance || 0)
+        : 0,
+  },
+];
+
+// ========================================================================
+// 10B. CHART OF ACCOUNTS EXPORT DEFINITIONS
+// ========================================================================
+export const CHART_OF_ACCOUNTS_EXPORT_COLUMNS: ExportColumnDefinition<any>[] = [
+  { key: "code", header: "Account Code", width: 14, getter: (l) => l.code || "—" },
+  { key: "name", header: "Account Name", width: 28 },
+  { key: "groupName", header: "Account Group", width: 22, getter: (l) => l.groupName || "" },
+  { key: "groupNature", header: "Nature", width: 14, formatForDisplay: (n) => String(n || "").toUpperCase() },
+  {
+    key: "openingBalance",
+    header: "Opening Balance (₹)",
+    type: "currency",
+    width: 18,
+    getter: (l) => (l.openingBalance ?? 0) / 100,
+    formatForDisplay: (v, l) => {
+      const amt = (l?.openingBalance ?? 0) / 100;
+      return `${amt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${String(l?.openingBalanceType || "dr").toUpperCase()}`;
+    },
+  },
+  {
+    key: "currentBalance",
+    header: "Current Balance (₹)",
+    type: "currency",
+    width: 18,
+    getter: (l) => Math.abs(l.currentBalance ?? 0) / 100,
+    formatForDisplay: (v, l) => {
+      const bal = l?.currentBalance ?? 0;
+      const amt = Math.abs(bal) / 100;
+      return `${amt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${bal >= 0 ? "Dr" : "Cr"}`;
+    },
   },
 ];
 

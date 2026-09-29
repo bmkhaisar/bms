@@ -57,7 +57,7 @@ export function generateCsvContent<T>(
   if (options?.includeTotals && data.length > 0) {
     const totalsRow = activeCols.map((col, idx) => {
       if (idx === 0) return escapeCSVValue("Total");
-      if (col.type === "currency" || col.type === "number") {
+      if ((col.type === "currency" || col.type === "number") && !col.excludeFromTotals) {
         let sum = 0;
         for (let i = 0; i < data.length; i++) {
           const val = col.getter ? col.getter(data[i], i) : (data[i] as any)[col.key];
@@ -146,7 +146,7 @@ export function generateExcelWorkbook<T>(
   if (options?.includeTotals && data.length > 0) {
     const totalsRow = activeCols.map((col, idx) => {
       if (idx === 0) return "Total";
-      if (col.type === "currency" || col.type === "number") {
+      if ((col.type === "currency" || col.type === "number") && !col.excludeFromTotals) {
         let sum = 0;
         for (let i = 0; i < data.length; i++) {
           const val = col.getter ? col.getter(data[i], i) : (data[i] as any)[col.key];
