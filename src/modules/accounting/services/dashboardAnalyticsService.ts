@@ -218,6 +218,7 @@ const MONTH_NAMES_FULL = [
 export interface ComputeMonthlyTrendParams {
   invoices: Invoice[];
   purchases: Purchase[];
+  salesReturns?: any[];
   referenceDate?: Date | number;
   timezone?: string;
   financialYearStart?: number;
@@ -232,6 +233,7 @@ export function computeMonthlyTrend(params: ComputeMonthlyTrendParams): MonthlyT
   const {
     invoices,
     purchases,
+    salesReturns = [],
     referenceDate = new Date(),
     timezone = "Asia/Kolkata",
     financialYearStart,
@@ -268,7 +270,20 @@ export function computeMonthlyTrend(params: ComputeMonthlyTrendParams): MonthlyT
       return pu.date >= startMs && pu.date <= endMs;
     });
 
-    const salesRevenue = mInvoices.reduce((sum, inv) => sum + getInvoiceNetRevenue(inv), 0);
+    const mSalesReturns = salesReturns.filter((ret) => {
+      const status = ((ret as any).status || "").toLowerCase();
+      const posting = ((ret as any).postingStatus || "").toLowerCase();
+      if (status === "cancelled" || status === "draft") return false;
+      if (posting === "failed" || posting === "reversed" || posting === "draft") return false;
+      const rDate = ret.date || ret.createdAt || 0;
+      if (financialYearStart && rDate < financialYearStart) return false;
+      if (financialYearEnd && rDate > financialYearEnd) return false;
+      return rDate >= startMs && rDate <= endMs;
+    });
+
+    const grossSalesRevenue = mInvoices.reduce((sum, inv) => sum + getInvoiceNetRevenue(inv), 0);
+    const returnTaxable = mSalesReturns.reduce((sum, ret) => sum + Number(ret.taxableAmount !== undefined ? ret.taxableAmount : ret.subtotal || 0), 0);
+    const salesRevenue = Math.max(0, grossSalesRevenue - returnTaxable);
     const purchaseValue = mPurchases.reduce((sum, pu) => sum + getPurchaseNetValue(pu), 0);
 
     const monthShort = MONTH_NAMES_SHORT[month - 1];

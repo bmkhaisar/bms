@@ -1,5 +1,6 @@
 import type { Invoice, Party, CompanySettings, Receipt } from "../../../lib/db.ts";
 import type { PaymentDueInsight } from "./bmsShareTypes";
+import { resolveCanonicalInvoiceOutstanding } from "../../accounting/services/canonicalOutstandingService.ts";
 
 export const DEFAULT_CREDIT_DAYS = 30;
 
@@ -108,15 +109,13 @@ export function computeInvoicePaymentInsight(params: {
     receipts
   );
 
-  // Authoritative financial totals
+  // Authoritative financial totals derived from canonical bill-wise settlement
+  const settlement = resolveCanonicalInvoiceOutstanding(invoice, receipts);
   const invoiceTotal = invoice.grandTotal ?? 0;
-  const balance =
-    invoice.balance !== undefined
-      ? invoice.balance
-      : Math.max(0, invoiceTotal - totalAllocatedPaise / 100);
-  const totalReceived = Math.max(0, invoiceTotal - balance);
+  const balance = settlement.remainingBalance;
+  const totalReceived = settlement.totalSettled;
 
-  const isPaid = balance <= 0 || (invoice.status || "").toLowerCase() === "paid";
+  const isPaid = settlement.isPaid || balance <= 0 || (invoice.status || "").toLowerCase() === "paid";
 
   // Sort receipts by date descending to find latest receipt
   const sortedReceipts = [...matchingReceipts].sort(

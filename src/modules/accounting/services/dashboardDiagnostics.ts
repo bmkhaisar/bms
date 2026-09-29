@@ -33,6 +33,7 @@ export interface ReconciliationDiagnosticsData {
     scopedSum: number;
     excludedDueToBranch: number;
     excludedDueToDate: number;
+    excludedDueToStatus?: number;
   };
   payments: {
     totalScanned: number;

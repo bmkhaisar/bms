@@ -12,6 +12,7 @@ import {
   type Receipt,
   type Payment,
   type SalesReturn,
+  type CreditNote,
 } from "@/lib/db";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -144,6 +145,10 @@ function Dashboard() {
     return db().salesReturns.orderBy("date").reverse().toArray();
   }, []);
 
+  const creditNotesState = useLiveState<CreditNote>(() => {
+    return db().creditNotes.orderBy("date").reverse().toArray();
+  }, []);
+
   const recentInvoices = useLive<Invoice>(() =>
     db().invoices.orderBy("createdAt").reverse().limit(5).toArray()
   );
@@ -154,6 +159,8 @@ function Dashboard() {
   const customers = customersState.data;
   const receipts = receiptsState.data;
   const payments = paymentsState.data;
+  const salesReturns = salesReturnsState.data;
+  const creditNotes = creditNotesState.data;
 
   // Cloud Realtime Ledgers for authoritative accounting calculations
   const [ledgers, setLedgers] = useState<Ledger[]>([]);
@@ -192,7 +199,16 @@ function Dashboard() {
     };
   }, [activeCompany?.id]);
 
-  const isDataLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded && receiptsState.isLoaded && paymentsState.isLoaded && customersState.isLoaded && salesReturnsState.isLoaded && ledgersLoaded;
+  const isDataLoaded =
+    invoicesState.isLoaded &&
+    purchasesState.isLoaded &&
+    productsState.isLoaded &&
+    receiptsState.isLoaded &&
+    paymentsState.isLoaded &&
+    customersState.isLoaded &&
+    salesReturnsState.isLoaded &&
+    creditNotesState.isLoaded &&
+    ledgersLoaded;
   const cacheKey = `${activeCompany?.id || "default"}_${activeBranchId || "all"}_${activeFinancialYear?.id || "all"}`;
 
   const canonicalScope = useMemo(() => {
@@ -216,6 +232,7 @@ function Dashboard() {
       receipts,
       payments,
       salesReturns: salesReturnsState.data,
+      creditNotes: creditNotesState.data,
       branches,
       scope: canonicalScope,
       financialYearStart: activeFinancialYear?.startDate,
@@ -233,6 +250,7 @@ function Dashboard() {
     receipts,
     payments,
     salesReturnsState.data,
+    creditNotesState.data,
     branches,
     canonicalScope,
     activeFinancialYear?.startDate,
@@ -274,7 +292,9 @@ function Dashboard() {
       value: formatMoney(metrics.totalReceivables),
       icon: ArrowUpRight,
       tint: "text-amber-600 dark:text-amber-400",
-      subtext: "Pending customer dues",
+      subtext: metrics.totalCustomerCredits && metrics.totalCustomerCredits > 0
+        ? `Pending dues (Credits: ${formatMoney(metrics.totalCustomerCredits)})`
+        : "Pending customer dues",
       href: "/invoices",
     },
     {
@@ -322,7 +342,7 @@ function Dashboard() {
       value: formatMoney(metrics.totalLiquidity),
       icon: Landmark,
       tint: "text-sky-600 dark:text-sky-400",
-      subtext: `Cash: ${formatMoney(metrics.cashInHand)}`,
+      subtext: `Cash: ${formatMoney(metrics.cashInHand)} | Bank: ${formatMoney(metrics.bankBalance)}`,
       href: "/ledger",
     },
     {
@@ -731,6 +751,7 @@ function Dashboard() {
           invoices={invoices}
           purchases={purchases}
           receipts={receipts}
+          salesReturns={salesReturns}
           isLoaded={isDataLoaded}
           activeCompanyName={activeCompany?.name}
           activeFinancialYearName={activeFinancialYear?.name}

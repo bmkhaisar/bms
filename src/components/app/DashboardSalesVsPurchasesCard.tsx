@@ -43,6 +43,7 @@ export interface DashboardSalesVsPurchasesCardProps {
   invoices: Invoice[];
   purchases: Purchase[];
   receipts: Receipt[];
+  salesReturns?: any[];
   isLoaded: boolean;
   activeCompanyName?: string;
   activeFinancialYearName?: string;
@@ -56,6 +57,7 @@ export function DashboardSalesVsPurchasesCard({
   invoices,
   purchases,
   receipts,
+  salesReturns = [],
   isLoaded,
   activeCompanyName,
   activeFinancialYearName,
@@ -78,11 +80,12 @@ export function DashboardSalesVsPurchasesCard({
     return computeMonthlyTrend({
       invoices,
       purchases,
+      salesReturns,
       timezone,
       financialYearStart,
       financialYearEnd,
     });
-  }, [invoices, purchases, timezone, financialYearStart, financialYearEnd]);
+  }, [invoices, purchases, salesReturns, timezone, financialYearStart, financialYearEnd]);
 
   // 2. Canonical MTD vs LMTD Comparison Data
   const mtdComparison = useMemo(() => {

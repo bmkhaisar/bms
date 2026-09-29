@@ -4,6 +4,16 @@ import type { AccountGroup, AccountNature } from "../domain/account";
 import type { MoneyPaise } from "../domain/money";
 import { addMoney, subtractMoney } from "../domain/money";
 import { resolveDocumentTaxes } from "./dashboardReportService";
+import {
+  isPostedInvoice,
+  isPostedPurchase,
+  isPostedReceipt,
+  isPostedPayment,
+  isPostedSalesReturn,
+  isPostedCreditNote,
+  resolveCanonicalInvoiceOutstanding,
+  resolveCanonicalPurchaseOutstanding,
+} from "./canonicalOutstandingService";
 
 export interface DayBookFilter {
   fromDate?: string;   // "YYYY-MM-DD"
@@ -761,6 +771,8 @@ export function getComprehensiveFinancialReconciliation(params: {
   payments?: any[];
   products?: any[];
   parties?: any[];
+  salesReturns?: any[];
+  creditNotes?: any[];
   filter?: { fromDate?: string; toDate?: string; asOfDate?: string };
 }): ComprehensiveReconciliation {
   const {
@@ -773,6 +785,8 @@ export function getComprehensiveFinancialReconciliation(params: {
     payments = [],
     products = [],
     parties = [],
+    salesReturns = [],
+    creditNotes = [],
     filter = {},
   } = params;
 
@@ -798,9 +812,9 @@ export function getComprehensiveFinancialReconciliation(params: {
     tbStatus = dayBook.isBalanced ? "ATTENTION" : "CRITICAL";
   }
 
-  // 3. Filter Invoices & Receipts by Period
+  // 3. Filter Invoices & Receipts by Period (STRICT POSTED ONLY)
   const eligibleInvoices = invoices.filter((inv) => {
-    if (inv.status === "draft" || inv.postingStatus === "draft") return false;
+    if (!isPostedInvoice(inv)) return false;
     const invDate = normalizeVoucherDate(inv.date || inv.createdAt);
     if (fromDate && invDate < fromDate) return false;
     if (toDate && invDate > toDate) return false;
@@ -808,7 +822,7 @@ export function getComprehensiveFinancialReconciliation(params: {
   });
 
   const eligibleReceipts = receipts.filter((rec) => {
-    if (rec.postingStatus === "failed" || rec.postingStatus === "reversed" || rec.status === "cancelled") return false;
+    if (!isPostedReceipt(rec)) return false;
     const recDate = normalizeVoucherDate(rec.date || rec.createdAt);
     if (fromDate && recDate < fromDate) return false;
     if (toDate && recDate > toDate) return false;
@@ -816,10 +830,26 @@ export function getComprehensiveFinancialReconciliation(params: {
   });
 
   const eligiblePurchases = purchases.filter((pu) => {
-    if (pu.status === "draft") return false;
+    if (!isPostedPurchase(pu)) return false;
     const puDate = normalizeVoucherDate(pu.date || pu.createdAt);
     if (fromDate && puDate < fromDate) return false;
     if (toDate && puDate > toDate) return false;
+    return true;
+  });
+
+  const eligibleSalesReturns = salesReturns.filter((ret) => {
+    if (!isPostedSalesReturn(ret)) return false;
+    const retDate = normalizeVoucherDate(ret.date || ret.createdAt);
+    if (fromDate && retDate < fromDate) return false;
+    if (toDate && retDate > toDate) return false;
+    return true;
+  });
+
+  const eligibleCreditNotes = creditNotes.filter((cn) => {
+    if (!isPostedCreditNote(cn)) return false;
+    const cnDate = normalizeVoucherDate(cn.date || cn.createdAt);
+    if (fromDate && cnDate < fromDate) return false;
+    if (toDate && cnDate > toDate) return false;
     return true;
   });
 
@@ -890,7 +920,7 @@ export function getComprehensiveFinancialReconciliation(params: {
   let totalOutstandingRupees = 0;
 
   for (const inv of eligibleInvoices) {
-    const bal = Number(inv.balance !== undefined ? inv.balance : inv.grandTotal);
+    const bal = resolveCanonicalInvoiceOutstanding(inv, receipts, salesReturns, creditNotes).remainingBalance;
     if (bal > 0.01) {
       totalOutstandingRupees += bal;
       openInvoices.push({
@@ -1042,7 +1072,7 @@ export function getComprehensiveFinancialReconciliation(params: {
   let totalPayablesOutstandingRupees = 0;
 
   for (const pu of eligiblePurchases) {
-    const bal = Number(pu.balance !== undefined ? pu.balance : pu.grandTotal);
+    const bal = resolveCanonicalPurchaseOutstanding(pu, payments).remainingBalance;
     if (bal > 0.01) {
       totalPayablesOutstandingRupees += bal;
       const grandTotal = Number(pu.grandTotal || 0);

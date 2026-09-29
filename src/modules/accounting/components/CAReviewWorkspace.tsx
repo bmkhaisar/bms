@@ -58,6 +58,8 @@ interface CAReviewWorkspaceProps {
   payments?: any[];
   products?: any[];
   parties?: any[];
+  salesReturns?: any[];
+  creditNotes?: any[];
   loading?: boolean;
 }
 
@@ -71,6 +73,8 @@ export function CAReviewWorkspace({
   payments = [],
   products = [],
   parties = [],
+  salesReturns = [],
+  creditNotes = [],
   loading = false,
 }: CAReviewWorkspaceProps) {
   const navigate = useNavigate();
@@ -133,12 +137,14 @@ export function CAReviewWorkspace({
       payments,
       products,
       parties,
+      salesReturns,
+      creditNotes,
       filter: {
         fromDate: dateRange.fromDate,
         toDate: dateRange.toDate,
       },
     });
-  }, [ledgers, accountGroups, vouchers, invoices, receipts, purchases, payments, products, parties, dateRange]);
+  }, [ledgers, accountGroups, vouchers, invoices, receipts, purchases, payments, products, parties, salesReturns, creditNotes, dateRange]);
 
   const handleExportJson = () => {
     const data = {

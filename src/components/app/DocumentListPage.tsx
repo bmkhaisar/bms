@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LineItemsEditor } from "./LineItemsEditor";
 import { computeLine, computeTotals, applyStockDelta } from "@/lib/calc";
-import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge, AddressSnapshot, BankAccount, TermsTemplate, StructuredTermItem, Party, Receipt } from "@/lib/db";
+import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge, AddressSnapshot, BankAccount, TermsTemplate, StructuredTermItem, Party, Receipt, Payment, SalesReturn } from "@/lib/db";
 import { db, nextNumber, uid, getCompany } from "@/lib/db";
 import { useAccounting } from "@/modules/accounting/useAccounting";
 import { migrateLegacyCustomersAndSuppliersToParties } from "@/modules/accounting/domain/partyResolver";
@@ -79,6 +79,10 @@ import {
   isPostedFinancialDocument,
 } from "@/modules/documents/postedDocumentCorrection";
 import { allocateAdvanceAgainstInvoice } from "@/modules/accounting/services/partyAdvanceService";
+import {
+  resolveCanonicalInvoiceOutstanding,
+  resolveCanonicalPurchaseOutstanding,
+} from "@/modules/accounting/services/canonicalOutstandingService";
 
 type AnyDoc = Invoice | Quotation | Purchase;
 
@@ -243,6 +247,8 @@ export function DocumentListPage<T extends AnyDoc>({
   // Reusable BMS Share Center modal state (PRD § 1, 2, 24)
   const [shareTargetDoc, setShareTargetDoc] = useState<{ doc: Invoice; mode: "share" | "reminder" } | null>(null);
   const allReceipts = useLive<Receipt>(() => (kind === "invoice" ? db().receipts.toArray() : Promise.resolve([])));
+  const allSalesReturns = useLive<SalesReturn>(() => (kind === "invoice" ? db().salesReturns.toArray() : Promise.resolve([])));
+  const allPayments = useLive<Payment>(() => (kind === "purchase" ? db().payments.toArray() : Promise.resolve([])));
 
   useEffect(() => {
     const loadComp = () => { getCompany(activeCompany?.id).then(setCompany); };
@@ -1819,7 +1825,15 @@ async function openNew() {
                     {pager.items.map(r => {
                       const p = partyById((r as any).customerId ?? (r as Purchase).supplierId);
                       const isInv = kind === "invoice";
-                      const invBalance = (r as unknown as Invoice).balance ?? 0;
+                      const isPur = kind === "purchase";
+                      const rawDocStatus = ((r as any).status || "").toLowerCase();
+                      const rawDocPosting = ((r as any).postingStatus || "").toLowerCase();
+                      const isDraft = rawDocStatus === "draft" || rawDocPosting === "draft";
+                      const invBalance = isInv
+                        ? (isDraft ? 0 : resolveCanonicalInvoiceOutstanding(r as unknown as Invoice, allReceipts, allSalesReturns).remainingBalance)
+                        : isPur
+                        ? (isDraft ? 0 : resolveCanonicalPurchaseOutstanding(r as unknown as Purchase, allPayments).remainingBalance)
+                        : 0;
                       return (
                         <TableRow key={r.id} className="hover:bg-secondary/30 transition-colors">
                           <TableCell className="font-mono font-medium">
@@ -1869,7 +1883,7 @@ async function openNew() {
                           <TableCell className="text-right font-mono font-semibold tabular-nums">{formatMoney(r.grandTotal)}</TableCell>
                           {kind !== "quotation" && (
                             <TableCell className={`text-right font-mono tabular-nums ${invBalance > 0 ? "text-amber-600 dark:text-amber-400 font-semibold" : ""}`}>
-                              <div>{formatMoney(invBalance)}</div>
+                              <div>{isDraft ? "—" : formatMoney(invBalance)}</div>
                               {isInv && isPostedFinancialDocument(r as Invoice) && (
                                 <div className="mt-1 flex justify-end">
                                   <InvoicePaymentStatusPanel
@@ -1892,7 +1906,7 @@ async function openNew() {
                                 docStatus === "voided" ||
                                 docStatus === "deleted" ||
                                 docPosting === "reversed";
-                              const isDraft =
+                              const isDocDraft =
                                 docStatus === "draft" ||
                                 docPosting === "draft";
 
@@ -1903,21 +1917,21 @@ async function openNew() {
                                   </span>
                                 );
                               }
-                              if (isDraft) {
+                              if (isDocDraft) {
                                 return (
                                   <span className="rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20 px-2.5 py-0.5 text-[10px] uppercase font-semibold">
                                     Draft
                                   </span>
                                 );
                               }
-                              if (docStatus === "paid") {
+                              if (invBalance <= 0.01) {
                                 return (
                                   <span className="rounded-full bg-mint/15 text-mint border border-mint/20 px-2.5 py-0.5 text-[10px] uppercase font-semibold">
                                     Paid
                                   </span>
                                 );
                               }
-                              if (docStatus === "partial") {
+                              if (docStatus === "partial" || (invBalance > 0 && invBalance < r.grandTotal)) {
                                 return (
                                   <span className="rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20 px-2.5 py-0.5 text-[10px] uppercase font-semibold">
                                     Partial

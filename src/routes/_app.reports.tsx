@@ -11,7 +11,18 @@ import {
   type Payment,
   type Party,
   type CreditNote,
+  type SalesReturn,
 } from "@/lib/db";
+import {
+  isPostedInvoice,
+  isPostedPurchase,
+  isPostedReceipt,
+  isPostedPayment,
+  isPostedSalesReturn,
+  isPostedCreditNote,
+  resolveCanonicalInvoiceOutstanding,
+  resolveCanonicalPurchaseOutstanding,
+} from "@/modules/accounting/services/canonicalOutstandingService";
 import { useLive, useLiveState } from "@/lib/useLive";
 import { useMemo, useState, useEffect, Fragment } from "react";
 import { Button } from "@/components/ui/button";
@@ -239,10 +250,11 @@ function SalesReport({ from, to }: { from?: number; to?: number }) {
 
   const activeInvoices = useMemo(
     () => invoices.filter((i) => {
+      if (!isPostedInvoice(i)) return false;
       if (activeBranchId && activeBranchId !== "all") {
         if (i.branchId !== activeBranchId) return false;
       }
-      return i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed";
+      return true;
     }),
     [invoices, activeBranchId]
   );
@@ -376,10 +388,11 @@ function PurchaseReport({ from, to }: { from?: number; to?: number }) {
 
   const activePurchases = useMemo(
     () => purchases.filter((p) => {
+      if (!isPostedPurchase(p)) return false;
       if (activeBranchId && activeBranchId !== "all") {
         if (p.branchId !== activeBranchId) return false;
       }
-      return p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed";
+      return true;
     }),
     [purchases, activeBranchId]
   );
@@ -447,9 +460,13 @@ function OutstandingReport() {
   const { activeBranchId } = useActiveCompany();
   const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
   const purchasesState = useLiveState<Purchase>(() => db().purchases.toArray());
+  const receiptsState = useLiveState<Receipt>(() => db().receipts.toArray());
+  const salesReturnsState = useLiveState<SalesReturn>(() => db().salesReturns.toArray());
+  const creditNotesState = useLiveState<CreditNote>(() => db().creditNotes.toArray());
+  const paymentsState = useLiveState<Payment>(() => db().payments.toArray());
   const invoices = invoicesState.data;
   const purchases = purchasesState.data;
-  const isLoaded = invoicesState.isLoaded && purchasesState.isLoaded;
+  const isLoaded = invoicesState.isLoaded && purchasesState.isLoaded && receiptsState.isLoaded && paymentsState.isLoaded;
   const parties = useLive<Party>(() => db().parties.toArray());
   const customers = useLive<Customer>(() => db().customers.toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
@@ -458,12 +475,14 @@ function OutstandingReport() {
     const now = Date.now();
     return invoices
       .filter((i) => {
+        if (!isPostedInvoice(i)) return false;
         if (activeBranchId && activeBranchId !== "all") {
           if (i.branchId !== activeBranchId) return false;
         }
-        return i.balance > 0.01 && i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed";
+        return true;
       })
       .map((i) => {
+        const canonicalBalance = resolveCanonicalInvoiceOutstanding(i, receiptsState.data, salesReturnsState.data, creditNotesState.data).remainingBalance;
         const name = resolvePartyNameFromCollections(i.customerId, i.customerSnapshot, parties, customers);
         const party = parties.find((p) => p.id === i.customerId);
         const cust = customers.find((c) => c.id === i.customerId);
@@ -472,21 +491,33 @@ function OutstandingReport() {
         const creditDays = party?.creditDays ?? cust?.creditDays ?? (i.dueDate ? Math.round((i.dueDate - i.date) / (1000 * 60 * 60 * 24)) : 30);
         return {
           ...i,
+          balance: canonicalBalance,
           customerName: name,
           creditDays,
           ageDays,
         };
-      });
-  }, [invoices, parties, customers, activeBranchId]);
+      })
+      .filter((i) => i.balance > 0.01);
+  }, [invoices, receiptsState.data, salesReturnsState.data, creditNotesState.data, parties, customers, activeBranchId]);
 
   const pay = useMemo(
-    () => purchases.filter((p) => {
-      if (activeBranchId && activeBranchId !== "all") {
-        if (p.branchId !== activeBranchId) return false;
-      }
-      return p.balance > 0.01 && p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed";
-    }),
-    [purchases, activeBranchId]
+    () => purchases
+      .filter((p) => {
+        if (!isPostedPurchase(p)) return false;
+        if (activeBranchId && activeBranchId !== "all") {
+          if (p.branchId !== activeBranchId) return false;
+        }
+        return true;
+      })
+      .map((p) => {
+        const canonicalBalance = resolveCanonicalPurchaseOutstanding(p, paymentsState.data).remainingBalance;
+        return {
+          ...p,
+          balance: canonicalBalance,
+        };
+      })
+      .filter((p) => p.balance > 0.01),
+    [purchases, paymentsState.data, activeBranchId]
   );
 
   const aging = useMemo(() => {
@@ -919,19 +950,21 @@ function ProfitReport({ from, to }: { from?: number; to?: number }) {
 
   const postedInvoices = useMemo(
     () => invoices.filter((i) => {
+      if (!isPostedInvoice(i)) return false;
       if (activeBranchId && activeBranchId !== "all") {
         if (i.branchId !== activeBranchId) return false;
       }
-      return i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed";
+      return true;
     }),
     [invoices, activeBranchId]
   );
   const postedPurchases = useMemo(
     () => purchases.filter((p) => {
+      if (!isPostedPurchase(p)) return false;
       if (activeBranchId && activeBranchId !== "all") {
         if (p.branchId !== activeBranchId) return false;
       }
-      return p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed";
+      return true;
     }),
     [purchases, activeBranchId]
   );
@@ -1634,28 +1667,31 @@ function FinancialReconciliationReport({ from, to }: { from?: number; to?: numbe
 
   const activeInvoices = useMemo(
     () => invoices.filter((i) => {
+      if (!isPostedInvoice(i)) return false;
       if (activeBranchId && activeBranchId !== "all") {
         if (i.branchId !== activeBranchId) return false;
       }
-      return i.status !== "cancelled" && i.status !== "voided" && i.status !== "deleted" && i.postingStatus !== "reversed";
+      return true;
     }),
     [invoices, activeBranchId]
   );
   const activePurchases = useMemo(
     () => purchases.filter((p) => {
+      if (!isPostedPurchase(p)) return false;
       if (activeBranchId && activeBranchId !== "all") {
         if (p.branchId !== activeBranchId) return false;
       }
-      return p.status !== "cancelled" && p.status !== "voided" && p.status !== "deleted" && p.postingStatus !== "reversed";
+      return true;
     }),
     [purchases, activeBranchId]
   );
   const activeReceipts = useMemo(
     () => receipts.filter((r) => {
+      if (!isPostedReceipt(r)) return false;
       if (activeBranchId && activeBranchId !== "all") {
         if (r.branchId !== activeBranchId) return false;
       }
-      return r.postingStatus !== "failed" && r.postingStatus !== "reversed" && (r as any).status !== "cancelled";
+      return true;
     }),
     [receipts, activeBranchId]
   );
