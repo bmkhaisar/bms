@@ -48,7 +48,12 @@ import { motion } from "framer-motion";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
-import { computeDashboardMetrics } from "@/modules/accounting/services/dashboardReportService";
+import {
+  computeDashboardMetrics,
+  getCachedDashboardSummary,
+  setCachedDashboardSummary,
+  type DashboardSummaryScope,
+} from "@/modules/accounting/services/dashboardReportService";
 import { resolveCanonicalInvoiceOutstanding } from "@/modules/accounting/services/canonicalOutstandingService";
 import { buildCanonicalReportingScope } from "@/modules/accounting/services/reportingScope";
 import type { Ledger, Voucher } from "@/modules/accounting/types";
@@ -61,9 +66,6 @@ import { computeMtdLmtdComparison, computeKpiComparison } from "@/modules/accoun
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { PublicShell } from "@/components/app/PublicShell";
 import { LandingPage } from "@/components/marketing/LandingPage";
-
-// In-memory module cache so navigating back to dashboard never flashes skeletons or fake zeroes (PRD #22, #23)
-const dashboardMetricsMemoryCache: Record<string, any> = {};
 
 export const Route = createFileRoute("/_app/")({
   head: () => ({ meta: [{ title: "BMS NEXT — Business Management System" }] }),
@@ -231,7 +233,22 @@ function Dashboard() {
     creditNotesState.isLoaded &&
     ledgersLoaded &&
     vouchersLoaded;
-  const cacheKey = `${activeCompany?.id || "default"}_${activeBranchId || "all"}_${activeFinancialYear?.id || "all"}`;
+  const dashboardScope: DashboardSummaryScope = useMemo(() => {
+    return {
+      companyId: activeCompany?.id || "default",
+      branchScope: activeBranchId || "all",
+      financialYearId: activeFinancialYear?.id || "all",
+      fromDate: activeFinancialYear?.startDate,
+      toDate: activeFinancialYear?.endDate,
+      comparisonKey: "none",
+    };
+  }, [
+    activeCompany?.id,
+    activeBranchId,
+    activeFinancialYear?.id,
+    activeFinancialYear?.startDate,
+    activeFinancialYear?.endDate,
+  ]);
 
   const canonicalScope = useMemo(() => {
     return buildCanonicalReportingScope({
@@ -244,7 +261,7 @@ function Dashboard() {
   // Compute authoritative metrics using formal double-entry and transaction data
   const metrics = useMemo(() => {
     if (!isDataLoaded) {
-      return dashboardMetricsMemoryCache[cacheKey] || null;
+      return getCachedDashboardSummary(dashboardScope);
     }
     const computed = computeDashboardMetrics({
       ledgers,
@@ -260,9 +277,11 @@ function Dashboard() {
       scope: canonicalScope,
       financialYearStart: activeFinancialYear?.startDate,
       financialYearEnd: activeFinancialYear?.endDate,
+      fromDate: activeFinancialYear?.startDate,
+      toDate: activeFinancialYear?.endDate,
       inventoryValuationMethod: (activeCompany as any)?.inventoryValuationMethod,
     });
-    dashboardMetricsMemoryCache[cacheKey] = computed;
+    setCachedDashboardSummary(dashboardScope, computed);
     return computed;
   }, [
     isDataLoaded,
@@ -280,7 +299,7 @@ function Dashboard() {
     activeFinancialYear?.startDate,
     activeFinancialYear?.endDate,
     (activeCompany as any)?.inventoryValuationMethod,
-    cacheKey,
+    dashboardScope,
   ]);
 
   const kpiComparisons = useMemo(() => {
