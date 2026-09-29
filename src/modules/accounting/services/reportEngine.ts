@@ -1,9 +1,9 @@
-import type { Voucher, VoucherLine } from "../domain/voucher";
-import type { Ledger } from "../domain/ledger";
-import type { AccountGroup, AccountNature } from "../domain/account";
-import type { MoneyPaise } from "../domain/money";
-import { addMoney, subtractMoney } from "../domain/money";
-import { resolveDocumentTaxes } from "./dashboardReportService";
+import type { Voucher, VoucherLine } from "../domain/voucher.ts";
+import type { Ledger } from "../domain/ledger.ts";
+import type { AccountGroup, AccountNature } from "../domain/account.ts";
+import type { MoneyPaise } from "../domain/money.ts";
+import { addMoney, subtractMoney } from "../domain/money.ts";
+import { resolveDocumentTaxes } from "./dashboardReportService.ts";
 import {
   isPostedInvoice,
   isPostedPurchase,
@@ -13,7 +13,8 @@ import {
   isPostedCreditNote,
   resolveCanonicalInvoiceOutstanding,
   resolveCanonicalPurchaseOutstanding,
-} from "./canonicalOutstandingService";
+  isAllocationForInvoice,
+} from "./canonicalOutstandingService.ts";
 
 export interface DayBookFilter {
   fromDate?: string;   // "YYYY-MM-DD"
@@ -1263,8 +1264,73 @@ export function getComprehensiveFinancialReconciliation(params: {
     });
   }
 
+  // 11.e Unresolved Document Lineage (LINEAGE_UNRESOLVED)
+  for (const r of eligibleReceipts) {
+    if (!isPostedReceipt(r)) continue;
+    const rCtx = {
+      companyId: r.companyId,
+      customerId: r.customerId || (r as any).partyId,
+      branchId: r.branchId,
+      financialYearId: r.financialYearId,
+    };
+    if (r.allocatedInvoices && r.allocatedInvoices.length > 0) {
+      for (const a of r.allocatedInvoices) {
+        const targetId = a.invoiceId || a.invoiceNumber || (a as any).billNumber;
+        if (targetId && targetId !== "none") {
+          const matched = eligibleInvoices.some((inv) => isAllocationForInvoice(targetId, inv, rCtx));
+          if (!matched) {
+            exceptions.push({
+              id: `lineage_unresolved_${r.id}_${targetId}`,
+              what: "Unresolved Document Lineage (LINEAGE_UNRESOLVED)",
+              amount: `₹${((a.amountRupees ?? a.amount ?? 0)).toFixed(2)}`,
+              why: `Receipt ${r.number || r.id} allocates to target '${targetId}', but no posted invoice matches this lineage metadata.`,
+              relatedRecords: `Receipt: ${r.number || r.id}, Target: ${targetId}`,
+              nextAction: "Run legacyDocumentLineageBackfill migration or review quotation/invoice conversion link.",
+              severity: "ATTENTION",
+            });
+          }
+        }
+      }
+    } else if (r.invoiceId && r.invoiceId !== "none") {
+      const matched = eligibleInvoices.some((inv) => isAllocationForInvoice(r.invoiceId, inv, rCtx));
+      if (!matched) {
+        exceptions.push({
+          id: `lineage_unresolved_${r.id}_${r.invoiceId}`,
+          what: "Unresolved Document Lineage (LINEAGE_UNRESOLVED)",
+          amount: `₹${(r.amount || 0).toFixed(2)}`,
+          why: `Receipt ${r.number || r.id} targets '${r.invoiceId}', but no posted invoice matches this lineage metadata.`,
+          relatedRecords: `Receipt: ${r.number || r.id}, Target: ${r.invoiceId}`,
+          nextAction: "Run legacyDocumentLineageBackfill migration or review quotation/invoice conversion link.",
+          severity: "ATTENTION",
+        });
+      }
+    }
+  }
+
+  for (const inv of eligibleInvoices) {
+    if ((inv as any).lineageStatus === "LINEAGE_UNRESOLVED") {
+      exceptions.push({
+        id: `lineage_unresolved_inv_${inv.id}`,
+        what: "Unresolved Invoice Lineage (LINEAGE_UNRESOLVED)",
+        amount: `₹${(inv.grandTotal || 0).toFixed(2)}`,
+        why: `Invoice ${inv.number} has ambiguous or unverified conversion lineage that requires administrative review.`,
+        relatedRecords: `Invoice: ${inv.number}`,
+        nextAction: "Review source quotation or predecessor invoice link.",
+        severity: "ATTENTION",
+      });
+    }
+  }
+
   // 12. Month-End Review Checklist
   const monthEndChecklist: MonthEndCheckItem[] = [
+    {
+      id: "chk_lineage",
+      label: "Document Lineage Integrity",
+      status: exceptions.some((e) => e.id.startsWith("lineage_unresolved")) ? "ATTENTION" : "PASS",
+      detail: exceptions.some((e) => e.id.startsWith("lineage_unresolved"))
+        ? "One or more document allocations have unresolved lineage metadata."
+        : "All document allocations and conversion lineages verified.",
+    },
     {
       id: "chk_daybook",
       label: "Day Book Balanced",

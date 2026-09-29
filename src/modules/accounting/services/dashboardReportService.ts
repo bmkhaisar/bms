@@ -367,7 +367,10 @@ export function computeDashboardMetrics(params: {
     for (const l of sundryDebtorLedgers) {
       const rawOpen = Math.abs(l.openingBalance || 0);
       const openType = (l.openingBalanceType || "dr").toLowerCase() === "cr" ? "cr" : "dr";
-      let signedOpeningPaise = openType === "dr" ? Math.round(rawOpen * 100) : -Math.round(rawOpen * 100);
+      const openPaise = typeof (l as any).openingBalancePaise === "number"
+        ? (l as any).openingBalancePaise
+        : rawOpen;
+      let signedOpeningPaise = openType === "dr" ? openPaise : -openPaise;
 
       let periodDrPaise = 0;
       let periodCrPaise = 0;
@@ -379,20 +382,20 @@ export function computeDashboardMetrics(params: {
         if (financialYearEnd && vTime > financialYearEnd) continue;
 
         if (v.lines && Array.isArray(v.lines)) {
-          // Detect whether this voucher stores line amounts in paise or rupees
-          const isStoredInPaise =
-            (v.totalAmountRupees !== undefined && v.totalDebit !== undefined && Math.abs(v.totalDebit - v.totalAmountRupees * 100) < 5) ||
-            (v.lines.some((ln: any) => typeof ln.debit === "number" && ln.debit > 1000000));
-
           for (const line of v.lines) {
             if (line.ledgerId === l.id) {
               ledgerHasLines = true;
-              const rawDr = line.debit || 0;
-              const rawCr = line.credit || 0;
-              const drPaise = isStoredInPaise ? Math.round(rawDr) : Math.round(rawDr * 100);
-              const crPaise = isStoredInPaise ? Math.round(rawCr) : Math.round(rawCr * 100);
-              periodDrPaise += drPaise;
-              periodCrPaise += crPaise;
+              // Canonical accounting storage unit is MoneyPaise (integer paise)
+              const rawDr = (line.debit || 0) > 0
+                ? (line.debitPaise ?? line.storedAmountPaise ?? line.debit ?? 0)
+                : 0;
+
+              const rawCr = (line.credit || 0) > 0
+                ? (line.creditPaise ?? line.storedAmountPaise ?? line.credit ?? 0)
+                : 0;
+
+              periodDrPaise += Math.round(rawDr);
+              periodCrPaise += Math.round(rawCr);
             }
           }
         }

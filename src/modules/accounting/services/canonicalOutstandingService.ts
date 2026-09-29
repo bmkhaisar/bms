@@ -116,13 +116,6 @@ export interface AllocationValidationContext {
  * amended/corrected lineage IDs, and source quotations.
  * Validates companyId, partyId, and branchId to prevent accidental cross-document allocation.
  */
-// Well-known canonical lineage / provisional document aliases (e.g. converted quotations or legacy provisional document IDs)
-const CANONICAL_INVOICE_LINEAGE_ALIASES: Record<string, string[]> = {
-  // Predecessor quotation conversion / provisional reference for INV/2026-27/0002
-  "inv/2026-27/0002": ["inv_from_mu1r4p1ncqkwmn0i", "inv/2026-27/0004", "mu1r4p1ncqkwmn0i"],
-  "mu1r36x0dfidoscx": ["inv_from_mu1r4p1ncqkwmn0i", "inv/2026-27/0004", "mu1r4p1ncqkwmn0i"],
-};
-
 export function isAllocationForInvoice(
   targetIdOrNum: unknown,
   invoice: Invoice,
@@ -166,11 +159,17 @@ export function isAllocationForInvoice(
     }
   }
 
-  const aliasCandidates = (
-    CANONICAL_INVOICE_LINEAGE_ALIASES[String(invoice.number || "").trim().toLowerCase()] ||
-    CANONICAL_INVOICE_LINEAGE_ALIASES[String(invoice.id || "").trim().toLowerCase()] ||
-    []
-  );
+  // Generic conversion & lineage prefixes dynamically derived from persisted record metadata
+  const sourceQuotationId = (invoice as any).sourceQuotationId || (invoice as any).convertedFromQuotationId;
+  const conversionDerived = sourceQuotationId ? [`inv_from_${sourceQuotationId}`] : [];
+  const amendedFromId = invoice.amendedFromId;
+  const amendedDerived = amendedFromId ? [`inv_from_${amendedFromId}`] : [];
+  const originalDocId = invoice.originalDocumentId;
+  const origDerived = originalDocId ? [`inv_from_${originalDocId}`] : [];
+  const conversionSourceId = (invoice as any).conversionSourceId;
+  const convSrcDerived = conversionSourceId ? [`inv_from_${conversionSourceId}`] : [];
+  const legacyDocId = (invoice as any).legacyDocumentId;
+  const legacyDerived = legacyDocId ? [`inv_from_${legacyDocId}`] : [];
 
   const candidates = [
     invoice.id,
@@ -182,8 +181,14 @@ export function isAllocationForInvoice(
     (invoice as any).supersededByInvoiceId,
     (invoice as any).sourceQuotationId,
     (invoice as any).sourceQuotationNumber,
+    (invoice as any).conversionSourceId,
+    (invoice as any).legacyDocumentId,
     (invoice as any).convertedFromQuotationId,
-    ...aliasCandidates,
+    ...conversionDerived,
+    ...amendedDerived,
+    ...origDerived,
+    ...convSrcDerived,
+    ...legacyDerived,
   ]
     .filter(Boolean)
     .map((s) => String(s).trim().toLowerCase());

@@ -1337,25 +1337,25 @@ test("Hardening 19: Accounting Invariant — Gross Open Dues - Available Credits
       id: "v_1",
       status: "posted",
       date: 1775010000000,
-      lines: [{ ledgerId: "led_debtor", debit: 63786, credit: 0 }],
+      lines: [{ ledgerId: "led_debtor", debit: 6378600, credit: 0, storedAmountPaise: 6378600 }],
     },
     {
       id: "v_2",
       status: "posted",
       date: 1775020000000,
-      lines: [{ ledgerId: "led_debtor", debit: 67649, credit: 0 }],
+      lines: [{ ledgerId: "led_debtor", debit: 6764900, credit: 0, storedAmountPaise: 6764900 }],
     },
     {
       id: "v_3",
       status: "posted",
       date: 1775030000000,
-      lines: [{ ledgerId: "led_debtor", debit: 0, credit: 32232 }],
+      lines: [{ ledgerId: "led_debtor", debit: 0, credit: 3223200, storedAmountPaise: 3223200 }],
     },
     {
       id: "v_4",
       status: "posted",
       date: 1775040000000,
-      lines: [{ ledgerId: "led_debtor", debit: 0, credit: 31999.98 }],
+      lines: [{ ledgerId: "led_debtor", debit: 0, credit: 3199998, storedAmountPaise: 3199998 }],
     },
   ];
 
