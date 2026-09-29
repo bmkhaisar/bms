@@ -3702,23 +3702,25 @@ async function openNew() {
         mode={shareTargetDoc?.mode || "share"}
       />
 
-      <ExportDialog
-        open={exportDialogOpen}
-        onOpenChange={setExportDialogOpen}
-        title={`Export ${title}`}
-        filename={`BMS_${kind === "invoice" ? "Invoices" : kind === "quotation" ? "Quotations" : "Purchases"}_${new Date().toISOString().slice(0, 10)}`}
-        columns={
-          kind === "invoice"
-            ? INVOICE_EXPORT_COLUMNS
-            : kind === "quotation"
-            ? QUOTATION_EXPORT_COLUMNS
-            : PURCHASE_EXPORT_COLUMNS
-        }
-        filteredData={filtered}
-        allScopeData={effectiveRows}
-        defaultFormat="excel"
-        scopeSummary={`Exporting ${filtered.length} records • ${activeCompany?.name || "BMS NEXT"}`}
-      />
+      {exportDialogOpen && (
+        <ExportDialog
+          open={exportDialogOpen}
+          onOpenChange={setExportDialogOpen}
+          title={`Export ${title}`}
+          filename={`BMS_${kind === "invoice" ? "Invoices" : kind === "quotation" ? "Quotations" : "Purchases"}_${new Date().toISOString().slice(0, 10)}`}
+          columns={
+            kind === "invoice"
+              ? INVOICE_EXPORT_COLUMNS
+              : kind === "quotation"
+              ? QUOTATION_EXPORT_COLUMNS
+              : PURCHASE_EXPORT_COLUMNS
+          }
+          filteredData={filtered}
+          allScopeData={effectiveRows}
+          defaultFormat="excel"
+          scopeSummary={`Exporting ${filtered.length} records • ${activeCompany?.name || "BMS NEXT"}`}
+        />
+      )}
     </>
   );
 }

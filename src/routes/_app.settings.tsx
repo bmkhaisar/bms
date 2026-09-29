@@ -1331,9 +1331,8 @@ function SettingsPage() {
       {isBetaDeployment() && (
         <div className="mt-2 flex items-center justify-center gap-2">
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30 tracking-wider uppercase">
-            Beta
+            Beta Preview
           </span>
-          <span className="text-[11px]">Branch: <code className="font-mono font-medium text-foreground">staging</code></span>
         </div>
       )}
     </div>

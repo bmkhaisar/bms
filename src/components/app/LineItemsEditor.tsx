@@ -256,21 +256,58 @@ export function LineItemsEditor({
     return () => window.removeEventListener("keydown", onKey);
   }, [items]);
 
-  // Product Search Filter (Case-insensitive & Alias resilient)
-  function getFilteredProducts(q: string) {
+  // High-Speed Priority-Ranked Product Search (PRD § 23)
+  // Priority: 1. Exact SKU -> 2. Prefix SKU -> 3. Prefix Name -> 4. Substring Name -> 5. Alias -> 6. Description/HSN
+  function getFilteredProducts(q: string): Product[] {
     const norm = normalizeSearchToken(q);
-    if (!norm) return products.slice(0, 20);
-    return products.filter((p) => {
-      if (normalizeName(p.name).includes(norm)) return true;
-      if (p.sku && p.sku.toLowerCase().includes(norm)) return true;
-      if (p.hsn && p.hsn.toLowerCase().includes(norm)) return true;
-      if (Array.isArray(p.aliases)) {
-        for (const a of p.aliases) {
-          if (normalizeName(a).includes(norm)) return true;
-        }
+    if (!norm) return products.slice(0, 15);
+
+    const matches: { product: Product; rank: number }[] = [];
+    for (let i = 0; i < products.length; i++) {
+      const p = products[i];
+      const skuLower = p.sku ? p.sku.toLowerCase() : "";
+      const normName = normalizeName(p.name);
+
+      if (skuLower === norm) {
+        matches.push({ product: p, rank: 1 });
+        continue;
       }
-      return false;
-    }).slice(0, 25);
+      if (skuLower.startsWith(norm)) {
+        matches.push({ product: p, rank: 2 });
+        continue;
+      }
+      if (normName.startsWith(norm)) {
+        matches.push({ product: p, rank: 3 });
+        continue;
+      }
+      if (normName.includes(norm)) {
+        matches.push({ product: p, rank: 4 });
+        continue;
+      }
+      if (Array.isArray(p.aliases)) {
+        let aliasMatched = false;
+        for (const a of p.aliases) {
+          if (normalizeName(a).includes(norm)) {
+            matches.push({ product: p, rank: 5 });
+            aliasMatched = true;
+            break;
+          }
+        }
+        if (aliasMatched) continue;
+      }
+      if (p.hsn && p.hsn.toLowerCase().includes(norm)) {
+        matches.push({ product: p, rank: 6 });
+        continue;
+      }
+      if (p.description && p.description.toLowerCase().includes(norm)) {
+        matches.push({ product: p, rank: 7 });
+      }
+    }
+
+    return matches
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, 25)
+      .map((m) => m.product);
   }
 
   return (

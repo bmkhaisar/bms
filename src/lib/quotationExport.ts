@@ -21,6 +21,7 @@ import { resolveTechSpecSections } from "./techSpecResolution.ts";
 import { handleAutoTableMarkdownCell, cleanMarkdownForPdf } from "./markdownPdfRenderer.ts";
 import { renderPaginatedKeyValueTable } from "./pdfTablePagination.ts";
 import { resolvePdfDisplaySize } from "./sizeResolution.ts";
+import { buildPdfCacheKey, getCachedPdfBlob, setCachedPdfBlob } from "../modules/documents/pdfCacheService.ts";
 
 const FOOTER_MARK = "Built by MMA";
 // jsPDF's built-in Helvetica lacks the ₹ glyph (renders as superscript 1).
@@ -791,6 +792,10 @@ export async function exportQuotationPDF(
   customer?: Customer,
   template?: QuotationTemplate,
 ): Promise<Blob> {
+  const cacheKey = buildPdfCacheKey(quotation, { copyLabel: template?.id || "quote" });
+  const cached = getCachedPdfBlob(cacheKey);
+  if (cached) return cached;
+
   const jsPDFConstructor: any = typeof jsPDF === "function" ? jsPDF : (jsPDF as any).jsPDF || (jsPDF as any).default || jsPDF;
   const doc = new jsPDFConstructor({ unit: "mm", format: "a4", orientation: "portrait" });
   const tpl = template || defaultTemplate();
@@ -918,7 +923,9 @@ export async function exportQuotationPDF(
     pdfFooter(ctx, i, total);
   }
 
-  return doc.output("blob");
+  const blob = doc.output("blob");
+  setCachedPdfBlob(cacheKey, blob);
+  return blob;
 }
 
 export const generateQuotationPdfBlob = exportQuotationPDF;

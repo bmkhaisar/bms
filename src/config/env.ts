@@ -35,14 +35,20 @@ export function isClientFirebaseConfigured(): boolean {
  *
  * Production main strictly resolves to false.
  */
-export const BMS_DEPLOYMENT_ENV = (
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_BMS_DEPLOYMENT_ENV) ||
-  (typeof process !== "undefined" && (process.env?.VITE_BMS_DEPLOYMENT_ENV || process.env?.BMS_DEPLOYMENT_ENV)) ||
+export const APP_ENV = (
+  (typeof import.meta !== "undefined" && (import.meta.env?.VITE_APP_ENV || import.meta.env?.APP_ENV || import.meta.env?.VITE_BMS_DEPLOYMENT_ENV)) ||
+  (typeof process !== "undefined" && (process.env?.VITE_APP_ENV || process.env?.APP_ENV || process.env?.VITE_BMS_DEPLOYMENT_ENV || process.env?.BMS_DEPLOYMENT_ENV)) ||
   ""
 ).trim().toLowerCase();
 
+export const BMS_DEPLOYMENT_ENV = APP_ENV;
+
 export function isBetaDeployment(): boolean {
-  if (BMS_DEPLOYMENT_ENV === "staging" || BMS_DEPLOYMENT_ENV === "beta") {
+  // Explicit production environment flag strictly disables all staging/beta indicators
+  if (APP_ENV === "production") {
+    return false;
+  }
+  if (APP_ENV === "staging" || APP_ENV === "beta") {
     return true;
   }
   if (typeof window !== "undefined") {

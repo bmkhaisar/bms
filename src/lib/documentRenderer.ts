@@ -11,6 +11,7 @@ import { resolveTechSpecSections } from "@/lib/techSpecResolution";
 import { resolvePdfDisplaySize } from "@/lib/sizeResolution";
 import { renderPaginatedKeyValueTable } from "@/lib/pdfTablePagination";
 import { resolveCanonicalBankDetails, resolveEffectiveCompany, isDocumentFinalized } from "@/lib/documentModel";
+import { buildPdfCacheKey, getCachedPdfBlob, setCachedPdfBlob } from "@/modules/documents/pdfCacheService";
 
 const PDF_CCY = "Rs. ";
 const money = (val: number) => formatMoney(val, PDF_CCY);
@@ -1269,8 +1270,14 @@ function renderDocumentSignatoryBlock(
  * Guaranteed: Preview, Download, and Print share the exact same generated Blob.
  */
 export function generateDocumentPDFBlob(docData: NormalizedDocument, options?: PdfRenderOptions): Blob {
+  const cacheKey = buildPdfCacheKey(docData, options);
+  const cached = getCachedPdfBlob(cacheKey);
+  if (cached) return cached;
+
   const doc = buildDocumentPDF(docData, options);
-  return doc.output("blob");
+  const blob = doc.output("blob");
+  setCachedPdfBlob(cacheKey, blob);
+  return blob;
 }
 
 /**

@@ -118,7 +118,7 @@ export function Topbar({ title }: { title: string }) {
         confirmText="Log out"
         onConfirm={handleLogout}
       />
-      <GlobalSearch open={openSearch} onOpenChange={setOpenSearch} />
+      {openSearch && <GlobalSearch open={openSearch} onOpenChange={setOpenSearch} />}
     </header>
   );
 }

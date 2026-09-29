@@ -64,7 +64,7 @@ export function PartySearchSelect({
       }
     }
     return false;
-  });
+  }).slice(0, 15);
 
   const isCustomer = type === "customer";
   const custRecord = isCustomer ? (selectedParty as Customer) : null;
