@@ -123,6 +123,13 @@ export function BmsStartupController({
       // Determine target destination and preserve valid authorized deep links
       let targetPath: string;
 
+      const isPublicInfo =
+        loc.pathname === "/about" ||
+        loc.pathname === "/faq" ||
+        loc.pathname === "/contact" ||
+        loc.pathname === "/terms" ||
+        loc.pathname === "/privacy";
+
       if (authDestination.type === "dashboard") {
         const isAppSubRoute =
           loc.pathname !== "/login" &&
@@ -131,8 +138,8 @@ export function BmsStartupController({
           loc.pathname !== "/platform-admin-setup-required";
 
         targetPath = isAppSubRoute && loc.pathname !== "/" ? loc.pathname : "/";
-      } else if (!user && isPublicRoute) {
-        // Unauthenticated user on a public route — stay on current page
+      } else if (isPublicInfo || (!user && isPublicRoute)) {
+        // Public informational routes (or unauthenticated visitor on public route) — stay on current page
         targetPath = loc.pathname;
       } else {
         targetPath = authDestination.to;
@@ -184,8 +191,20 @@ export function BmsStartupController({
 
   const isExtended = animationDone && authDestination.type === "waiting";
 
+  const isPublicInfoRoute =
+    loc.pathname === "/about" ||
+    loc.pathname === "/faq" ||
+    loc.pathname === "/contact" ||
+    loc.pathname === "/terms" ||
+    loc.pathname === "/privacy";
+
   // PUBLIC ROUTE BYPASS — placed AFTER all hooks to satisfy React Rules of Hooks.
-  // Unauthenticated visitors on public pages skip the startup overlay entirely.
+  // 1. Informational public routes bypass startup overlay immediately (zero delay, zero auth gate).
+  if (isPublicInfoRoute) {
+    return <>{children}</>;
+  }
+
+  // 2. Unauthenticated visitors on /, /login skip the startup overlay once auth is resolved.
   if (isPublicRoute && !user && !authInitializing) {
     return <>{children}</>;
   }

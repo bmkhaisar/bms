@@ -48,6 +48,7 @@ import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { computeDashboardMetrics } from "@/modules/accounting/services/dashboardReportService";
+import { buildCanonicalReportingScope } from "@/modules/accounting/services/reportingScope";
 import type { Ledger } from "@/modules/accounting/types";
 import { useEffect, useState, useMemo } from "react";
 import { firebaseDb } from "@/config/firebase";
@@ -194,10 +195,18 @@ function Dashboard() {
   const isDataLoaded = invoicesState.isLoaded && purchasesState.isLoaded && productsState.isLoaded && receiptsState.isLoaded && paymentsState.isLoaded && customersState.isLoaded && salesReturnsState.isLoaded && ledgersLoaded;
   const cacheKey = `${activeCompany?.id || "default"}_${activeBranchId || "all"}_${activeFinancialYear?.id || "all"}`;
 
+  const canonicalScope = useMemo(() => {
+    return buildCanonicalReportingScope({
+      companyId: activeCompany?.id || "default",
+      financialYearId: activeFinancialYear?.id,
+      activeBranchId,
+    });
+  }, [activeCompany?.id, activeFinancialYear?.id, activeBranchId]);
+
   // Compute authoritative metrics using formal double-entry and transaction data
   const metrics = useMemo(() => {
-    if (!isDataLoaded && dashboardMetricsMemoryCache[cacheKey]) {
-      return dashboardMetricsMemoryCache[cacheKey];
+    if (!isDataLoaded) {
+      return dashboardMetricsMemoryCache[cacheKey] || null;
     }
     const computed = computeDashboardMetrics({
       ledgers,
@@ -208,19 +217,32 @@ function Dashboard() {
       payments,
       salesReturns: salesReturnsState.data,
       branches,
-      branchId: activeBranchId,
+      scope: canonicalScope,
       financialYearStart: activeFinancialYear?.startDate,
       financialYearEnd: activeFinancialYear?.endDate,
       inventoryValuationMethod: (activeCompany as any)?.inventoryValuationMethod,
     });
-    if (isDataLoaded) {
-      dashboardMetricsMemoryCache[cacheKey] = computed;
-    }
+    dashboardMetricsMemoryCache[cacheKey] = computed;
     return computed;
-  }, [isDataLoaded, ledgers, invoices, purchases, products, receipts, payments, activeFinancialYear?.startDate, activeFinancialYear?.endDate, (activeCompany as any)?.inventoryValuationMethod, cacheKey]);
+  }, [
+    isDataLoaded,
+    ledgers,
+    invoices,
+    purchases,
+    products,
+    receipts,
+    payments,
+    salesReturnsState.data,
+    branches,
+    canonicalScope,
+    activeFinancialYear?.startDate,
+    activeFinancialYear?.endDate,
+    (activeCompany as any)?.inventoryValuationMethod,
+    cacheKey,
+  ]);
 
-  // If data is still querying and no memory cache exists yet, show skeleton rather than flashing ₹0
-  if (!isDataLoaded && !dashboardMetricsMemoryCache[cacheKey]) {
+  // If data is still querying and no memory cache exists yet, show skeleton rather than flashing fake ₹0 (PRD § 9)
+  if (!isDataLoaded || !metrics) {
     return (
       <AppShell title="Dashboard">
         <DashboardSkeleton />

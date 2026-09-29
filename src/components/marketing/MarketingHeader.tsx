@@ -82,12 +82,12 @@ export function MarketingHeader({ className }: MarketingHeaderProps) {
           >
             About
           </Link>
-          <a
-            href="/#faq"
+          <Link
+            to="/faq"
             className="rounded-full px-3.5 py-1.5 transition-colors hover:text-foreground hover:bg-muted/60"
           >
             FAQ
-          </a>
+          </Link>
           <Link
             to="/contact"
             className="rounded-full px-3.5 py-1.5 transition-colors hover:text-foreground hover:bg-muted/60"
@@ -176,13 +176,13 @@ export function MarketingHeader({ className }: MarketingHeaderProps) {
             >
               About
             </Link>
-            <a
-              href="/#faq"
+            <Link
+              to="/faq"
               onClick={() => setMobileMenuOpen(false)}
               className="px-3 py-2 rounded-lg hover:bg-muted/60 transition-colors"
             >
               FAQ
-            </a>
+            </Link>
             <Link
               to="/contact"
               onClick={() => setMobileMenuOpen(false)}

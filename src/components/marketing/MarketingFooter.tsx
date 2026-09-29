@@ -48,9 +48,9 @@ export function MarketingFooter() {
                   </Link>
                 </li>
                 <li>
-                  <a href="/#faq" className="hover:text-foreground transition-colors">
+                  <Link to="/faq" className="hover:text-foreground transition-colors">
                     FAQ
-                  </a>
+                  </Link>
                 </li>
                 <li>
                   <Link to="/login" className="hover:text-foreground transition-colors">

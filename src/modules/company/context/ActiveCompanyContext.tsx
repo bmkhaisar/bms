@@ -65,6 +65,7 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
   const [resolvedUserId, setResolvedUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const repairingFinancialYearRef = useRef<Set<string>>(new Set());
+  const repairingLegacyBranchRef = useRef<Set<string>>(new Set());
 
   // Register cleanup on canonical logout (PRD § 10)
   useEffect(() => {
@@ -300,6 +301,37 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
       .catch((failure) => setError(failure instanceof Error ? failure.message : String(failure)))
       .finally(() => repairingFinancialYearRef.current.delete(activeCompanyId));
   }, [user, activeCompanyId, activeCompany, financialYears.length]);
+
+  // Controlled legacy branch backfill migration: audits historical operational records
+  // created before branch support and backfills canonical Main Branch persisted branchId. (PRD Section 4)
+  useEffect(() => {
+    if (!user || !activeCompanyId || !activeCompany || !firebaseDb || repairingLegacyBranchRef.current.has(activeCompanyId)) return;
+    const role = (activeMembership?.organizationRole || activeMembership?.role || "").toLowerCase();
+    if (role !== "owner" && role !== "admin") return;
+
+    const markerRef = ref(firebaseDb, `companyData/${activeCompanyId}/migrationMarkers/legacyBranchBackfill`);
+    get(markerRef).then((snap) => {
+      if (snap.exists()) return;
+
+      repairingLegacyBranchRef.current.add(activeCompanyId);
+      user.getIdToken().then(async (idToken) => {
+        const { migrateLegacyBranchServerFn } = await import("@/functions/migrateLegacyBranchFn");
+        return migrateLegacyBranchServerFn({
+          data: { idToken, companyId: activeCompanyId, force: false },
+        });
+      }).then((res) => {
+        if (res.success && res.summary && res.summary.totalRecordsMigrated > 0) {
+          console.info(
+            `[Legacy Branch Migration] Automatically migrated ${res.summary.totalRecordsMigrated} legacy records to Main Branch (${res.summary.mainBranchCode}) for company ${activeCompanyId}`
+          );
+        }
+      }).catch((err) => {
+        console.warn("[Legacy Branch Migration] Automatic backfill attempt error:", err);
+      }).finally(() => {
+        repairingLegacyBranchRef.current.delete(activeCompanyId);
+      });
+    }).catch(() => {});
+  }, [user, activeCompanyId, activeCompany, activeMembership]);
 
   const isOwner = (activeMembership?.organizationRole || activeMembership?.role || "").toLowerCase() === "owner";
 

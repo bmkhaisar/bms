@@ -7,6 +7,16 @@ import { AppShell } from "@/components/app/AppShell";
 import { DashboardSkeleton } from "@/components/app/Skeletons";
 import { startupState } from "@/modules/app/startupState";
 
+const PUBLIC_ROUTES = new Set([
+  "/",
+  "/about",
+  "/faq",
+  "/contact",
+  "/terms",
+  "/privacy",
+  "/login",
+]);
+
 export const Route = createFileRoute("/_app")({
   component: AppGuard,
 });
@@ -47,14 +57,14 @@ function AppGuard() {
   }, [authInitializing, claimsLoading, isAuthenticated, user, isPlatformAdmin, companyLoading, activeCompany, companies.length]);
 
   const loc = useLocation();
-  const isPublicRoot = loc.pathname === "/";
+  const isPublicRoute = PUBLIC_ROUTES.has(loc.pathname);
 
   useEffect(() => {
     if (authInitializing || claimsLoading) return;
 
-    // 1. Not authenticated -> redirect to /login only if not visiting public root /
+    // 1. Not authenticated -> redirect to /login only if not on a canonical public route
     if (!isAuthenticated || !user) {
-      if (!isPublicRoot) {
+      if (!isPublicRoute) {
         nav({ to: "/login", replace: true });
       }
       return;
@@ -93,12 +103,12 @@ function AppGuard() {
     companies,
     activeCompany,
     nav,
-    isPublicRoot,
+    isPublicRoute,
   ]);
 
   // If credentials or company memberships are actively resolving
   if (authInitializing || claimsLoading) {
-    if (isPublicRoot) {
+    if (isPublicRoute) {
       return (
         <div className="flex min-h-screen items-center justify-center bg-background">
           <div className="h-7 w-7 animate-spin rounded-full border-2 border-purple-500 border-t-transparent" />
@@ -137,7 +147,7 @@ function AppGuard() {
   }
 
   if (!isAuthenticated || !user) {
-    if (isPublicRoot) {
+    if (isPublicRoute) {
       return <Outlet />;
     }
     return null;

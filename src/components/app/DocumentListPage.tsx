@@ -494,9 +494,10 @@ export function DocumentListPage<T extends AnyDoc>({
       }
       // "all" includes everything
 
-      // Strict Branch Isolation (PRD §§ 9, 10): If user is scoped to a specific branch, only show that branch's records
+      // Strict Branch Isolation & Document List Parity (PRD Section 7):
+      // If user is scoped to a specific branch, only show that branch's records
       if (activeBranchId && activeBranchId !== "all") {
-        if ((r as any).branchId && (r as any).branchId !== activeBranchId) {
+        if ((r as any).branchId !== activeBranchId) {
           return false;
         }
       }

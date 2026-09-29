@@ -127,7 +127,7 @@ function ReceiptsAndPaymentsPage() {
 
   const filteredReceipts = receipts.filter((r) => {
     if (activeBranchId && activeBranchId !== "all") {
-      if (r.branchId && r.branchId !== activeBranchId) return false;
+      if (r.branchId !== activeBranchId) return false;
     }
     return (
       !q ||
@@ -139,7 +139,7 @@ function ReceiptsAndPaymentsPage() {
 
   const filteredPayments = payments.filter((p) => {
     if (activeBranchId && activeBranchId !== "all") {
-      if ((p as any).branchId && (p as any).branchId !== activeBranchId) return false;
+      if ((p as any).branchId !== activeBranchId) return false;
     }
     return (
       !q ||

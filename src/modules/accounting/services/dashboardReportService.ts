@@ -1,6 +1,8 @@
 import type { Ledger } from "@/modules/accounting/types";
 import type { Invoice, Purchase, Product, Customer, Supplier, Receipt, Payment, SalesReturn } from "@/lib/db";
 import { computeMonthlyTrend } from "./dashboardAnalyticsService.ts";
+import { buildCanonicalReportingScope, type CanonicalReportingScope } from "./reportingScope.ts";
+import { logDashboardDiagnostics } from "./dashboardDiagnostics.ts";
 
 export interface DashboardMetrics {
   totalSales: number;
@@ -127,6 +129,7 @@ export function computeDashboardMetrics(params: {
   salesReturns?: SalesReturn[];
   branches?: Array<{ id: string; name: string; code?: string; isMainBranch?: boolean }>;
   branchId?: string;
+  scope?: CanonicalReportingScope;
   financialYearStart?: number;
   financialYearEnd?: number;
   inventoryValuationMethod?: "purchase_cost" | "standard_cost" | string;
@@ -140,28 +143,40 @@ export function computeDashboardMetrics(params: {
     payments: allPayments = [],
     salesReturns: allSalesReturns = [],
     branches = [],
-    branchId,
+    branchId: rawBranchId,
+    scope: providedScope,
     financialYearStart,
     financialYearEnd,
     inventoryValuationMethod,
   } = params;
 
-  // Branch Scoping: If a specific branch is selected, scope operational documents strictly to that branch
-  const isBranchScoped = Boolean(branchId && branchId !== "all");
+  // Resolve canonical reporting scope
+  const effectiveScope: CanonicalReportingScope =
+    providedScope ||
+    buildCanonicalReportingScope({
+      companyId: "default",
+      activeBranchId: rawBranchId,
+      financialYearId: undefined,
+    });
+
+  const isBranchScoped = effectiveScope.scopeMode === "BRANCH";
+  const targetBranchId = effectiveScope.activeBranchId;
+
+  // Operational documents strictly scoped to active branch in BRANCH mode, or consolidated in CONSOLIDATED mode
   const invoices = isBranchScoped
-    ? allInvoices.filter((inv) => inv.branchId === branchId)
+    ? allInvoices.filter((inv) => inv.branchId === targetBranchId)
     : allInvoices;
   const purchases = isBranchScoped
-    ? allPurchases.filter((pu) => pu.branchId === branchId)
+    ? allPurchases.filter((pu) => pu.branchId === targetBranchId)
     : allPurchases;
   const receipts = isBranchScoped
-    ? allReceipts.filter((rec) => rec.branchId === branchId)
+    ? allReceipts.filter((rec) => rec.branchId === targetBranchId)
     : allReceipts;
   const payments = isBranchScoped
-    ? allPayments.filter((pay) => pay.branchId === branchId)
+    ? allPayments.filter((pay) => pay.branchId === targetBranchId)
     : allPayments;
   const salesReturns = isBranchScoped
-    ? allSalesReturns.filter((ret) => ret.branchId === branchId)
+    ? allSalesReturns.filter((ret) => ret.branchId === targetBranchId)
     : allSalesReturns;
 
   // 1. Filter documents by active Financial Year window if provided
@@ -257,48 +272,63 @@ export function computeDashboardMetrics(params: {
     else paidByPaymentMode.other += p.amount;
   }
 
-  // 2. Authoritative Ledger Balances
-  // Cash and Bank ledgers
-  const cashLedgers = ledgers.filter(
-    (l) => l.groupId === "grp_cash" || l.groupId === "grp_cash_equiv" || l.name.toLowerCase().includes("cash")
-  );
-  const bankLedgers = ledgers.filter(
-    (l) => l.groupId === "grp_bank" || l.name.toLowerCase().includes("bank")
-  );
-
-  const cashPaise = cashLedgers.reduce((sum, l) => sum + (l.currentBalance || 0), 0);
-  const bankPaise = bankLedgers.reduce((sum, l) => sum + (l.currentBalance || 0), 0);
-
-  // Receivables & Payables & Customer Credits separation (PRD Section F)
-  const receivableLedgers = ledgers.filter(
-    (l) => l.partyType === "customer" || l.groupId === "grp_sundry_debtors"
-  );
-  const payableLedgers = ledgers.filter(
-    (l) => l.partyType === "supplier" || l.groupId === "grp_sundry_creditors"
-  );
-
-  // Debits are positive (+), credits are negative (-)
-  // Customer Credit is tracked separately from Accounts Receivable (never netted)
+  // 2. Authoritative Balances (strictly scoped without cross-scope leakage)
   let totalReceivables = 0;
   let totalCustomerCredits = 0;
+  let totalPayables = 0;
+  let cashInHand = 0;
+  let bankBalance = 0;
+  let totalLiquidity = 0;
 
-  if (receivableLedgers.length > 0) {
-    for (const l of receivableLedgers) {
-      const bal = (l.currentBalance || 0) / 100;
-      if (bal > 0) {
-        totalReceivables += bal;
-      } else if (bal < 0) {
-        totalCustomerCredits += Math.abs(bal);
-      }
-    }
-  } else {
+  if (isBranchScoped) {
+    // STRICT BRANCH SCOPE (PRD Sections 2 & 3):
+    // Zero organization-wide AR/AP/Cash leakage
     totalReceivables = fyInvoices.reduce((sum, inv) => sum + Math.max(0, inv.balance || 0), 0);
-  }
+    totalPayables = fyPurchases.reduce((sum, pu) => sum + Math.max(0, pu.balance || 0), 0);
+    cashInHand = Math.max(0, receivedByPaymentMode.cash - paidByPaymentMode.cash);
+    bankBalance = Math.max(0, receivedByPaymentMode.bank - paidByPaymentMode.bank);
+    totalLiquidity = cashInHand + bankBalance;
+  } else {
+    // CONSOLIDATED SCOPE (PRD Sections 1 & 2):
+    // Authoritative double-entry ledger balances across all branches
+    const cashLedgers = ledgers.filter(
+      (l) => l.groupId === "grp_cash" || l.groupId === "grp_cash_equiv" || l.name.toLowerCase().includes("cash")
+    );
+    const bankLedgers = ledgers.filter(
+      (l) => l.groupId === "grp_bank" || l.name.toLowerCase().includes("bank")
+    );
+    const cashPaise = cashLedgers.reduce((sum, l) => sum + (l.currentBalance || 0), 0);
+    const bankPaise = bankLedgers.reduce((sum, l) => sum + (l.currentBalance || 0), 0);
 
-  const totalPayables =
-    payableLedgers.length > 0
-      ? payableLedgers.reduce((sum, l) => sum + Math.max(0, -Math.min(0, (l.currentBalance || 0) / 100)), 0)
-      : fyPurchases.reduce((sum, pu) => sum + Math.max(0, pu.balance || 0), 0);
+    const receivableLedgers = ledgers.filter(
+      (l) => l.partyType === "customer" || l.groupId === "grp_sundry_debtors"
+    );
+    const payableLedgers = ledgers.filter(
+      (l) => l.partyType === "supplier" || l.groupId === "grp_sundry_creditors"
+    );
+
+    if (receivableLedgers.length > 0) {
+      for (const l of receivableLedgers) {
+        const bal = (l.currentBalance || 0) / 100;
+        if (bal > 0) {
+          totalReceivables += bal;
+        } else if (bal < 0) {
+          totalCustomerCredits += Math.abs(bal);
+        }
+      }
+    } else {
+      totalReceivables = fyInvoices.reduce((sum, inv) => sum + Math.max(0, inv.balance || 0), 0);
+    }
+
+    totalPayables =
+      payableLedgers.length > 0
+        ? payableLedgers.reduce((sum, l) => sum + Math.max(0, -Math.min(0, (l.currentBalance || 0) / 100)), 0)
+        : fyPurchases.reduce((sum, pu) => sum + Math.max(0, pu.balance || 0), 0);
+
+    cashInHand = cashPaise / 100;
+    bankBalance = bankPaise / 100;
+    totalLiquidity = (cashPaise + bankPaise) / 100;
+  }
 
   // 3. Canonical Revenue & Billed Metrics (Hardening Item 18)
   // Net Billed Value = Gross Billed Sales (incl. GST) - Gross Sales Returns / Credit Notes (incl. GST)
@@ -449,6 +479,49 @@ export function computeDashboardMetrics(params: {
     products.length > 0 ||
     ledgers.some((l) => l.currentBalance !== 0);
 
+  // Invoke automated developer diagnostics (PRD Section 8)
+  logDashboardDiagnostics({
+    scope: effectiveScope,
+    invoices: {
+      totalScanned: allInvoices.length,
+      scopedCount: fyInvoices.length,
+      scopedSum: grossBilledSales,
+      excludedDueToBranch: isBranchScoped ? allInvoices.filter((i) => i.branchId !== targetBranchId).length : 0,
+      excludedDueToDate: invoices.length - fyInvoices.length,
+      excludedDueToStatus: 0,
+    },
+    receipts: {
+      totalScanned: allReceipts.length,
+      scopedCount: postedReceipts.length,
+      scopedSum: totalAmountReceived,
+      excludedDueToBranch: isBranchScoped ? allReceipts.filter((r) => r.branchId !== targetBranchId).length : 0,
+      excludedDueToStatus: fyReceipts.length - postedReceipts.length,
+    },
+    purchases: {
+      totalScanned: allPurchases.length,
+      scopedCount: fyPurchases.length,
+      scopedSum: totalPurchases,
+      excludedDueToBranch: isBranchScoped ? allPurchases.filter((p) => p.branchId !== targetBranchId).length : 0,
+      excludedDueToDate: purchases.length - fyPurchases.length,
+    },
+    payments: {
+      totalScanned: allPayments.length,
+      scopedCount: postedPayments.length,
+      scopedSum: totalPaymentsMade,
+      excludedDueToBranch: isBranchScoped ? allPayments.filter((p) => (p as any).branchId !== targetBranchId).length : 0,
+      excludedDueToStatus: fyPayments.length - postedPayments.length,
+    },
+    salesReturns: {
+      totalScanned: allSalesReturns.length,
+      scopedCount: fySalesReturns.length,
+      scopedSum: totalSalesReturns,
+      excludedDueToBranch: isBranchScoped ? allSalesReturns.filter((r) => r.branchId !== targetBranchId).length : 0,
+    },
+    arReconciled: totalReceivables,
+    apReconciled: totalPayables,
+    cashBankReconciled: totalLiquidity,
+  });
+
   return {
     totalSales,
     totalSalesReturns,
@@ -462,9 +535,9 @@ export function computeDashboardMetrics(params: {
     receivedByPaymentMode,
     totalPaymentsMade,
     paidByPaymentMode,
-    cashInHand: cashPaise / 100,
-    bankBalance: bankPaise / 100,
-    totalLiquidity: (cashPaise + bankPaise) / 100,
+    cashInHand,
+    bankBalance,
+    totalLiquidity,
     grossProfit,
     netProfit,
     netSalesRevenue,
