@@ -57,6 +57,7 @@ import { firebaseDb } from "@/config/firebase";
 import { ref, onValue, off } from "firebase/database";
 import { DashboardSkeleton } from "@/components/app/Skeletons";
 import { DashboardSalesVsPurchasesCard } from "@/components/app/DashboardSalesVsPurchasesCard";
+import { computeMtdLmtdComparison, computeKpiComparison } from "@/modules/accounting/services/dashboardAnalyticsService";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { PublicShell } from "@/components/app/PublicShell";
 import { LandingPage } from "@/components/marketing/LandingPage";
@@ -291,6 +292,50 @@ function Dashboard() {
     );
   }
 
+  const kpiComparisons = useMemo(() => {
+    if (!isDataLoaded) return null;
+    try {
+      const salesComp = computeMtdLmtdComparison({
+        metric: "sales",
+        invoices: invoices || [],
+        purchases: purchases || [],
+        receipts: receipts || [],
+        financialYearStart: activeFinancialYear?.startDate,
+        financialYearEnd: activeFinancialYear?.endDate,
+      });
+
+      const purchasesComp = computeMtdLmtdComparison({
+        metric: "purchases",
+        invoices: invoices || [],
+        purchases: purchases || [],
+        receipts: receipts || [],
+        financialYearStart: activeFinancialYear?.startDate,
+        financialYearEnd: activeFinancialYear?.endDate,
+      });
+
+      const collectionsComp = computeMtdLmtdComparison({
+        metric: "collections",
+        invoices: invoices || [],
+        purchases: purchases || [],
+        receipts: receipts || [],
+        financialYearStart: activeFinancialYear?.startDate,
+        financialYearEnd: activeFinancialYear?.endDate,
+      });
+
+      const grossProfitMtd = Math.max(0, salesComp.mtdAmount - purchasesComp.mtdAmount);
+      const grossProfitLmtd = Math.max(0, salesComp.lmtdAmount - purchasesComp.lmtdAmount);
+
+      return {
+        sales: computeKpiComparison(salesComp.mtdAmount, salesComp.lmtdAmount, "vs LMTD"),
+        purchases: computeKpiComparison(purchasesComp.mtdAmount, purchasesComp.lmtdAmount, "vs LMTD", true),
+        collections: computeKpiComparison(collectionsComp.mtdAmount, collectionsComp.lmtdAmount, "vs LMTD"),
+        grossProfit: computeKpiComparison(grossProfitMtd, grossProfitLmtd, "vs LMTD"),
+      };
+    } catch {
+      return null;
+    }
+  }, [isDataLoaded, invoices, purchases, receipts, activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
+
   const kpiCards = [
     {
       label: metrics.totalSalesReturns && metrics.totalSalesReturns > 0 ? "Net Billed Value" : "Total Billed Sales",
@@ -300,6 +345,7 @@ function Dashboard() {
       subtext: metrics.totalSalesReturns && metrics.totalSalesReturns > 0
         ? `Gross: ${formatMoney(metrics.totalSales)} | CN: ${formatMoney(metrics.totalSalesReturns)}`
         : (activeFinancialYear ? activeFinancialYear.name : "All Time"),
+      comparison: kpiComparisons?.sales,
       href: "/invoices",
     },
     {
@@ -308,6 +354,7 @@ function Dashboard() {
       icon: HandCoins,
       tint: "text-mint",
       subtext: "Posted customer receipts",
+      comparison: kpiComparisons?.collections,
       href: "/receipts",
     },
     {
@@ -326,6 +373,7 @@ function Dashboard() {
       icon: ShoppingBag,
       tint: "text-sky-600 dark:text-sky-400",
       subtext: "Raw materials & COGS",
+      comparison: kpiComparisons?.purchases,
       href: "/purchases",
     },
     {
@@ -350,6 +398,7 @@ function Dashboard() {
       icon: ArrowUpRight,
       tint: "text-mint",
       subtext: "Sales minus direct COGS",
+      comparison: kpiComparisons?.grossProfit,
       href: "/reports",
     },
     {
@@ -435,6 +484,21 @@ function Dashboard() {
                     <div className="mt-1 text-lg font-bold sm:text-2xl font-mono tabular-nums text-foreground">
                       {k.value}
                     </div>
+                    {k.comparison && (
+                      <div className="mt-0.5 text-[11px] font-mono leading-none">
+                        <span
+                          className={
+                            k.comparison.direction === "new_activity"
+                              ? "text-primary font-medium"
+                              : k.comparison.isPositive
+                              ? "text-emerald-600 dark:text-emerald-400 font-medium"
+                              : "text-rose-600 dark:text-rose-400 font-medium"
+                          }
+                        >
+                          {k.comparison.displayText}
+                        </span>
+                      </div>
+                    )}
                     <div className="mt-1 text-[11px] text-muted-foreground">{k.subtext}</div>
                   </div>
                   <div className="rounded-xl bg-secondary/50 p-2.5">

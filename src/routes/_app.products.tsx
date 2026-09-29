@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { ListToolbar, EmptyState, usePagination, Pager } from "@/components/app/ListHelpers";
-import { PackagePlus, Pencil, Plus, Trash2, BarChart3, Loader2 } from "lucide-react";
+import { PackagePlus, Pencil, Plus, Trash2, BarChart3, Loader2, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
@@ -27,6 +27,8 @@ import { QuickCreateCategoryModal } from "@/components/app/QuickCreateCategoryMo
 import { ProductInsightDrawer } from "@/components/app/ProductInsightDrawer";
 import { performOptimisticMutation } from "@/lib/mutationPipeline";
 import { checkEntityHistoricalUsage, type HistoricalUsageResult } from "@/lib/historicalUsage";
+import { ExportDialog } from "@/components/app/ExportDialog";
+import { PRODUCT_EXPORT_COLUMNS } from "@/modules/export/exportColumnDefinitions";
 
 export const Route = createFileRoute("/_app/products")({
   head: () => ({ meta: [{ title: "Products — BMS NEXT" }] }),
@@ -67,6 +69,7 @@ function ProductsPage() {
   const [saving, setSaving] = useState(false);
   const [selectedProductIdForDrawer, setSelectedProductIdForDrawer] = useState<string | null>(null);
   const [showPriceWarning, setShowPriceWarning] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   // Deletion / Deactivation modal target state
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -349,15 +352,24 @@ function ProductsPage() {
         title="Products & Inventory"
         description="Catalog items with unified pricing, HSN codes, GST rates, and stock monitoring."
         actions={
-          <Button
-            className="gap-2 shadow-sm"
-            onClick={() => {
-              setEditing({ ...empty, id: uid(), createdAt: Date.now() });
-              setOpen(true);
-            }}
-          >
-            <PackagePlus className="h-4 w-4" /> Add product
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="gap-2 shadow-xs text-xs"
+              onClick={() => setExportDialogOpen(true)}
+            >
+              <Download className="h-4 w-4" /> Export
+            </Button>
+            <Button
+              className="gap-2 shadow-sm text-xs"
+              onClick={() => {
+                setEditing({ ...empty, id: uid(), createdAt: Date.now() });
+                setOpen(true);
+              }}
+            >
+              <PackagePlus className="h-4 w-4" /> Add product
+            </Button>
+          </div>
         }
       />
 
@@ -721,6 +733,18 @@ function ProductsPage() {
         productId={selectedProductIdForDrawer}
         open={Boolean(selectedProductIdForDrawer)}
         onOpenChange={(o) => !o && setSelectedProductIdForDrawer(null)}
+      />
+
+      <ExportDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        title="Export Product Master"
+        filename={`BMS_Products_${new Date().toISOString().slice(0, 10)}`}
+        columns={PRODUCT_EXPORT_COLUMNS}
+        filteredData={filtered}
+        allScopeData={rows}
+        defaultFormat="excel"
+        scopeSummary={`Exporting ${filtered.length} products • ${activeCompany?.name || "BMS NEXT"}`}
       />
     </AppShell>
   );

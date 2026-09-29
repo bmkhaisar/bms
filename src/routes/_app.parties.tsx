@@ -26,7 +26,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { ListToolbar, EmptyState, usePagination, Pager } from "@/components/app/ListHelpers";
-import { Pencil, Plus, Trash2, Users, MapPin, Eye, ShieldCheck, Wallet, Loader2 } from "lucide-react";
+import { Pencil, Plus, Trash2, Users, MapPin, Eye, ShieldCheck, Wallet, Loader2, Download, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { formatMoney } from "@/lib/format";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
@@ -41,6 +41,9 @@ import { isIndia, getPostalCodeLabel, getPostalCodePlaceholder, validatePostalCo
 import { performOptimisticMutation } from "@/lib/mutationPipeline";
 import { checkEntityHistoricalUsage, type HistoricalUsageResult } from "@/lib/historicalUsage";
 import { documentDeepLink } from "@/lib/useDocumentDeepLink";
+import { ExportDialog } from "@/components/app/ExportDialog";
+import { PARTY_EXPORT_COLUMNS } from "@/modules/export/exportColumnDefinitions";
+import { PartyStatementModal } from "@/components/app/PartyStatementModal";
 
 export const Route = createFileRoute("/_app/parties")({
   head: () => ({ meta: [{ title: "Party Master — BMS NEXT" }] }),
@@ -92,6 +95,8 @@ function PartiesPage() {
   const [selectedPartyForInsight, setSelectedPartyForInsight] = useState<string | null>(null);
   const [partyForAddressDrawer, setPartyForAddressDrawer] = useState<Party | null>(null);
   const [addressDrawerOpen, setAddressDrawerOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [statementParty, setStatementParty] = useState<Party | null>(null);
 
   // Target for delete / deactivate modal
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -444,10 +449,17 @@ function PartiesPage() {
           description="Unified customer and supplier directory with credit control, unique business IDs, and multiple shipping destinations."
           actions={
             <div className="flex items-center gap-2">
-              <Button onClick={() => openNew("SUNDRY_DEBTOR")} className="gap-1.5 shadow-sm">
+              <Button
+                variant="outline"
+                className="gap-2 shadow-xs text-xs"
+                onClick={() => setExportDialogOpen(true)}
+              >
+                <Download className="h-4 w-4" /> Export
+              </Button>
+              <Button onClick={() => openNew("SUNDRY_DEBTOR")} className="gap-1.5 shadow-sm text-xs">
                 <Plus className="h-4 w-4" /> New Customer
               </Button>
-              <Button onClick={() => openNew("SUNDRY_CREDITOR")} variant="outline" className="gap-1.5 shadow-sm">
+              <Button onClick={() => openNew("SUNDRY_CREDITOR")} variant="outline" className="gap-1.5 shadow-sm text-xs">
                 <Plus className="h-4 w-4" /> New Supplier
               </Button>
             </div>
@@ -582,6 +594,15 @@ function PartiesPage() {
 
                       <TableCell className="py-2.5 text-right">
                         <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10"
+                            title="View Statement of Account"
+                            onClick={() => setStatementParty(party)}
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                          </Button>
                           <Button
                             variant="ghost"
                             size="icon"
@@ -899,6 +920,24 @@ function PartiesPage() {
               setCloudRows((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
             }
           }}
+        />
+
+        <ExportDialog
+          open={exportDialogOpen}
+          onOpenChange={setExportDialogOpen}
+          title="Export Party Master"
+          filename={`BMS_Parties_${new Date().toISOString().slice(0, 10)}`}
+          columns={PARTY_EXPORT_COLUMNS}
+          filteredData={filtered}
+          allScopeData={rows}
+          defaultFormat="excel"
+          scopeSummary={`Exporting ${filtered.length} parties • ${activeCompany?.name || "BMS NEXT"}`}
+        />
+
+        <PartyStatementModal
+          open={Boolean(statementParty)}
+          onOpenChange={(o) => !o && setStatementParty(null)}
+          party={statementParty}
         />
       </div>
     </AppShell>

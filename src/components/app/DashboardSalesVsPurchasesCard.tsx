@@ -37,7 +37,10 @@ import {
   type AnalyticsMetric,
   type ChartViewMode,
   type MonthlyChartType,
+  type TrendPeriodFilter,
+  type TrendMetricSelection,
 } from "@/modules/accounting/services/dashboardAnalyticsService";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export interface DashboardSalesVsPurchasesCardProps {
   invoices: Invoice[];
@@ -70,11 +73,14 @@ export function DashboardSalesVsPurchasesCard({
 
   // Primary controls state
   const [viewMode, setViewMode] = useState<ChartViewMode>("monthly_trend");
-  const [monthlyChartType, setMonthlyChartType] = useState<MonthlyChartType>("bar");
+  const [monthlyChartType, setMonthlyChartType] = useState<MonthlyChartType>("line");
+  const [trendPeriod, setTrendPeriod] = useState<TrendPeriodFilter>("6_months");
+  const [trendMetric, setTrendMetric] = useState<TrendMetricSelection>("sales_vs_purchases");
+  const [comparePrevious, setComparePrevious] = useState(false);
   const [mtdMetric, setMtdMetric] = useState<AnalyticsMetric>("sales");
   const [showTableView, setShowTableView] = useState(false);
 
-  // 1. Canonical Monthly Trend Data (Last 6 Months)
+  // 1. Canonical Monthly Trend Data (with Period & Prior-Period Comparison support)
   // Guarantees that Bar and Line views use the exact same underlying figures
   const monthlyData = useMemo(() => {
     return computeMonthlyTrend({
@@ -84,8 +90,10 @@ export function DashboardSalesVsPurchasesCard({
       timezone,
       financialYearStart,
       financialYearEnd,
+      periodFilter: trendPeriod,
+      comparePreviousPeriod: comparePrevious,
     });
-  }, [invoices, purchases, salesReturns, timezone, financialYearStart, financialYearEnd]);
+  }, [invoices, purchases, salesReturns, timezone, financialYearStart, financialYearEnd, trendPeriod, comparePrevious]);
 
   // 2. Canonical MTD vs LMTD Comparison Data
   const mtdComparison = useMemo(() => {
@@ -192,48 +200,90 @@ export function DashboardSalesVsPurchasesCard({
             </button>
           </div>
 
-          {/* Sub-Controls: Chart Type Switcher for Monthly Trend */}
+          {/* Sub-Controls: Period, Metric, Compare & Chart Type Switcher for Monthly Trend */}
           {viewMode === "monthly_trend" && (
-            <div className="flex items-center rounded-lg bg-muted/60 p-0.5 text-xs">
-              <Button
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              {/* Period Filter */}
+              <Select value={trendPeriod} onValueChange={(val: any) => setTrendPeriod(val)}>
+                <SelectTrigger className="h-7 text-xs w-[100px] border-border/60 bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="6_months">6 Months</SelectItem>
+                  <SelectItem value="12_months">12 Months</SelectItem>
+                  <SelectItem value="financial_year">Financial Year</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* Metric Filter */}
+              <Select value={trendMetric} onValueChange={(val: any) => setTrendMetric(val)}>
+                <SelectTrigger className="h-7 text-xs w-[140px] border-border/60 bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sales_vs_purchases">Sales vs Purchases</SelectItem>
+                  <SelectItem value="net_sales">Net Sales Revenue</SelectItem>
+                  <SelectItem value="gross_sales">Gross Billed Sales</SelectItem>
+                  <SelectItem value="purchases">Purchases</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* Comparison Toggle Button */}
+              <button
                 type="button"
-                variant={monthlyChartType === "bar" && !showTableView ? "secondary" : "ghost"}
-                size="sm"
-                className="h-7 w-7 p-0"
-                onClick={() => {
-                  setMonthlyChartType("bar");
-                  setShowTableView(false);
-                }}
-                title="Bar Chart View"
-                aria-label="Bar Chart View"
+                onClick={() => setComparePrevious(!comparePrevious)}
+                className={`rounded-md px-2 py-1 text-[11px] font-medium transition-all border ${
+                  comparePrevious
+                    ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
+                    : "border-border/60 bg-background text-muted-foreground hover:text-foreground"
+                }`}
+                title="Toggle Prior Period Comparison (Year-over-Year seasonal alignment)"
               >
-                <BarChart2 className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant={monthlyChartType === "line" && !showTableView ? "secondary" : "ghost"}
-                size="sm"
-                className="h-7 w-7 p-0"
-                onClick={() => {
-                  setMonthlyChartType("line");
-                  setShowTableView(false);
-                }}
-                title="Line Chart View"
-                aria-label="Line Chart View"
-              >
-                <LineChartIcon className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant={showTableView ? "secondary" : "ghost"}
-                size="sm"
-                className="h-7 w-7 p-0 ml-0.5"
-                onClick={() => setShowTableView(!showTableView)}
-                title="Tabular View (Accessible)"
-                aria-label="Tabular View"
-              >
-                <TableIcon className="h-3.5 w-3.5" />
-              </Button>
+                vs Prior Period
+              </button>
+
+              {/* Chart Type Toggle */}
+              <div className="flex items-center rounded-lg bg-muted/60 p-0.5 text-xs">
+                <Button
+                  type="button"
+                  variant={monthlyChartType === "bar" && !showTableView ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  onClick={() => {
+                    setMonthlyChartType("bar");
+                    setShowTableView(false);
+                  }}
+                  title="Bar Chart View"
+                  aria-label="Bar Chart View"
+                >
+                  <BarChart2 className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant={monthlyChartType === "line" && !showTableView ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  onClick={() => {
+                    setMonthlyChartType("line");
+                    setShowTableView(false);
+                  }}
+                  title="Line Chart View"
+                  aria-label="Line Chart View"
+                >
+                  <LineChartIcon className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant={showTableView ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 w-7 p-0 ml-0.5"
+                  onClick={() => setShowTableView(!showTableView)}
+                  title="Tabular View (Accessible)"
+                  aria-label="Tabular View"
+                >
+                  <TableIcon className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
           )}
 
@@ -392,20 +442,65 @@ export function DashboardSalesVsPurchasesCard({
                         iconType="circle"
                         iconSize={8}
                       />
-                      <Bar
-                        dataKey="sales"
-                        name="Sales Revenue"
-                        fill="#10B981"
-                        radius={[5, 5, 0, 0]}
-                        className="cursor-pointer transition-opacity hover:opacity-85"
-                      />
-                      <Bar
-                        dataKey="purchases"
-                        name="Purchases"
-                        fill="#3B82F6"
-                        radius={[5, 5, 0, 0]}
-                        className="cursor-pointer transition-opacity hover:opacity-85"
-                      />
+                      {comparePrevious ? (
+                        <>
+                          <Bar
+                            dataKey={trendMetric === "purchases" ? "purchases" : trendMetric === "gross_sales" ? "grossSales" : "sales"}
+                            name="Current Period"
+                            fill="#10B981"
+                            radius={[5, 5, 0, 0]}
+                            className="cursor-pointer"
+                          />
+                          <Bar
+                            dataKey={trendMetric === "purchases" ? "prevPurchases" : trendMetric === "gross_sales" ? "prevGrossSales" : "prevSales"}
+                            name="Prior Period"
+                            fill="#94A3B8"
+                            radius={[5, 5, 0, 0]}
+                            className="cursor-pointer"
+                          />
+                        </>
+                      ) : trendMetric === "sales_vs_purchases" ? (
+                        <>
+                          <Bar
+                            dataKey="sales"
+                            name="Net Sales Revenue"
+                            fill="#10B981"
+                            radius={[5, 5, 0, 0]}
+                            className="cursor-pointer transition-opacity hover:opacity-85"
+                          />
+                          <Bar
+                            dataKey="purchases"
+                            name="Purchases"
+                            fill="#3B82F6"
+                            radius={[5, 5, 0, 0]}
+                            className="cursor-pointer transition-opacity hover:opacity-85"
+                          />
+                        </>
+                      ) : trendMetric === "gross_sales" ? (
+                        <Bar
+                          dataKey="grossSales"
+                          name="Gross Billed Sales"
+                          fill="#6366F1"
+                          radius={[5, 5, 0, 0]}
+                          className="cursor-pointer"
+                        />
+                      ) : trendMetric === "purchases" ? (
+                        <Bar
+                          dataKey="purchases"
+                          name="Purchases"
+                          fill="#3B82F6"
+                          radius={[5, 5, 0, 0]}
+                          className="cursor-pointer"
+                        />
+                      ) : (
+                        <Bar
+                          dataKey="sales"
+                          name="Net Sales Revenue"
+                          fill="#10B981"
+                          radius={[5, 5, 0, 0]}
+                          className="cursor-pointer"
+                        />
+                      )}
                     </BarChart>
                   ) : (
                     <LineChart
@@ -434,26 +529,87 @@ export function DashboardSalesVsPurchasesCard({
                         iconType="circle"
                         iconSize={8}
                       />
-                      <Line
-                        type="monotone"
-                        dataKey="sales"
-                        name="Sales Revenue"
-                        stroke="#10B981"
-                        strokeWidth={2.5}
-                        dot={{ r: 3.5, fill: "#10B981" }}
-                        activeDot={{ r: 6, stroke: "#10B981", strokeWidth: 2, fill: "var(--card)" }}
-                        className="cursor-pointer"
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="purchases"
-                        name="Purchases"
-                        stroke="#3B82F6"
-                        strokeWidth={2.5}
-                        dot={{ r: 3.5, fill: "#3B82F6" }}
-                        activeDot={{ r: 6, stroke: "#3B82F6", strokeWidth: 2, fill: "var(--card)" }}
-                        className="cursor-pointer"
-                      />
+                      {comparePrevious ? (
+                        <>
+                          <Line
+                            type="monotone"
+                            dataKey={trendMetric === "purchases" ? "purchases" : trendMetric === "gross_sales" ? "grossSales" : "sales"}
+                            name="Current Period"
+                            stroke="#10B981"
+                            strokeWidth={2.5}
+                            dot={{ r: 3.5, fill: "#10B981" }}
+                            activeDot={{ r: 6, stroke: "#10B981", strokeWidth: 2, fill: "var(--card)" }}
+                            className="cursor-pointer"
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey={trendMetric === "purchases" ? "prevPurchases" : trendMetric === "gross_sales" ? "prevGrossSales" : "prevSales"}
+                            name="Prior Period"
+                            stroke="#94A3B8"
+                            strokeWidth={2}
+                            strokeDasharray="4 4"
+                            dot={{ r: 3, fill: "#94A3B8" }}
+                            activeDot={{ r: 5, stroke: "#94A3B8", strokeWidth: 2, fill: "var(--card)" }}
+                            className="cursor-pointer"
+                          />
+                        </>
+                      ) : trendMetric === "sales_vs_purchases" ? (
+                        <>
+                          <Line
+                            type="monotone"
+                            dataKey="sales"
+                            name="Net Sales Revenue"
+                            stroke="#10B981"
+                            strokeWidth={2.5}
+                            dot={{ r: 3.5, fill: "#10B981" }}
+                            activeDot={{ r: 6, stroke: "#10B981", strokeWidth: 2, fill: "var(--card)" }}
+                            className="cursor-pointer"
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="purchases"
+                            name="Purchases"
+                            stroke="#3B82F6"
+                            strokeWidth={2.5}
+                            dot={{ r: 3.5, fill: "#3B82F6" }}
+                            activeDot={{ r: 6, stroke: "#3B82F6", strokeWidth: 2, fill: "var(--card)" }}
+                            className="cursor-pointer"
+                          />
+                        </>
+                      ) : trendMetric === "gross_sales" ? (
+                        <Line
+                          type="monotone"
+                          dataKey="grossSales"
+                          name="Gross Billed Sales"
+                          stroke="#6366F1"
+                          strokeWidth={2.5}
+                          dot={{ r: 3.5, fill: "#6366F1" }}
+                          activeDot={{ r: 6, stroke: "#6366F1", strokeWidth: 2, fill: "var(--card)" }}
+                          className="cursor-pointer"
+                        />
+                      ) : trendMetric === "purchases" ? (
+                        <Line
+                          type="monotone"
+                          dataKey="purchases"
+                          name="Purchases"
+                          stroke="#3B82F6"
+                          strokeWidth={2.5}
+                          dot={{ r: 3.5, fill: "#3B82F6" }}
+                          activeDot={{ r: 6, stroke: "#3B82F6", strokeWidth: 2, fill: "var(--card)" }}
+                          className="cursor-pointer"
+                        />
+                      ) : (
+                        <Line
+                          type="monotone"
+                          dataKey="sales"
+                          name="Net Sales Revenue"
+                          stroke="#10B981"
+                          strokeWidth={2.5}
+                          dot={{ r: 3.5, fill: "#10B981" }}
+                          activeDot={{ r: 6, stroke: "#10B981", strokeWidth: 2, fill: "var(--card)" }}
+                          className="cursor-pointer"
+                        />
+                      )}
                     </LineChart>
                   )}
                 </ResponsiveContainer>
@@ -705,17 +861,19 @@ function CustomMonthlyTooltip({ active, payload, label }: any) {
   const data = payload[0]?.payload;
   if (!data) return null;
 
+  const diff = data.sales - data.purchases;
+
   return (
-    <div className="rounded-xl border border-border bg-card p-3 shadow-lg text-xs space-y-1.5 min-w-[200px]">
+    <div className="rounded-xl border border-border bg-card p-3 shadow-lg text-xs space-y-1.5 min-w-[210px]">
       <div className="font-semibold text-foreground border-b border-border/50 pb-1 flex items-center justify-between">
         <span>{data.monthName}</span>
-        <span className="text-[10px] text-muted-foreground font-mono">6-Month Trend</span>
+        <span className="text-[10px] text-muted-foreground font-mono">Monthly Trend</span>
       </div>
       <div className="space-y-1 pt-0.5">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-1.5">
             <div className="h-2 w-2 rounded-full bg-emerald-500" />
-            <span className="text-muted-foreground">Sales Revenue:</span>
+            <span className="text-muted-foreground">Sales:</span>
           </div>
           <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
             {formatMoney(data.sales)}
@@ -724,18 +882,38 @@ function CustomMonthlyTooltip({ active, payload, label }: any) {
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-1.5">
             <div className="h-2 w-2 rounded-full bg-sky-500" />
-            <span className="text-muted-foreground">Procurement:</span>
+            <span className="text-muted-foreground">Purchases:</span>
           </div>
           <span className="font-mono font-semibold text-sky-600 dark:text-sky-400">
             {formatMoney(data.purchases)}
           </span>
         </div>
         <div className="border-t border-border/40 pt-1 flex items-center justify-between gap-4 font-medium">
-          <span className="text-muted-foreground">Operating Margin:</span>
-          <span className="font-mono">
-            {formatMoney(data.sales - data.purchases)}
+          <span className="text-muted-foreground">Difference:</span>
+          <span className={`font-mono ${diff >= 0 ? "text-foreground font-semibold" : "text-rose-600 font-semibold"}`}>
+            {diff >= 0 ? "+" : ""}{formatMoney(diff)}
           </span>
         </div>
+
+        {data.prevSales !== undefined && (
+          <div className="border-t border-border/40 pt-1.5 text-[11px] space-y-1 text-muted-foreground font-mono">
+            <div className="font-sans font-semibold text-foreground text-[10px] uppercase tracking-wider">
+              Prior Period:
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="font-sans">Prior Sales:</span>
+              <span className="text-foreground">{formatMoney(data.prevSales)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="font-sans">Prior Purchases:</span>
+              <span className="text-foreground">{formatMoney(data.prevPurchases || 0)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="font-sans">Prior Difference:</span>
+              <span>{formatMoney((data.prevSales || 0) - (data.prevPurchases || 0))}</span>
+            </div>
+          </div>
+        )}
       </div>
       <div className="text-[10px] text-primary/80 pt-1 border-t border-border/30 text-right">
         Click point to view register →

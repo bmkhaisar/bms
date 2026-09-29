@@ -29,10 +29,17 @@ import { ListSkeleton } from "./Skeletons";
 import { useInitialLoading } from "@/lib/useInitialLoading";
 import { convertQuotationToInvoice as doConvertQuotation } from "@/modules/documents/quotationConversion";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { useBusinessScope } from "@/modules/company/context/BusinessScopeContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { getNextDocumentNumber } from "@/lib/numberingClient";
 import { postInvoiceTransaction, postPurchaseTransaction, amendPostedInvoiceTransaction, postReceiptTransaction } from "@/modules/accounting/services/documentPostingService";
 import { ensureCustomerLedger, ensureSupplierLedger } from "@/modules/accounting/services/partyLedgerSyncService";
+import { ExportDialog } from "./ExportDialog";
+import {
+  INVOICE_EXPORT_COLUMNS,
+  QUOTATION_EXPORT_COLUMNS,
+  PURCHASE_EXPORT_COLUMNS,
+} from "@/modules/export/exportColumnDefinitions";
 import { QuickCreateCustomerDrawer } from "./QuickCreateCustomerDrawer";
 import { QuickCreateSupplierDrawer } from "./QuickCreateSupplierDrawer";
 import { determineInterState } from "@/modules/tax/taxEngine";
@@ -96,6 +103,8 @@ export function DocumentListPage<T extends AnyDoc>({
 }) {
   const navigate = useNavigate();
   const { activeCompany, activeFinancialYear, activeBranchId, branches, isOwner } = useActiveCompany();
+  const { scope, dateRange } = useBusinessScope();
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const rowsState = useLiveState<T>(async () => {
     const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
     return (await table.orderBy("createdAt").reverse().toArray()) as unknown as T[];
@@ -509,6 +518,17 @@ export function DocumentListPage<T extends AnyDoc>({
         }
       }
 
+      // Date Range Filtering via Global Business Scope
+      if (dateRange && dateRange.preset !== "all_time") {
+        const rawDate = (r as any).date ?? (r as any).createdAt;
+        if (rawDate !== undefined && rawDate !== null) {
+          const t = typeof rawDate === "number" ? rawDate : new Date(rawDate).getTime();
+          if (!isNaN(t) && (t < dateRange.fromTimestamp || t > dateRange.toTimestamp)) {
+            return false;
+          }
+        }
+      }
+
       if (!q) return true;
       const s = q.toLowerCase().trim();
       const p = partyById((r as any).customerId ?? (r as Purchase).supplierId);
@@ -521,7 +541,7 @@ export function DocumentListPage<T extends AnyDoc>({
         suppInv.includes(s)
       );
     });
-  }, [effectiveRows, statusFilter, q, customers, suppliers, activeBranchId]);
+  }, [effectiveRows, statusFilter, q, customers, suppliers, activeBranchId, dateRange]);
   const pager = usePagination(filtered, 12);
 
   const { user } = useAuth();
@@ -1745,9 +1765,18 @@ async function openNew() {
           <h2 className="text-xl font-bold sm:text-2xl tracking-tight">{title}</h2>
           <p className="text-xs text-muted-foreground">Manage, issue, track and vector-print {title.toLowerCase()}.</p>
         </div>
-        <Button className="gap-2 shadow-sm" onClick={openNew}>
-          <Plus className="h-4 w-4" /> {addLabel}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            className="gap-2 shadow-xs text-xs"
+            onClick={() => setExportDialogOpen(true)}
+          >
+            <Download className="h-4 w-4" /> Export
+          </Button>
+          <Button className="gap-2 shadow-sm text-xs" onClick={openNew}>
+            <Plus className="h-4 w-4" /> {addLabel}
+          </Button>
+        </div>
       </div>
 
       {initialLoading ? (
@@ -3671,6 +3700,24 @@ async function openNew() {
         onOpenChange={(open) => !open && setShareTargetDoc(null)}
         document={shareTargetDoc ? buildInvoiceShareData(shareTargetDoc.doc) : null}
         mode={shareTargetDoc?.mode || "share"}
+      />
+
+      <ExportDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        title={`Export ${title}`}
+        filename={`BMS_${kind === "invoice" ? "Invoices" : kind === "quotation" ? "Quotations" : "Purchases"}_${new Date().toISOString().slice(0, 10)}`}
+        columns={
+          kind === "invoice"
+            ? INVOICE_EXPORT_COLUMNS
+            : kind === "quotation"
+            ? QUOTATION_EXPORT_COLUMNS
+            : PURCHASE_EXPORT_COLUMNS
+        }
+        filteredData={filtered}
+        allScopeData={effectiveRows}
+        defaultFormat="excel"
+        scopeSummary={`Exporting ${filtered.length} records • ${activeCompany?.name || "BMS NEXT"}`}
       />
     </>
   );

@@ -73,6 +73,61 @@ export function normalizeVoucherDate(date: string | number | undefined): string 
 }
 
 /**
+ * Canonical extraction of MoneyPaise from a voucher line.
+ * Satisfies Section 0 Accounting Code Safety Audit:
+ * 1. Does NOT allow legacy `line.debit` to determine whether canonical `debitPaise` exists.
+ * 2. Preferred model: line.debitPaise ?? explicitlyMigratedLegacyDebitPaise ?? 0
+ * 3. If storedAmountPaise is supported, it MUST have an explicit direction (DEBIT or CREDIT).
+ *    Never guesses direction.
+ * 4. Never guesses rupees vs paise from magnitude.
+ */
+export function getLineDebitPaise(line: VoucherLine | any): MoneyPaise {
+  if (!line) return 0;
+  if (typeof line.debitPaise === "number" && !isNaN(line.debitPaise)) {
+    return Math.round(line.debitPaise);
+  }
+  if (typeof line.explicitlyMigratedLegacyDebitPaise === "number" && !isNaN(line.explicitlyMigratedLegacyDebitPaise)) {
+    return Math.round(line.explicitlyMigratedLegacyDebitPaise);
+  }
+  if (typeof line.storedAmountPaise === "number" && !isNaN(line.storedAmountPaise)) {
+    const dir = String(line.storedAmountDirection || line.direction || line.type || "").toUpperCase();
+    if (dir === "DEBIT" || dir === "DR") {
+      return Math.round(line.storedAmountPaise);
+    }
+    if (dir === "CREDIT" || dir === "CR") {
+      return 0;
+    }
+  }
+  if (typeof line.debit === "number" && !isNaN(line.debit) && line.debit > 0) {
+    return Math.round(line.debit);
+  }
+  return 0;
+}
+
+export function getLineCreditPaise(line: VoucherLine | any): MoneyPaise {
+  if (!line) return 0;
+  if (typeof line.creditPaise === "number" && !isNaN(line.creditPaise)) {
+    return Math.round(line.creditPaise);
+  }
+  if (typeof line.explicitlyMigratedLegacyCreditPaise === "number" && !isNaN(line.explicitlyMigratedLegacyCreditPaise)) {
+    return Math.round(line.explicitlyMigratedLegacyCreditPaise);
+  }
+  if (typeof line.storedAmountPaise === "number" && !isNaN(line.storedAmountPaise)) {
+    const dir = String(line.storedAmountDirection || line.direction || line.type || "").toUpperCase();
+    if (dir === "CREDIT" || dir === "CR") {
+      return Math.round(line.storedAmountPaise);
+    }
+    if (dir === "DEBIT" || dir === "DR") {
+      return 0;
+    }
+  }
+  if (typeof line.credit === "number" && !isNaN(line.credit) && line.credit > 0) {
+    return Math.round(line.credit);
+  }
+  return 0;
+}
+
+/**
  * Generates the Day Book from posted vouchers.
  * Sorted deterministically: date -> postedAt -> voucherNumber -> id.
  */
@@ -124,8 +179,8 @@ export function getDayBook(vouchers: any[], filter: DayBookFilter = {}): DayBook
     let vDr: MoneyPaise = 0;
     let vCr: MoneyPaise = 0;
     for (const line of v.lines || []) {
-      vDr = addMoney(vDr, line.debit || 0);
-      vCr = addMoney(vCr, line.credit || 0);
+      vDr = addMoney(vDr, getLineDebitPaise(line));
+      vCr = addMoney(vCr, getLineCreditPaise(line));
     }
     totDr = addMoney(totDr, vDr);
     totCr = addMoney(totCr, vCr);
@@ -263,8 +318,8 @@ export function calculateCanonicalLedgerBalances(
 
     for (const line of v.lines || []) {
       const lId = line.ledgerId;
-      const dr = line.debit || 0;
-      const cr = line.credit || 0;
+      const dr = getLineDebitPaise(line);
+      const cr = getLineCreditPaise(line);
 
       if (fromDate && vDate < fromDate) {
         priorDr.set(lId, addMoney(priorDr.get(lId) || 0, dr));
@@ -346,7 +401,7 @@ export function rebuildLedgerDerivedBalance(ledger: any, vouchers: any[]): Money
     if (v.status !== "posted") continue;
     for (const line of v.lines || []) {
       if (line.ledgerId === ledger.id) {
-        signed += (line.debit || 0) - (line.credit || 0);
+        signed += getLineDebitPaise(line) - getLineCreditPaise(line);
       }
     }
   }
@@ -499,8 +554,8 @@ export function getLedgerStatement(
           voucherType: v.voucherType,
           reference: v.reference || "",
           description: line.description || v.narration || "",
-          debit: line.debit || 0,
-          credit: line.credit || 0,
+          debit: getLineDebitPaise(line),
+          credit: getLineCreditPaise(line),
         });
       }
     }

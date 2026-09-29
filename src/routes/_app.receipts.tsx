@@ -38,9 +38,12 @@ import { HandCoins, ArrowDownLeft, ArrowUpRight, Plus, Trash2, BookOpen, Loader2
 import { ListToolbar, usePagination, Pager, EmptyState } from "@/components/app/ListHelpers";
 import { VoucherQuickPreviewModal } from "@/components/app/VoucherQuickPreviewModal";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { useBusinessScope } from "@/modules/company/context/BusinessScopeContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useAccounting } from "@/modules/accounting/useAccounting";
 import { getNextDocumentNumber } from "@/lib/numberingClient";
+import { ExportDialog } from "@/components/app/ExportDialog";
+import { RECEIPT_EXPORT_COLUMNS, PAYMENT_EXPORT_COLUMNS } from "@/modules/export/exportColumnDefinitions";
 import { postReceiptTransaction, postPaymentTransaction } from "@/modules/accounting/services/documentPostingService";
 import { processAdvanceRefund } from "@/modules/accounting/services/partyAdvanceService";
 import { calculateAdvanceTax } from "@/modules/tax/taxEngine";
@@ -64,6 +67,8 @@ export const Route = createFileRoute("/_app/receipts")({
 function ReceiptsAndPaymentsPage() {
   const { user } = useAuth();
   const { activeCompany, activeFinancialYear, activeBranchId, branches, isOwner } = useActiveCompany();
+  const { dateRange } = useBusinessScope();
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"receipts" | "payments">(() => {
     if (typeof window !== "undefined") {
       const p = new URLSearchParams(window.location.search);
@@ -149,6 +154,15 @@ function ReceiptsAndPaymentsPage() {
   const filteredPayments = payments.filter((p) => {
     if (activeBranchId && activeBranchId !== "all") {
       if ((p as any).branchId !== activeBranchId) return false;
+    }
+    if (dateRange && dateRange.preset !== "all_time") {
+      const rawDate = p.date ?? p.createdAt;
+      if (rawDate !== undefined && rawDate !== null) {
+        const t = typeof rawDate === "number" ? rawDate : new Date(rawDate).getTime();
+        if (!isNaN(t) && (t < dateRange.fromTimestamp || t > dateRange.toTimestamp)) {
+          return false;
+        }
+      }
     }
     return (
       !q ||
@@ -956,10 +970,17 @@ function ReceiptsAndPaymentsPage() {
         description="Record customer receipts (Cash/Bank Dr | Customer Cr) and supplier payments (Supplier Dr | Cash/Bank Cr)."
         actions={
           <div className="flex items-center gap-2">
-            <Button className="gap-2" onClick={openNewReceipt}>
+            <Button
+              variant="outline"
+              className="gap-2 shadow-xs text-xs"
+              onClick={() => setExportDialogOpen(true)}
+            >
+              <Download className="h-4 w-4" /> Export {activeTab === "receipts" ? "Receipts" : "Payments"}
+            </Button>
+            <Button className="gap-2 shadow-sm text-xs" onClick={openNewReceipt}>
               <ArrowDownLeft className="h-4 w-4 text-emerald-500" /> New Receipt
             </Button>
-            <Button variant="outline" className="gap-2" onClick={openNewPayment}>
+            <Button variant="outline" className="gap-2 shadow-sm text-xs" onClick={openNewPayment}>
               <ArrowUpRight className="h-4 w-4 text-rose-500" /> New Payment
             </Button>
           </div>
@@ -2149,6 +2170,17 @@ function ReceiptsAndPaymentsPage() {
             }
           }
         }}
+      />
+      <ExportDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        title={`Export ${activeTab === "receipts" ? "Customer Receipts" : "Supplier Payments"}`}
+        filename={`BMS_${activeTab === "receipts" ? "Receipts" : "Payments"}_${new Date().toISOString().slice(0, 10)}`}
+        columns={activeTab === "receipts" ? RECEIPT_EXPORT_COLUMNS : PAYMENT_EXPORT_COLUMNS}
+        filteredData={activeTab === "receipts" ? filteredReceipts : filteredPayments}
+        allScopeData={activeTab === "receipts" ? receipts : payments}
+        defaultFormat="excel"
+        scopeSummary={`Exporting ${activeTab === "receipts" ? filteredReceipts.length : filteredPayments.length} records • ${activeCompany?.name || "BMS NEXT"}`}
       />
     </AppShell>
   );

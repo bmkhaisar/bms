@@ -5,12 +5,21 @@ export type AnalyticsMetric = "sales" | "purchases" | "collections";
 export type ChartViewMode = "monthly_trend" | "mtd_vs_lmtd";
 export type MonthlyChartType = "bar" | "line";
 
+export type TrendPeriodFilter = "6_months" | "12_months" | "financial_year" | "custom";
+export type TrendMetricSelection = "sales_vs_purchases" | "net_sales" | "gross_sales" | "purchases";
+
 export interface MonthlyTrendPoint {
   key: string; // e.g. "2026-09"
   label: string; // e.g. "Sep"
   monthName: string; // e.g. "September 2026"
-  sales: number; // Canonical net sales revenue (excluding output GST)
+  sales: number; // Canonical net sales revenue (excluding output GST, after sales returns)
+  grossSales: number; // Gross billed sales (before sales returns, excluding output GST)
   purchases: number; // Canonical net purchase value (excluding recoverable input GST)
+  diff: number; // sales - purchases
+  prevSales?: number; // Prior period net sales when comparison enabled
+  prevGrossSales?: number; // Prior period gross sales
+  prevPurchases?: number; // Prior period purchases
+  prevDiff?: number;
   year: number;
   month: number; // 1-12
   startDate: number;
@@ -223,10 +232,16 @@ export interface ComputeMonthlyTrendParams {
   timezone?: string;
   financialYearStart?: number;
   financialYearEnd?: number;
+  periodFilter?: TrendPeriodFilter;
+  customStart?: number;
+  customEnd?: number;
+  comparePreviousPeriod?: boolean;
 }
 
 /**
- * Computes canonical 6-month trend series for Sales Revenue vs Procurement.
+ * Computes canonical trend series for Sales Revenue vs Procurement.
+ * Supports 6 Months, 12 Months, Financial Year, and Custom ranges.
+ * Supports Previous Period comparison with seasonal parity (Year-over-Year month alignment).
  * Guarantees identical data points whether rendered as Bar or Line chart.
  */
 export function computeMonthlyTrend(params: ComputeMonthlyTrendParams): MonthlyTrendPoint[] {
@@ -238,12 +253,32 @@ export function computeMonthlyTrend(params: ComputeMonthlyTrendParams): MonthlyT
     timezone = "Asia/Kolkata",
     financialYearStart,
     financialYearEnd,
+    periodFilter = "6_months",
+    customStart,
+    customEnd,
+    comparePreviousPeriod = false,
   } = params;
 
   const currentParts = getDatePartsInTimezone(referenceDate, timezone);
   const points: MonthlyTrendPoint[] = [];
 
-  for (let i = 5; i >= 0; i--) {
+  // Determine month count and end month
+  let monthCount = 6;
+  if (periodFilter === "12_months") {
+    monthCount = 12;
+  } else if (periodFilter === "financial_year" && financialYearStart && financialYearEnd) {
+    const startParts = getDatePartsInTimezone(financialYearStart, timezone);
+    const endParts = getDatePartsInTimezone(Math.min(financialYearEnd, Date.now()), timezone);
+    const monthsDiff = (endParts.year - startParts.year) * 12 + (endParts.month - startParts.month) + 1;
+    monthCount = Math.max(1, Math.min(12, monthsDiff));
+  } else if (periodFilter === "custom" && customStart && customEnd) {
+    const startParts = getDatePartsInTimezone(customStart, timezone);
+    const endParts = getDatePartsInTimezone(customEnd, timezone);
+    const monthsDiff = (endParts.year - startParts.year) * 12 + (endParts.month - startParts.month) + 1;
+    monthCount = Math.max(1, Math.min(24, monthsDiff));
+  }
+
+  for (let i = monthCount - 1; i >= 0; i--) {
     let year = currentParts.year;
     let month = currentParts.month - i;
     while (month <= 0) {
@@ -258,15 +293,15 @@ export function computeMonthlyTrend(params: ComputeMonthlyTrendParams): MonthlyT
     // Filter posted documents falling strictly within this month
     const mInvoices = invoices.filter((inv) => {
       if (!isPostedInvoice(inv)) return false;
-      if (financialYearStart && inv.date < financialYearStart) return false;
-      if (financialYearEnd && inv.date > financialYearEnd) return false;
+      if (periodFilter === "financial_year" && financialYearStart && inv.date < financialYearStart) return false;
+      if (periodFilter === "financial_year" && financialYearEnd && inv.date > financialYearEnd) return false;
       return inv.date >= startMs && inv.date <= endMs;
     });
 
     const mPurchases = purchases.filter((pu) => {
       if (!isPostedPurchase(pu)) return false;
-      if (financialYearStart && pu.date < financialYearStart) return false;
-      if (financialYearEnd && pu.date > financialYearEnd) return false;
+      if (periodFilter === "financial_year" && financialYearStart && pu.date < financialYearStart) return false;
+      if (periodFilter === "financial_year" && financialYearEnd && pu.date > financialYearEnd) return false;
       return pu.date >= startMs && pu.date <= endMs;
     });
 
@@ -276,8 +311,8 @@ export function computeMonthlyTrend(params: ComputeMonthlyTrendParams): MonthlyT
       if (status === "cancelled" || status === "draft") return false;
       if (posting === "failed" || posting === "reversed" || posting === "draft") return false;
       const rDate = ret.date || ret.createdAt || 0;
-      if (financialYearStart && rDate < financialYearStart) return false;
-      if (financialYearEnd && rDate > financialYearEnd) return false;
+      if (periodFilter === "financial_year" && financialYearStart && rDate < financialYearStart) return false;
+      if (periodFilter === "financial_year" && financialYearEnd && rDate > financialYearEnd) return false;
       return rDate >= startMs && rDate <= endMs;
     });
 
@@ -289,12 +324,55 @@ export function computeMonthlyTrend(params: ComputeMonthlyTrendParams): MonthlyT
     const monthShort = MONTH_NAMES_SHORT[month - 1];
     const monthFull = MONTH_NAMES_FULL[month - 1];
 
+    let prevSales: number | undefined;
+    let prevGrossSales: number | undefined;
+    let prevPurchases: number | undefined;
+    let prevDiff: number | undefined;
+
+    if (comparePreviousPeriod) {
+      // Equivalent month in previous year (seasonal parity)
+      const prevYear = year - 1;
+      const prevDaysInM = getDaysInMonth(prevYear, month);
+      const prevStartMs = getStartOfDayTimestamp(prevYear, month, 1, timezone);
+      const prevEndMs = getEndOfDayTimestamp(prevYear, month, prevDaysInM, timezone);
+
+      const prevMInvoices = invoices.filter((inv) => isPostedInvoice(inv) && inv.date >= prevStartMs && inv.date <= prevEndMs);
+      const prevMPurchases = purchases.filter((pu) => isPostedPurchase(pu) && pu.date >= prevStartMs && pu.date <= prevEndMs);
+      const prevMSalesReturns = salesReturns.filter((ret) => {
+        const status = ((ret as any).status || "").toLowerCase();
+        const posting = ((ret as any).postingStatus || "").toLowerCase();
+        if (status === "cancelled" || status === "draft" || posting === "failed" || posting === "reversed") return false;
+        const rDate = ret.date || ret.createdAt || 0;
+        return rDate >= prevStartMs && rDate <= prevEndMs;
+      });
+
+      const pGross = prevMInvoices.reduce((sum, inv) => sum + getInvoiceNetRevenue(inv), 0);
+      const pRet = prevMSalesReturns.reduce((sum, ret) => sum + Number(ret.taxableAmount !== undefined ? ret.taxableAmount : ret.subtotal || 0), 0);
+      const pSales = Math.max(0, pGross - pRet);
+      const pPurchases = prevMPurchases.reduce((sum, pu) => sum + getPurchaseNetValue(pu), 0);
+
+      prevGrossSales = Math.round(pGross * 100) / 100;
+      prevSales = Math.round(pSales * 100) / 100;
+      prevPurchases = Math.round(pPurchases * 100) / 100;
+      prevDiff = Math.round((pSales - pPurchases) * 100) / 100;
+    }
+
+    const roundedSales = Math.round(salesRevenue * 100) / 100;
+    const roundedGross = Math.round(grossSalesRevenue * 100) / 100;
+    const roundedPurchases = Math.round(purchaseValue * 100) / 100;
+
     points.push({
       key: `${year}-${String(month).padStart(2, "0")}`,
       label: monthShort,
       monthName: `${monthFull} ${year}`,
-      sales: Math.round(salesRevenue * 100) / 100,
-      purchases: Math.round(purchaseValue * 100) / 100,
+      sales: roundedSales,
+      grossSales: roundedGross,
+      purchases: roundedPurchases,
+      diff: Math.round((roundedSales - roundedPurchases) * 100) / 100,
+      prevSales,
+      prevGrossSales,
+      prevPurchases,
+      prevDiff,
       year,
       month,
       startDate: startMs,
@@ -303,6 +381,75 @@ export function computeMonthlyTrend(params: ComputeMonthlyTrendParams): MonthlyT
   }
 
   return points;
+}
+
+// ========================================================================
+// 3B. CANONICAL KPI COMPARISON INSIGHT ENGINE
+// ========================================================================
+
+export interface KpiComparisonInsight {
+  currentValue: number;
+  baselineValue: number;
+  delta: number;
+  percentage: number | null;
+  direction: "up" | "down" | "flat" | "new_activity";
+  displayText: string; // e.g. "+8.4% vs LMTD" or "New activity"
+  isPositive: boolean;
+}
+
+/**
+ * Computes deterministic KPI comparison without emojis, stars, or fake infinity percentages.
+ * When denominator is zero, cleanly outputs "New activity".
+ */
+export function computeKpiComparison(
+  currentValue: number,
+  baselineValue: number,
+  baselineLabel: string = "vs LMTD",
+  invertPositive: boolean = false
+): KpiComparisonInsight {
+  const delta = Math.round((currentValue - baselineValue) * 100) / 100;
+
+  if (baselineValue <= 0) {
+    if (currentValue > 0) {
+      return {
+        currentValue,
+        baselineValue,
+        delta,
+        percentage: null,
+        direction: "new_activity",
+        displayText: "New activity",
+        isPositive: !invertPositive,
+      };
+    }
+    return {
+      currentValue,
+      baselineValue,
+      delta: 0,
+      percentage: 0,
+      direction: "flat",
+      displayText: `0.0% ${baselineLabel}`,
+      isPositive: true,
+    };
+  }
+
+  const percentage = Math.round(((currentValue - baselineValue) / baselineValue) * 1000) / 10;
+  const isUp = percentage > 0.05;
+  const isDown = percentage < -0.05;
+  const direction = isUp ? "up" : isDown ? "down" : "flat";
+  const isPositive = invertPositive ? !isUp : isUp;
+
+  const sign = percentage > 0 ? "+" : "";
+  const displayText = `${sign}${percentage.toFixed(1)}% ${baselineLabel}`;
+
+  return {
+    currentValue,
+    baselineValue,
+    delta,
+    percentage,
+    direction,
+    displayText,
+    isPositive,
+  };
 }
 
 // ========================================================================

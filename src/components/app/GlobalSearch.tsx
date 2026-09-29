@@ -7,6 +7,8 @@ import {
   type Quotation,
   type Receipt,
   type Purchase,
+  type CreditNote,
+  type Party,
 } from "@/lib/db";
 import { useLive } from "@/lib/useLive";
 import {
@@ -26,13 +28,18 @@ import {
   Receipt as ReceiptIcon,
   HandCoins,
   ShoppingCart,
-  Search,
+  RotateCcw,
+  BookOpen,
   Zap,
 } from "lucide-react";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { searchCachedEntitiesRecords } from "@/modules/sync/dexieCache";
 import type { CachedEntity } from "@/modules/sync/types";
 import { useState, useEffect } from "react";
+import { firebaseDb } from "@/config/firebase";
+import { ref, onValue, off } from "firebase/database";
+import type { Ledger } from "@/modules/accounting/types";
+import { formatMoney } from "@/lib/format";
 
 export function GlobalSearch({
   open,
@@ -45,22 +52,45 @@ export function GlobalSearch({
   const { activeCompany } = useActiveCompany();
   const [query, setQuery] = useState("");
   const [cachedMatches, setCachedMatches] = useState<CachedEntity[]>([]);
+  const [ledgers, setLedgers] = useState<Ledger[]>([]);
 
-  const customers = useLive<Customer>(() => db().customers.limit(100).toArray());
-  const suppliers = useLive<Supplier>(() => db().suppliers.limit(100).toArray());
-  const products = useLive<Product>(() => db().products.limit(200).toArray());
+  const customers = useLive<Customer>(() => db().customers.limit(60).toArray());
+  const suppliers = useLive<Supplier>(() => db().suppliers.limit(60).toArray());
+  const parties = useLive<Party>(() => db().parties.limit(80).toArray());
+  const products = useLive<Product>(() => db().products.limit(100).toArray());
   const invoices = useLive<Invoice>(() =>
-    db().invoices.orderBy("createdAt").reverse().limit(50).toArray()
+    db().invoices.orderBy("createdAt").reverse().limit(40).toArray()
   );
   const quotations = useLive<Quotation>(() =>
-    db().quotations.orderBy("createdAt").reverse().limit(50).toArray()
+    db().quotations.orderBy("createdAt").reverse().limit(40).toArray()
   );
   const receipts = useLive<Receipt>(() =>
-    db().receipts.orderBy("createdAt").reverse().limit(50).toArray()
+    db().receipts.orderBy("createdAt").reverse().limit(40).toArray()
   );
   const purchases = useLive<Purchase>(() =>
-    db().purchases.orderBy("createdAt").reverse().limit(50).toArray()
+    db().purchases.orderBy("createdAt").reverse().limit(40).toArray()
   );
+  const creditNotes = useLive<CreditNote>(() =>
+    db().creditNotes.orderBy("createdAt").reverse().limit(40).toArray()
+  );
+
+  // Realtime ledgers for chart of accounts search
+  useEffect(() => {
+    if (!activeCompany?.id || !firebaseDb) {
+      setLedgers([]);
+      return;
+    }
+    const ledgersRef = ref(firebaseDb, `companyData/${activeCompany.id}/ledgers`);
+    const onData = (snap: any) => {
+      if (snap.exists()) {
+        setLedgers(Object.values(snap.val()));
+      } else {
+        setLedgers([]);
+      }
+    };
+    onValue(ledgersRef, onData);
+    return () => off(ledgersRef, "value", onData);
+  }, [activeCompany?.id]);
 
   useEffect(() => {
     if (!activeCompany?.id || !query.trim() || query.trim().length < 2) {
@@ -78,25 +108,70 @@ export function GlobalSearch({
 
   function go(url: string) {
     onOpenChange(false);
-    if (typeof window !== "undefined") {
-      window.location.href = url;
-    } else {
-      nav({ to: url as never });
-    }
+    nav({ to: url as any });
   }
+
+  const q = query.toLowerCase().trim();
+
+  // Filtered in-memory records
+  const matchedInvoices = q ? invoices.filter((i) =>
+    (i.number || "").toLowerCase().includes(q) ||
+    (i.customerSnapshot?.name || "").toLowerCase().includes(q)
+  ) : invoices.slice(0, 5);
+
+  const matchedQuotations = q ? quotations.filter((qt) =>
+    (qt.number || "").toLowerCase().includes(q) ||
+    (qt.customerSnapshot?.name || "").toLowerCase().includes(q)
+  ) : quotations.slice(0, 5);
+
+  const matchedPurchases = q ? purchases.filter((pu) =>
+    (pu.number || "").toLowerCase().includes(q) ||
+    (pu.supplierInvoiceNumber || "").toLowerCase().includes(q) ||
+    (pu.supplierSnapshot?.name || "").toLowerCase().includes(q)
+  ) : purchases.slice(0, 5);
+
+  const matchedReceipts = q ? receipts.filter((rc) =>
+    (rc.number || (rc as any).receiptNumber || "").toLowerCase().includes(q) ||
+    ((rc as any).customerName || (rc as any).partyName || "").toLowerCase().includes(q)
+  ) : receipts.slice(0, 5);
+
+  const matchedCreditNotes = q ? creditNotes.filter((cn) =>
+    (cn.number || "").toLowerCase().includes(q) ||
+    (cn.originalInvoiceNumber || "").toLowerCase().includes(q) ||
+    ((cn as any).customerName || (cn as any).partyName || "").toLowerCase().includes(q)
+  ) : creditNotes.slice(0, 5);
+
+  const matchedParties = q ? parties.filter((p) =>
+    (p.name || "").toLowerCase().includes(q) ||
+    (p.partyCode || "").toLowerCase().includes(q) ||
+    (p.gstin || "").toLowerCase().includes(q) ||
+    (p.phone || p.mobile || "").includes(q)
+  ) : parties.slice(0, 5);
+
+  const matchedProducts = q ? products.filter((pr) =>
+    (pr.name || "").toLowerCase().includes(q) ||
+    ((pr as any).code || pr.sku || "").toLowerCase().includes(q) ||
+    (pr.hsn || "").includes(q)
+  ) : products.slice(0, 5);
+
+  const matchedLedgers = q ? ledgers.filter((l) =>
+    (l.name || "").toLowerCase().includes(q) ||
+    (l.code || "").includes(q)
+  ) : ledgers.slice(0, 5);
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
       <CommandInput
-        placeholder="Search customers, invoices, products, quotations across high-speed cache..."
+        placeholder="Search invoices, quotes, receipts, purchases, credit notes, parties, products, ledgers…"
         value={query}
         onValueChange={setQuery}
       />
       <CommandList>
         <CommandEmpty>No matching records found.</CommandEmpty>
 
+        {/* 1. Fast Cache Index Matches */}
         {cachedMatches.length > 0 && (
-          <CommandGroup heading="Instant Cache Index (v3)">
+          <CommandGroup heading="Instant Cache Results">
             {cachedMatches.map((m) => {
               const entity = m.data as any;
               let link = "/";
@@ -104,22 +179,19 @@ export function GlobalSearch({
               let subtext = "";
               if (m.entityType === "invoices") {
                 link = `/invoices?q=${encodeURIComponent(entity?.number || "")}&id=${m.entityId}`;
-                subtext = `Invoice · ${entity?.customerSnapshot?.name || ""} · ₹${entity?.grandTotal || 0}`;
+                subtext = `Invoice · ${entity?.customerSnapshot?.name || ""} · ${formatMoney(entity?.grandTotal || entity?.total || 0)}`;
               } else if (m.entityType === "quotations") {
                 link = `/quotations?q=${encodeURIComponent(entity?.number || "")}&id=${m.entityId}`;
-                subtext = `Quotation · ₹${entity?.grandTotal || 0}`;
-              } else if (m.entityType === "customers") {
-                link = `/customers?q=${encodeURIComponent(entity?.name || "")}&id=${m.entityId}`;
-                subtext = `Customer · ${entity?.phone || entity?.mobile || ""}`;
-              } else if (m.entityType === "suppliers") {
-                link = `/suppliers?q=${encodeURIComponent(entity?.name || "")}&id=${m.entityId}`;
-                subtext = `Supplier · ${entity?.phone || entity?.mobile || ""}`;
+                subtext = `Quotation · ${formatMoney(entity?.grandTotal || entity?.total || 0)}`;
+              } else if (m.entityType === "parties" || m.entityType === "customers") {
+                link = `/parties?q=${encodeURIComponent(entity?.name || "")}&id=${m.entityId}`;
+                subtext = `Party · ${entity?.phone || entity?.mobile || entity?.gstin || ""}`;
               } else if (m.entityType === "products") {
                 link = `/products?q=${encodeURIComponent(entity?.name || "")}&id=${m.entityId}`;
-                subtext = `Product · ₹${entity?.sellingPrice || 0}`;
+                subtext = `Product · ${formatMoney(entity?.sellingPrice || entity?.price || 0)}`;
               } else if (m.entityType === "purchases") {
                 link = `/purchases?q=${encodeURIComponent(entity?.supplierInvoiceNumber || entity?.number || "")}&id=${m.entityId}`;
-                subtext = `Purchase · ${entity?.supplierSnapshot?.name || ""} ${entity?.supplierInvoiceNumber ? `· Inv #${entity.supplierInvoiceNumber}` : ""} · ₹${entity?.grandTotal || 0}`;
+                subtext = `Purchase · ${entity?.supplierSnapshot?.name || ""} · ${formatMoney(entity?.grandTotal || entity?.total || 0)}`;
               }
               return (
                 <CommandItem
@@ -127,10 +199,10 @@ export function GlobalSearch({
                   value={`fast ${m.entityType} ${label} ${entity?.supplierInvoiceNumber || ""} ${subtext}`}
                   onSelect={() => go(link)}
                 >
-                  <Zap className="mr-2 h-4 w-4 text-amber-500" />
-                  <span className="font-medium">{label}</span>
-                  <span className="ml-2 text-xs text-muted-foreground">{subtext}</span>
-                  <span className="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-[10px] uppercase font-semibold text-muted-foreground">
+                  <Zap className="mr-2 h-4 w-4 text-amber-500 shrink-0" />
+                  <span className="font-medium text-foreground">{label}</span>
+                  <span className="ml-2 text-xs text-muted-foreground truncate">{subtext}</span>
+                  <span className="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-[10px] uppercase font-semibold text-muted-foreground shrink-0">
                     {m.entityType}
                   </span>
                 </CommandItem>
@@ -139,74 +211,48 @@ export function GlobalSearch({
           </CommandGroup>
         )}
 
-        {invoices.length > 0 && (
+        {/* 2. Invoices */}
+        {matchedInvoices.length > 0 && (
           <CommandGroup heading="Invoices">
-            {invoices.map((inv) => (
+            {matchedInvoices.map((inv) => (
               <CommandItem
                 key={inv.id}
                 value={`invoice ${inv.number} ${inv.customerSnapshot?.name ?? ""}`}
-                onSelect={() =>
-                  go(`/invoices?q=${encodeURIComponent(inv.number)}&id=${inv.id}`)
-                }
+                onSelect={() => go(`/invoices?q=${encodeURIComponent(inv.number)}&id=${inv.id}`)}
               >
-                <ReceiptIcon className="mr-2 h-4 w-4 text-primary" />
+                <ReceiptIcon className="mr-2 h-4 w-4 text-primary shrink-0" />
                 <span className="font-mono font-medium">{inv.number}</span>
-                <span className="ml-2 text-xs text-muted-foreground">
-                  · {inv.customerSnapshot?.name || "Customer"} · ₹{inv.grandTotal}
+                <span className="ml-2 text-xs text-muted-foreground truncate">
+                  · {inv.customerSnapshot?.name || "Customer"} · {formatMoney(inv.grandTotal ?? 0)}
                 </span>
               </CommandItem>
             ))}
           </CommandGroup>
         )}
 
-        {quotations.length > 0 && (
+        {/* 3. Quotations */}
+        {matchedQuotations.length > 0 && (
           <CommandGroup heading="Quotations">
-            {quotations.map((q) => (
+            {matchedQuotations.map((qt) => (
               <CommandItem
-                key={q.id}
-                value={`quotation ${q.number} ${q.customerSnapshot?.name ?? ""}`}
-                onSelect={() =>
-                  go(`/quotations?q=${encodeURIComponent(q.number)}&id=${q.id}`)
-                }
+                key={qt.id}
+                value={`quotation ${qt.number} ${qt.customerSnapshot?.name ?? ""}`}
+                onSelect={() => go(`/quotations?q=${encodeURIComponent(qt.number)}&id=${qt.id}`)}
               >
-                <FileText className="mr-2 h-4 w-4 text-sky-600" />
-                <span className="font-mono font-medium">{q.number}</span>
-                <span className="ml-2 text-xs text-muted-foreground">
-                  · {q.customerSnapshot?.name || "Customer"} · ₹{q.grandTotal}
+                <FileText className="mr-2 h-4 w-4 text-sky-600 shrink-0" />
+                <span className="font-mono font-medium">{qt.number}</span>
+                <span className="ml-2 text-xs text-muted-foreground truncate">
+                  · {qt.customerSnapshot?.name || "Customer"} · {formatMoney(qt.grandTotal ?? 0)}
                 </span>
               </CommandItem>
             ))}
           </CommandGroup>
         )}
 
-        {customers.length > 0 && (
-          <CommandGroup heading="Customers">
-            {customers.map((c) => (
-              <CommandItem
-                key={c.id}
-                value={`customer ${c.name} ${c.mobile ?? ""} ${c.gstin ?? ""}`}
-                onSelect={() =>
-                  go(`/customers?q=${encodeURIComponent(c.name)}&id=${c.id}`)
-                }
-              >
-                <Users className="mr-2 h-4 w-4 text-emerald-600" />
-                <span className="font-medium">{c.name}</span>
-                {c.company ? (
-                  <span className="ml-1 text-xs text-muted-foreground">({c.company})</span>
-                ) : null}
-                {c.mobile ? (
-                  <span className="ml-auto font-mono text-xs text-muted-foreground">
-                    {c.mobile}
-                  </span>
-                ) : null}
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        )}
-
-        {purchases.length > 0 && (
+        {/* 4. Purchases */}
+        {matchedPurchases.length > 0 && (
           <CommandGroup heading="Purchases">
-            {purchases.map((pu) => (
+            {matchedPurchases.map((pu) => (
               <CommandItem
                 key={pu.id}
                 value={`purchase ${pu.number} ${pu.supplierInvoiceNumber ?? ""} ${pu.supplierSnapshot?.name ?? ""}`}
@@ -214,73 +260,134 @@ export function GlobalSearch({
                   go(`/purchases?q=${encodeURIComponent(pu.supplierInvoiceNumber || pu.number)}&id=${pu.id}`)
                 }
               >
-                <ShoppingCart className="mr-2 h-4 w-4 text-indigo-600" />
+                <ShoppingCart className="mr-2 h-4 w-4 text-indigo-600 shrink-0" />
                 <span className="font-mono font-medium">{pu.number}</span>
                 {pu.supplierInvoiceNumber && (
-                  <span className="ml-1.5 rounded bg-muted px-1.5 py-0.2 font-mono text-xs font-semibold text-primary">
+                  <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold text-primary">
                     Inv: {pu.supplierInvoiceNumber}
                   </span>
                 )}
-                <span className="ml-2 text-xs text-muted-foreground">
-                  · {pu.supplierSnapshot?.name || "Vendor"} · ₹{pu.grandTotal}
+                <span className="ml-2 text-xs text-muted-foreground truncate">
+                  · {pu.supplierSnapshot?.name || "Vendor"} · {formatMoney(pu.grandTotal ?? 0)}
                 </span>
               </CommandItem>
             ))}
           </CommandGroup>
         )}
 
-        {suppliers.length > 0 && (
-          <CommandGroup heading="Suppliers">
-            {suppliers.map((s) => (
-              <CommandItem
-                key={s.id}
-                value={`supplier ${s.name} ${s.mobile ?? ""}`}
-                onSelect={() =>
-                  go(`/suppliers?q=${encodeURIComponent(s.name)}&id=${s.id}`)
-                }
-              >
-                <Truck className="mr-2 h-4 w-4 text-amber-600" />
-                <span className="font-medium">{s.name}</span>
-                {s.company ? (
-                  <span className="ml-1 text-xs text-muted-foreground">({s.company})</span>
-                ) : null}
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        )}
-
-        {receipts.length > 0 && (
+        {/* 5. Receipts */}
+        {matchedReceipts.length > 0 && (
           <CommandGroup heading="Receipts">
-            {receipts.map((rec) => (
+            {matchedReceipts.map((rec) => (
               <CommandItem
                 key={rec.id}
-                value={`receipt ${rec.number}`}
+                value={`receipt ${rec.number || (rec as any).receiptNumber || ""} ${(rec as any).customerName || (rec as any).partyName || ""}`}
                 onSelect={() =>
-                  go(`/receipts?q=${encodeURIComponent(rec.number)}&id=${rec.id}`)
+                  go(`/receipts?q=${encodeURIComponent(rec.number || (rec as any).receiptNumber || "")}&id=${rec.id}`)
                 }
               >
-                <HandCoins className="mr-2 h-4 w-4 text-emerald-600" />
-                <span className="font-mono font-medium">{rec.number}</span>
-                <span className="ml-2 text-xs text-muted-foreground">· ₹{rec.amount}</span>
+                <HandCoins className="mr-2 h-4 w-4 text-emerald-600 shrink-0" />
+                <span className="font-mono font-medium">{rec.number || (rec as any).receiptNumber}</span>
+                <span className="ml-2 text-xs text-muted-foreground truncate">
+                  · {(rec as any).customerName || (rec as any).partyName || "Party"} · {formatMoney(rec.amount || 0)}
+                </span>
               </CommandItem>
             ))}
           </CommandGroup>
         )}
 
-        {products.length > 0 && (
-          <CommandGroup heading="Products">
-            {products.map((p) => (
+        {/* 6. Credit Notes / Sales Returns */}
+        {matchedCreditNotes.length > 0 && (
+          <CommandGroup heading="Credit Notes & Sales Returns">
+            {matchedCreditNotes.map((cn) => (
+              <CommandItem
+                key={cn.id}
+                value={`credit-note ${cn.number} ${cn.originalInvoiceNumber || ""} ${(cn as any).customerName || (cn as any).partyName || ""}`}
+                onSelect={() => go(`/sales-returns?q=${encodeURIComponent(cn.number)}&id=${cn.id}`)}
+              >
+                <RotateCcw className="mr-2 h-4 w-4 text-rose-600 shrink-0" />
+                <span className="font-mono font-medium">{cn.number}</span>
+                {cn.originalInvoiceNumber && (
+                  <span className="ml-1.5 text-xs text-muted-foreground">
+                    (against {cn.originalInvoiceNumber})
+                  </span>
+                )}
+                <span className="ml-2 text-xs text-muted-foreground truncate">
+                  · {(cn as any).customerName || (cn as any).partyName || "Customer"} · {formatMoney(cn.grandTotal || (cn as any).total || 0)}
+                </span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {/* 7. Parties (Party Master) */}
+        {matchedParties.length > 0 && (
+          <CommandGroup heading="Parties (Customers & Suppliers)">
+            {matchedParties.map((p) => (
               <CommandItem
                 key={p.id}
-                value={`product ${p.name} ${p.sku ?? ""}`}
-                onSelect={() =>
-                  go(`/products?q=${encodeURIComponent(p.name)}&id=${p.id}`)
-                }
+                value={`party ${p.name} ${p.partyCode || ""} ${p.gstin || ""} ${p.phone || p.mobile || ""}`}
+                onSelect={() => go(`/parties?q=${encodeURIComponent(p.name)}&id=${p.id}`)}
               >
-                <Package className="mr-2 h-4 w-4 text-muted-foreground" />
-                <span className="font-medium">{p.name}</span>
+                <Users className="mr-2 h-4 w-4 text-teal-600 shrink-0" />
+                <span className="font-medium text-foreground">{p.name}</span>
+                {p.partyCode && (
+                  <span className="ml-1.5 font-mono text-xs text-muted-foreground">
+                    ({p.partyCode})
+                  </span>
+                )}
+                {p.gstin && (
+                  <span className="ml-2 font-mono text-[11px] text-muted-foreground">
+                    {p.gstin}
+                  </span>
+                )}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {/* 8. Products & Stock */}
+        {matchedProducts.length > 0 && (
+          <CommandGroup heading="Products & Stock">
+            {matchedProducts.map((pr) => (
+              <CommandItem
+                key={pr.id}
+                value={`product ${pr.name} ${(pr as any).code || pr.sku || ""} ${pr.hsn || ""}`}
+                onSelect={() => go(`/products?q=${encodeURIComponent(pr.name)}&id=${pr.id}`)}
+              >
+                <Package className="mr-2 h-4 w-4 text-indigo-500 shrink-0" />
+                <span className="font-medium text-foreground">{pr.name}</span>
+                {(pr as any).code && (
+                  <span className="ml-1.5 font-mono text-xs text-muted-foreground">
+                    ({(pr as any).code})
+                  </span>
+                )}
                 <span className="ml-auto font-mono text-xs text-muted-foreground">
-                  ₹{p.sellingPrice}
+                  {formatMoney(pr.sellingPrice || (pr as any).price || 0)}
+                </span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {/* 9. Ledgers (Double-Entry Accounts) */}
+        {matchedLedgers.length > 0 && (
+          <CommandGroup heading="Chart of Accounts & Ledgers">
+            {matchedLedgers.map((l) => (
+              <CommandItem
+                key={l.id}
+                value={`ledger ${l.name} ${l.code || ""} ${(l as any).groupName || l.groupId || ""}`}
+                onSelect={() => go(`/ledger?q=${encodeURIComponent(l.name)}&id=${l.id}`)}
+              >
+                <BookOpen className="mr-2 h-4 w-4 text-amber-600 shrink-0" />
+                <span className="font-medium text-foreground">{l.name}</span>
+                {l.code && (
+                  <span className="ml-1.5 font-mono text-xs text-muted-foreground">
+                    ({l.code})
+                  </span>
+                )}
+                <span className="ml-auto text-xs text-muted-foreground uppercase font-mono">
+                  {(l as any).groupName || l.groupId}
                 </span>
               </CommandItem>
             ))}

@@ -22,6 +22,7 @@ import {
   isPostedCreditNote,
   resolveCanonicalInvoiceOutstanding,
   resolveCanonicalPurchaseOutstanding,
+  resolveCanonicalCustomerCredits,
 } from "@/modules/accounting/services/canonicalOutstandingService";
 import { useLive, useLiveState } from "@/lib/useLive";
 import { useMemo, useState, useEffect, Fragment } from "react";
@@ -32,6 +33,8 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import {
   Download,
   Printer,
@@ -46,20 +49,56 @@ import {
   RefreshCw,
   Scale,
   Building2,
+  Bookmark,
+  BookmarkPlus,
+  Trash2,
+  SlidersHorizontal,
+  FileSpreadsheet,
+  FileText,
+  Eye,
+  Filter,
 } from "lucide-react";
 import { formatDate, formatMoney, toDateInput, fromDateInput } from "@/lib/format";
 import { resolvePartyNameFromCollections } from "@/modules/accounting/domain/partyResolver";
 import { toast } from "sonner";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { useBusinessScope } from "@/modules/company/context/BusinessScopeContext";
+import { ExportDialog } from "@/components/app/ExportDialog";
+import { PartyStatementModal } from "@/components/app/PartyStatementModal";
+import type { ExportColumnDefinition } from "@/modules/export/exportTypes";
+import {
+  INVOICE_EXPORT_COLUMNS,
+  PURCHASE_EXPORT_COLUMNS,
+  RECEIVABLES_AGING_EXPORT_COLUMNS,
+  PAYABLES_AGING_EXPORT_COLUMNS,
+  GST_REGISTER_EXPORT_COLUMNS,
+  MONTH_END_SNAPSHOT_EXPORT_COLUMNS,
+  PRODUCT_EXPORT_COLUMNS,
+} from "@/modules/export/exportColumnDefinitions";
 
 export const Route = createFileRoute("/_app/reports")({
   head: () => ({ meta: [{ title: "Reports — Business Management" }] }),
   component: ReportsPage,
 });
 
+interface SavedReportView {
+  id: string;
+  name: string;
+  tab: string;
+  from?: number;
+  to?: number;
+  preset?: string;
+  createdAt: number;
+}
+
 function ReportsPage() {
-  const [from, setFrom] = useState<number | undefined>(undefined);
-  const [to, setTo] = useState<number | undefined>(undefined);
+  const { scope, setDatePreset, setCustomDateRange } = useBusinessScope();
+  const [from, setFrom] = useState<number | undefined>(
+    scope.dateRange.preset === "all_time" ? undefined : scope.dateRange.fromTimestamp
+  );
+  const [to, setTo] = useState<number | undefined>(
+    scope.dateRange.preset === "all_time" ? undefined : scope.dateRange.toTimestamp
+  );
   const [tab, setTab] = useState<string>(() => {
     if (typeof window !== "undefined") {
       const p = new URLSearchParams(window.location.search);
@@ -67,6 +106,35 @@ function ReportsPage() {
     }
     return "sales";
   });
+
+  // Advanced filters state
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [docTypeFilter, setDocTypeFilter] = useState<string>("all");
+
+  // Saved views state
+  const [savedViews, setSavedViews] = useState<SavedReportView[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem("bms_saved_report_views");
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isSaveViewOpen, setIsSaveViewOpen] = useState(false);
+  const [newViewName, setNewViewName] = useState("");
+
+  // Sync with global BusinessScopeBar
+  useEffect(() => {
+    if (scope.dateRange.preset === "all_time") {
+      setFrom(undefined);
+      setTo(undefined);
+    } else {
+      setFrom(scope.dateRange.fromTimestamp);
+      setTo(scope.dateRange.toTimestamp);
+    }
+  }, [scope.dateRange.fromTimestamp, scope.dateRange.toTimestamp, scope.dateRange.preset]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -86,28 +154,309 @@ function ReportsPage() {
     }
   };
 
+  const handleSaveView = () => {
+    if (!newViewName.trim()) {
+      toast.error("Please enter a name for this view");
+      return;
+    }
+    const view: SavedReportView = {
+      id: `view_${Date.now()}`,
+      name: newViewName.trim(),
+      tab,
+      from,
+      to,
+      preset: scope.dateRange.preset,
+      createdAt: Date.now(),
+    };
+    const next = [view, ...savedViews.slice(0, 19)];
+    setSavedViews(next);
+    try {
+      localStorage.setItem("bms_saved_report_views", JSON.stringify(next));
+    } catch {}
+    toast.success(`Saved view "${view.name}" created`);
+    setNewViewName("");
+    setIsSaveViewOpen(false);
+  };
+
+  const handleLoadView = (v: SavedReportView) => {
+    handleTabChange(v.tab);
+    if (v.from) setFrom(v.from);
+    if (v.to) setTo(v.to);
+    if (v.from && v.to) {
+      setCustomDateRange(
+        new Date(v.from).toISOString().slice(0, 10),
+        new Date(v.to).toISOString().slice(0, 10)
+      );
+    }
+    toast.info(`Loaded view: ${v.name}`);
+  };
+
+  const handleDeleteView = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = savedViews.filter((v) => v.id !== id);
+    setSavedViews(next);
+    try {
+      localStorage.setItem("bms_saved_report_views", JSON.stringify(next));
+    } catch {}
+    toast.success("Saved view removed");
+  };
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (from || to) count++;
+    if (statusFilter !== "all") count++;
+    if (docTypeFilter !== "all") count++;
+    return count;
+  }, [from, to, statusFilter, docTypeFilter]);
+
+  const clearAllFilters = () => {
+    setFrom(undefined);
+    setTo(undefined);
+    setStatusFilter("all");
+    setDocTypeFilter("all");
+    setDatePreset("all_time");
+  };
+
   return (
     <AppShell title="Reports">
-      <PageHeader title="Business & Financial Reports" description="Canonical accounting reports, GST statutory positions, and reconciliation center." />
-      <Card className="rounded-2xl border border-border/80 bg-card shadow-soft mb-4 flex flex-wrap items-end gap-3 p-4">
-        <div className="space-y-1.5">
-          <Label className="text-xs">From</Label>
-          <Input type="date" value={from ? toDateInput(from) : ""} onChange={(e) => setFrom(e.target.value ? fromDateInput(e.target.value) : undefined)} />
+      <PageHeader
+        title="Business & Financial Reports"
+        description="Canonical accounting reports, GST statutory positions, month-end review, and reconciliation center."
+        actions={
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs shadow-xs"
+              onClick={() => setIsSaveViewOpen(true)}
+              title="Save current filters as a named view"
+            >
+              <BookmarkPlus className="h-3.5 w-3.5 text-muted-foreground" />
+              Save View
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs shadow-xs"
+              onClick={() => window.print()}
+            >
+              <Printer className="h-3.5 w-3.5 text-muted-foreground" />
+              Print
+            </Button>
+          </div>
+        }
+      />
+
+      {/* Report Filter Bar & Drawer */}
+      <Card className="rounded-2xl border border-border/80 bg-card shadow-soft mb-4 p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Quick Preset Selector */}
+            <div className="space-y-1">
+              <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Date Preset
+              </Label>
+              <Select
+                value={scope.dateRange.preset}
+                onValueChange={(val: any) => {
+                  setDatePreset(val);
+                }}
+              >
+                <SelectTrigger className="h-9 w-36 text-xs bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all_time">All Time</SelectItem>
+                  <SelectItem value="today">Today</SelectItem>
+                  <SelectItem value="yesterday">Yesterday</SelectItem>
+                  <SelectItem value="this_week">This Week</SelectItem>
+                  <SelectItem value="this_month">This Month</SelectItem>
+                  <SelectItem value="last_month">Last Month</SelectItem>
+                  <SelectItem value="this_quarter">This Quarter</SelectItem>
+                  <SelectItem value="this_fy">This FY</SelectItem>
+                  <SelectItem value="mtd">MTD</SelectItem>
+                  <SelectItem value="custom">Custom Range</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* From Date */}
+            <div className="space-y-1">
+              <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">From</Label>
+              <Input
+                type="date"
+                value={from ? toDateInput(from) : ""}
+                onChange={(e) => {
+                  const val = e.target.value ? fromDateInput(e.target.value) : undefined;
+                  setFrom(val);
+                  if (val && to) {
+                    setCustomDateRange(
+                      new Date(val).toISOString().slice(0, 10),
+                      new Date(to).toISOString().slice(0, 10)
+                    );
+                  }
+                }}
+                className="h-9 text-xs w-36 bg-background"
+              />
+            </div>
+
+            {/* To Date */}
+            <div className="space-y-1">
+              <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">To</Label>
+              <Input
+                type="date"
+                value={to ? toDateInput(to) : ""}
+                onChange={(e) => {
+                  const val = e.target.value ? fromDateInput(e.target.value) : undefined;
+                  setTo(val);
+                  if (from && val) {
+                    setCustomDateRange(
+                      new Date(from).toISOString().slice(0, 10),
+                      new Date(val).toISOString().slice(0, 10)
+                    );
+                  }
+                }}
+                className="h-9 text-xs w-36 bg-background"
+              />
+            </div>
+
+            {/* Saved Views Dropdown */}
+            {savedViews.length > 0 && (
+              <div className="space-y-1">
+                <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                  <Bookmark className="h-3 w-3" /> Saved Views
+                </Label>
+                <Select onValueChange={(viewId) => {
+                  const v = savedViews.find((sv) => sv.id === viewId);
+                  if (v) handleLoadView(v);
+                }}>
+                  <SelectTrigger className="h-9 w-44 text-xs bg-background">
+                    <SelectValue placeholder="Load a saved view..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {savedViews.map((v) => (
+                      <SelectItem key={v.id} value={v.id} className="text-xs flex items-center justify-between">
+                        <span>{v.name}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+
+          {/* Right Action Buttons */}
+          <div className="flex items-center gap-2 pt-4 sm:pt-0 self-end">
+            <Button
+              variant={showMoreFilters ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setShowMoreFilters(!showMoreFilters)}
+              className="gap-1.5 text-xs h-9"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              More Filters
+              {activeFilterCount > 0 && (
+                <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0 h-4">
+                  {activeFilterCount}
+                </Badge>
+              )}
+            </Button>
+            {activeFilterCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearAllFilters}
+                className="text-xs h-9 text-muted-foreground hover:text-foreground"
+              >
+                Clear
+              </Button>
+            )}
+          </div>
         </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">To</Label>
-          <Input type="date" value={to ? toDateInput(to) : ""} onChange={(e) => setTo(e.target.value ? fromDateInput(e.target.value) : undefined)} />
-        </div>
-        <Button variant="outline" onClick={() => { setFrom(undefined); setTo(undefined); }}>Clear</Button>
-        <Button variant="outline" className="gap-2" onClick={() => window.print()}><Printer className="h-4 w-4" /> Print</Button>
+
+        {/* Collapsible More Filters Drawer */}
+        {showMoreFilters && (
+          <div className="border-t border-border/60 pt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 bg-muted/20 p-3 rounded-xl">
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">Document Status</Label>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="h-8 text-xs bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="posted">Posted Only</SelectItem>
+                  <SelectItem value="paid">Fully Paid</SelectItem>
+                  <SelectItem value="partial">Partially Paid</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">Document Type</Label>
+              <Select value={docTypeFilter} onValueChange={setDocTypeFilter}>
+                <SelectTrigger className="h-8 text-xs bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Document Types</SelectItem>
+                  <SelectItem value="tax_invoice">Tax Invoice</SelectItem>
+                  <SelectItem value="bill_of_supply">Bill of Supply</SelectItem>
+                  <SelectItem value="commercial">Commercial Invoice</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-end">
+              <span className="text-xs text-muted-foreground">
+                Showing authorized records for active organizational scope.
+              </span>
+            </div>
+          </div>
+        )}
       </Card>
+
+      {/* Save View Modal Dialog */}
+      <Dialog open={isSaveViewOpen} onOpenChange={setIsSaveViewOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BookmarkPlus className="h-4 w-4 text-primary" />
+              Save Report View
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Save your current report tab, date presets, and filters for instant 1-click access anytime.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label className="text-xs font-semibold">View Name</Label>
+            <Input
+              placeholder="e.g. September Receivables, Main Branch Sales..."
+              value={newViewName}
+              onChange={(e) => setNewViewName(e.target.value)}
+              className="text-xs h-9"
+              autoFocus
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" size="sm" onClick={() => setIsSaveViewOpen(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSaveView} className="bg-primary text-primary-foreground">
+              Save View
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Tabs value={tab} onValueChange={handleTabChange} className="space-y-3">
-        {/* Row 1: Primary Report Navigation (Horizontal scroll, whitespace-nowrap, no wrap collisions) */}
+        {/* Row 1: Primary Report Navigation */}
         <div className="w-full overflow-x-auto scrollbar-thin pb-1">
           <TabsList className="inline-flex w-auto min-w-full sm:min-w-0 h-10 items-center justify-start gap-1 p-1 bg-secondary/50 rounded-xl whitespace-nowrap">
             <TabsTrigger value="sales" className="shrink-0 px-3 py-1.5 text-xs font-medium">Sales & Revenue</TabsTrigger>
             <TabsTrigger value="purchases" className="shrink-0 px-3 py-1.5 text-xs font-medium">Purchases</TabsTrigger>
             <TabsTrigger value="outstanding" className="shrink-0 px-3 py-1.5 text-xs font-medium">Credit Outstanding & Aging</TabsTrigger>
+            <TabsTrigger value="month-end" className="shrink-0 px-3 py-1.5 text-xs font-medium">Month-End Review</TabsTrigger>
             <TabsTrigger value="advances" className="shrink-0 px-3 py-1.5 text-xs font-medium">Customer Advances</TabsTrigger>
             <TabsTrigger value="supplier-advances" className="shrink-0 px-3 py-1.5 text-xs font-medium">Supplier Advances</TabsTrigger>
             <TabsTrigger value="stock" className="shrink-0 px-3 py-1.5 text-xs font-medium">Stock</TabsTrigger>
@@ -148,6 +497,7 @@ function ReportsPage() {
           <TabsContent value="sales" className="mt-0"><SalesReport from={from} to={to} /></TabsContent>
           <TabsContent value="purchases" className="mt-0"><PurchaseReport from={from} to={to} /></TabsContent>
           <TabsContent value="outstanding" className="mt-0"><OutstandingReport /></TabsContent>
+          <TabsContent value="month-end" className="mt-0"><MonthEndReviewReport from={from} to={to} /></TabsContent>
           <TabsContent value="advances" className="mt-0"><CustomerAdvanceRegisterReport /></TabsContent>
           <TabsContent value="supplier-advances" className="mt-0"><SupplierAdvanceRegisterReport /></TabsContent>
           <TabsContent value="stock" className="mt-0"><StockReport /></TabsContent>
@@ -165,24 +515,87 @@ function useRange<T extends { date: number }>(rows: T[], from?: number, to?: num
   return useMemo(() => rows.filter((r) => (!from || r.date >= from) && (!to || r.date <= to)), [rows, from, to]);
 }
 
-function ExportBtn({ name, data }: { name: string; data: unknown }) {
+/**
+ * Universal Export button triggering canonical ExportDialog
+ * Supports Excel (.xlsx) with actual numbers & formatting, CSV with UTF-8 BOM, PDF, and JSON.
+ */
+function ExportBtn({
+  name,
+  title,
+  data,
+  columns,
+}: {
+  name: string;
+  title?: string;
+  data: unknown;
+  columns?: ExportColumnDefinition<any>[];
+}) {
+  const [open, setOpen] = useState(false);
+  const { activeCompany, activeBranchId, branches } = useActiveCompany();
+  const safeData = Array.isArray(data) ? data : [];
+
+  const defaultCols: ExportColumnDefinition<any>[] = useMemo(() => {
+    if (columns && columns.length > 0) return columns;
+    if (safeData.length === 0) return [];
+    const first = safeData[0];
+    if (typeof first !== "object" || !first) return [];
+    return Object.keys(first)
+      .filter((k) => !k.startsWith("_") && k !== "id" && k !== "items" && k !== "taxSnapshot")
+      .slice(0, 10)
+      .map((k) => ({
+        key: k,
+        header: k.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase()),
+        getter: (row: any) => {
+          const val = row[k];
+          if (
+            typeof val === "number" &&
+            (k.toLowerCase().includes("amount") ||
+              k.toLowerCase().includes("total") ||
+              k.toLowerCase().includes("balance") ||
+              k.toLowerCase().includes("price") ||
+              k.toLowerCase().includes("rate"))
+          ) {
+            return val;
+          }
+          if (typeof val === "object" && val !== null) return JSON.stringify(val);
+          return val ?? "";
+        },
+        type:
+          k.toLowerCase().includes("amount") ||
+          k.toLowerCase().includes("total") ||
+          k.toLowerCase().includes("balance") ||
+          k.toLowerCase().includes("tax")
+            ? "currency"
+            : "text",
+      }));
+  }, [columns, safeData]);
+
+  const cleanFileName = name.replace(/\.json$/i, "").replace(/\.xlsx$/i, "");
+  const branchName = branches.find((b) => b.id === activeBranchId)?.name || "All Branches";
+
   return (
-    <Button
-      size="sm"
-      variant="outline"
-      className="gap-2"
-      onClick={() => {
-        const b = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(b);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = name;
-        a.click();
-        URL.revokeObjectURL(url);
-      }}
-    >
-      <Download className="h-4 w-4" /> Export JSON
-    </Button>
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        className="gap-2 shadow-xs"
+        onClick={() => setOpen(true)}
+      >
+        <Download className="h-4 w-4 text-muted-foreground" />
+        Export
+      </Button>
+
+      <ExportDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={title || `Export ${cleanFileName.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}`}
+        filename={`${cleanFileName}_${new Date().toISOString().split("T")[0]}`}
+        columns={defaultCols}
+        filteredData={safeData}
+        allScopeData={safeData}
+        scopeSummary={branchName}
+      />
+    </>
   );
 }
 
@@ -453,7 +866,8 @@ function PurchaseReport({ from, to }: { from?: number; to?: number }) {
 }
 
 // ========================================================================
-// 3. CREDIT OUTSTANDING & AGING REPORT
+// ========================================================================
+// 3. CREDIT OUTSTANDING & AGING REPORT (SECTIONS 15 & 16)
 // ========================================================================
 
 function OutstandingReport() {
@@ -471,14 +885,41 @@ function OutstandingReport() {
   const customers = useLive<Customer>(() => db().customers.toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
 
-  const recv = useMemo(() => {
+  // Navigation tab inside Outstanding: "receivables" or "payables"
+  const [subTab, setSubTab] = useState<"receivables" | "payables">("receivables");
+  // Interactive aging filter
+  const [selectedAgingBucket, setSelectedAgingBucket] = useState<"all" | "0-30" | "31-60" | "61-90" | "90+">("all");
+  // Statement modal state
+  const [selectedStatementPartyId, setSelectedStatementPartyId] = useState<string | null>(null);
+  const [statementPartyType, setStatementPartyType] = useState<"CUSTOMER" | "SUPPLIER">("CUSTOMER");
+
+  const selectedParty = useMemo(() => {
+    if (!selectedStatementPartyId) return null;
+    return (
+      parties.find((p) => p.id === selectedStatementPartyId) ||
+      customers.find((c) => c.id === selectedStatementPartyId) ||
+      suppliers.find((s) => s.id === selectedStatementPartyId) ||
+      { id: selectedStatementPartyId, name: "Party" }
+    );
+  }, [selectedStatementPartyId, parties, customers, suppliers]);
+
+  // Canonical Receivables Calculation
+  const canonicalCredits = useMemo(() => {
+    return resolveCanonicalCustomerCredits({
+      invoices,
+      receipts: receiptsState.data,
+      salesReturns: salesReturnsState.data,
+      creditNotes: creditNotesState.data,
+      branchId: activeBranchId,
+    });
+  }, [invoices, receiptsState.data, salesReturnsState.data, creditNotesState.data, activeBranchId]);
+
+  const recvInvoices = useMemo(() => {
     const now = Date.now();
     return invoices
       .filter((i) => {
         if (!isPostedInvoice(i)) return false;
-        if (activeBranchId && activeBranchId !== "all") {
-          if (i.branchId !== activeBranchId) return false;
-        }
+        if (activeBranchId && activeBranchId !== "all" && i.branchId && i.branchId !== activeBranchId) return false;
         return true;
       })
       .map((i) => {
@@ -500,184 +941,1001 @@ function OutstandingReport() {
       .filter((i) => i.balance > 0.01);
   }, [invoices, receiptsState.data, salesReturnsState.data, creditNotesState.data, parties, customers, activeBranchId]);
 
-  const pay = useMemo(
-    () => purchases
-      .filter((p) => {
-        if (!isPostedPurchase(p)) return false;
-        if (activeBranchId && activeBranchId !== "all") {
-          if (p.branchId !== activeBranchId) return false;
-        }
-        return true;
-      })
-      .map((p) => {
-        const canonicalBalance = resolveCanonicalPurchaseOutstanding(p, paymentsState.data).remainingBalance;
-        return {
-          ...p,
-          balance: canonicalBalance,
-        };
-      })
-      .filter((p) => p.balance > 0.01),
-    [purchases, paymentsState.data, activeBranchId]
-  );
+  // Receivables Three-Tier Metrics
+  const grossReceivable = useMemo(() => recvInvoices.reduce((s, i) => s + i.balance, 0), [recvInvoices]);
+  const availableCustomerCredit = canonicalCredits.totalCustomerCredits || 0;
+  const netReceivable = Math.max(0, grossReceivable - availableCustomerCredit);
 
-  const aging = useMemo(() => {
+  // Receivables Aging
+  const recvAging = useMemo(() => {
     let b0_30 = 0;
     let b31_60 = 0;
     let b61_90 = 0;
     let b90_plus = 0;
-
-    for (const inv of recv) {
+    for (const inv of recvInvoices) {
       if (inv.ageDays <= 30) b0_30 += inv.balance;
       else if (inv.ageDays <= 60) b31_60 += inv.balance;
       else if (inv.ageDays <= 90) b61_90 += inv.balance;
       else b90_plus += inv.balance;
     }
     return { b0_30, b31_60, b61_90, b90_plus, total: b0_30 + b31_60 + b61_90 + b90_plus };
-  }, [recv]);
+  }, [recvInvoices]);
+
+  // Filtered invoices by selected aging bucket
+  const filteredRecvInvoices = useMemo(() => {
+    if (selectedAgingBucket === "all") return recvInvoices;
+    return recvInvoices.filter((inv) => {
+      if (selectedAgingBucket === "0-30") return inv.ageDays <= 30;
+      if (selectedAgingBucket === "31-60") return inv.ageDays > 30 && inv.ageDays <= 60;
+      if (selectedAgingBucket === "61-90") return inv.ageDays > 60 && inv.ageDays <= 90;
+      if (selectedAgingBucket === "90+") return inv.ageDays > 90;
+      return true;
+    });
+  }, [recvInvoices, selectedAgingBucket]);
+
+  // Customer rows for Customer Summary Table
+  const customerSummaryRows = useMemo(() => {
+    const allPartyList = [
+      ...parties.filter((p) => p.partyType === "SUNDRY_DEBTOR" || p.partyType === "SUNDRY_DEBTORS" || p.partyType === "BOTH"),
+      ...customers.filter((c) => !parties.some((p) => p.id === c.id)),
+    ];
+    return allPartyList
+      .map((c) => {
+        const custInvoices = recvInvoices.filter((i) => i.customerId === c.id);
+        const gross = custInvoices.reduce((s, i) => s + i.balance, 0);
+        const credit = canonicalCredits.creditItems
+          .filter((ci: any) => ci.customerId === c.id)
+          .reduce((sum: number, ci: any) => sum + (ci.remainingCredit ?? ci.creditAvailable ?? 0), 0);
+        const net = Math.max(0, gross - credit);
+
+        const dueDates = custInvoices.map((i) => i.dueDate || i.date).filter(Boolean);
+        const oldestDueDate = dueDates.length > 0 ? Math.min(...dueDates) : undefined;
+        const oldestDays = oldestDueDate ? Math.max(0, Math.floor((Date.now() - oldestDueDate) / (1000 * 60 * 60 * 24))) : 0;
+
+        const custReceipts = receiptsState.data
+          .filter((r) => r.customerId === c.id && isPostedReceipt(r))
+          .sort((a, b) => b.date - a.date);
+        const lastReceiptDate = custReceipts.length > 0 ? custReceipts[0].date : undefined;
+
+        let d0_30 = 0, d31_60 = 0, d61_90 = 0, d90_plus = 0;
+        for (const inv of custInvoices) {
+          if (inv.ageDays <= 30) d0_30 += inv.balance;
+          else if (inv.ageDays <= 60) d31_60 += inv.balance;
+          else if (inv.ageDays <= 90) d61_90 += inv.balance;
+          else d90_plus += inv.balance;
+        }
+
+        return {
+          id: c.id,
+          partyCode: (c as any).partyCode || (c as any).code || c.id.slice(0, 8),
+          name: c.name || "Customer",
+          outstanding: gross,
+          availableCredit: credit,
+          netExposure: net,
+          oldestDueDate,
+          oldestDays,
+          lastReceiptDate,
+          agingBuckets: {
+            days0_30: d0_30,
+            days31_60: d31_60,
+            days61_90: d61_90,
+            days90_plus: d90_plus,
+          },
+        };
+      })
+      .filter((row) => row.outstanding > 0.01 || row.availableCredit > 0.01)
+      .sort((a, b) => b.netExposure - a.netExposure);
+  }, [parties, customers, recvInvoices, canonicalCredits, receiptsState.data]);
+
+  // Canonical Payables Calculation
+  const payBills = useMemo(() => {
+    const now = Date.now();
+    return purchases
+      .filter((p) => {
+        if (!isPostedPurchase(p)) return false;
+        if (activeBranchId && activeBranchId !== "all" && p.branchId && p.branchId !== activeBranchId) return false;
+        return true;
+      })
+      .map((p) => {
+        const canonicalBalance = resolveCanonicalPurchaseOutstanding(p, paymentsState.data).remainingBalance;
+        const name = resolvePartyNameFromCollections(p.supplierId, p.supplierSnapshot, parties, suppliers);
+        const refDate = (p as any).dueDate || p.date;
+        const ageDays = Math.max(0, Math.floor((now - refDate) / (1000 * 60 * 60 * 24)));
+        return {
+          ...p,
+          balance: canonicalBalance,
+          supplierName: name,
+          ageDays,
+        };
+      })
+      .filter((p) => p.balance > 0.01);
+  }, [purchases, paymentsState.data, parties, suppliers, activeBranchId]);
+
+  // Payables Three-Tier Metrics
+  const grossPayable = useMemo(() => payBills.reduce((s, p) => s + p.balance, 0), [payBills]);
+  const totalSupplierAdvances = useMemo(() => {
+    return paymentsState.data
+      .filter((p) => {
+        if (!isPostedPayment(p)) return false;
+        if (activeBranchId && activeBranchId !== "all" && p.branchId && p.branchId !== activeBranchId) return false;
+        return !p.purchaseId || (p as any).paymentType === "ADVANCE";
+      })
+      .reduce((s, p) => s + (p.amount || 0), 0);
+  }, [paymentsState.data, activeBranchId]);
+  const netPayable = Math.max(0, grossPayable - totalSupplierAdvances);
+
+  // Payables Aging
+  const payAging = useMemo(() => {
+    let b0_30 = 0;
+    let b31_60 = 0;
+    let b61_90 = 0;
+    let b90_plus = 0;
+    for (const b of payBills) {
+      if (b.ageDays <= 30) b0_30 += b.balance;
+      else if (b.ageDays <= 60) b31_60 += b.balance;
+      else if (b.ageDays <= 90) b61_90 += b.balance;
+      else b90_plus += b.balance;
+    }
+    return { b0_30, b31_60, b61_90, b90_plus, total: b0_30 + b31_60 + b61_90 + b90_plus };
+  }, [payBills]);
+
+  // Filtered bills by selected aging bucket
+  const filteredPayBills = useMemo(() => {
+    if (selectedAgingBucket === "all") return payBills;
+    return payBills.filter((b) => {
+      if (selectedAgingBucket === "0-30") return b.ageDays <= 30;
+      if (selectedAgingBucket === "31-60") return b.ageDays > 30 && b.ageDays <= 60;
+      if (selectedAgingBucket === "61-90") return b.ageDays > 60 && b.ageDays <= 90;
+      if (selectedAgingBucket === "90+") return b.ageDays > 90;
+      return true;
+    });
+  }, [payBills, selectedAgingBucket]);
+
+  // Supplier summary rows
+  const supplierSummaryRows = useMemo(() => {
+    const allSuppList = [
+      ...parties.filter((p) => p.partyType === "SUNDRY_CREDITOR" || p.partyType === "SUNDRY_CREDITORS" || p.partyType === "BOTH"),
+      ...suppliers.filter((s) => !parties.some((p) => p.id === s.id)),
+    ];
+    return allSuppList
+      .map((s) => {
+        const suppBills = payBills.filter((p) => p.supplierId === s.id);
+        const gross = suppBills.reduce((acc, p) => acc + p.balance, 0);
+        const adv = paymentsState.data
+          .filter((p) => isPostedPayment(p) && p.supplierId === s.id && (!p.purchaseId || (p as any).paymentType === "ADVANCE"))
+          .reduce((acc, p) => acc + (p.amount || 0), 0);
+        const net = Math.max(0, gross - adv);
+
+        const dueDates = suppBills.map((p) => (p as any).dueDate || p.date).filter(Boolean);
+        const oldestDueDate = dueDates.length > 0 ? Math.min(...dueDates) : undefined;
+        const oldestDays = oldestDueDate ? Math.max(0, Math.floor((Date.now() - oldestDueDate) / (1000 * 60 * 60 * 24))) : 0;
+
+        const suppPayments = paymentsState.data
+          .filter((p) => p.supplierId === s.id && isPostedPayment(p))
+          .sort((a, b) => b.date - a.date);
+        const lastPaymentDate = suppPayments.length > 0 ? suppPayments[0].date : undefined;
+
+        let d0_30 = 0, d31_60 = 0, d61_90 = 0, d90_plus = 0;
+        for (const b of suppBills) {
+          if (b.ageDays <= 30) d0_30 += b.balance;
+          else if (b.ageDays <= 60) d31_60 += b.balance;
+          else if (b.ageDays <= 90) d61_90 += b.balance;
+          else d90_plus += b.balance;
+        }
+
+        return {
+          id: s.id,
+          partyCode: (s as any).partyCode || (s as any).code || s.id.slice(0, 8),
+          name: s.name || "Supplier",
+          grossPayable: gross,
+          outstanding: gross,
+          advances: adv,
+          netPayable: net,
+          oldestDueDate,
+          oldestDays,
+          lastPaymentDate,
+          agingBuckets: {
+            days0_30: d0_30,
+            days31_60: d31_60,
+            days61_90: d61_90,
+            days90_plus: d90_plus,
+          },
+        };
+      })
+      .filter((row) => row.grossPayable > 0.01 || row.advances > 0.01)
+      .sort((a, b) => b.netPayable - a.netPayable);
+  }, [parties, suppliers, payBills, paymentsState.data]);
 
   return (
     <div className="mt-4 space-y-4">
-      <div className="grid gap-3 sm:grid-cols-5">
-        <div className="rounded-xl border bg-card p-3">
-          <div className="text-xs text-muted-foreground flex items-center gap-1">
-            <Clock className="h-3.5 w-3.5 text-emerald-600" /> Current (0–30 Days)
-          </div>
-          {!isLoaded ? (
-            <div className="mt-1.5 h-6 w-24 animate-pulse rounded bg-muted/60" />
-          ) : (
-            <div className="font-mono text-base font-bold text-foreground mt-1">{formatMoney(aging.b0_30)}</div>
-          )}
+      {/* Sub-tab switcher */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+        <div className="flex items-center gap-2">
+          <Button
+            variant={subTab === "receivables" ? "default" : "outline"}
+            size="sm"
+            onClick={() => {
+              setSubTab("receivables");
+              setSelectedAgingBucket("all");
+            }}
+            className="text-xs h-8"
+          >
+            Accounts Receivable (AR)
+          </Button>
+          <Button
+            variant={subTab === "payables" ? "default" : "outline"}
+            size="sm"
+            onClick={() => {
+              setSubTab("payables");
+              setSelectedAgingBucket("all");
+            }}
+            className="text-xs h-8"
+          >
+            Accounts Payable (AP)
+          </Button>
         </div>
-        <div className="rounded-xl border bg-card p-3">
-          <div className="text-xs text-muted-foreground flex items-center gap-1">
-            <Clock className="h-3.5 w-3.5 text-blue-600" /> 31–60 Days
-          </div>
-          {!isLoaded ? (
-            <div className="mt-1.5 h-6 w-24 animate-pulse rounded bg-muted/60" />
-          ) : (
-            <div className="font-mono text-base font-bold text-foreground mt-1">{formatMoney(aging.b31_60)}</div>
-          )}
-        </div>
-        <div className="rounded-xl border bg-card p-3">
-          <div className="text-xs text-muted-foreground flex items-center gap-1">
-            <Clock className="h-3.5 w-3.5 text-amber-600" /> 61–90 Days
-          </div>
-          {!isLoaded ? (
-            <div className="mt-1.5 h-6 w-24 animate-pulse rounded bg-muted/60" />
-          ) : (
-            <div className="font-mono text-base font-bold text-foreground mt-1">{formatMoney(aging.b61_90)}</div>
-          )}
-        </div>
-        <div className="rounded-xl border bg-card p-3">
-          <div className="text-xs text-muted-foreground flex items-center gap-1">
-            <Clock className="h-3.5 w-3.5 text-destructive" /> 90+ Days (Overdue)
-          </div>
-          {!isLoaded ? (
-            <div className="mt-1.5 h-6 w-24 animate-pulse rounded bg-muted/60" />
-          ) : (
-            <div className="font-mono text-base font-bold text-destructive mt-1">{formatMoney(aging.b90_plus)}</div>
-          )}
-        </div>
-        <div className="rounded-xl border bg-primary/10 p-3">
-          <div className="text-xs text-primary font-semibold flex items-center gap-1">
-            <ShieldCheck className="h-3.5 w-3.5" /> Total Receivable
-          </div>
-          {!isLoaded ? (
-            <div className="mt-1.5 h-6 w-24 animate-pulse rounded bg-muted/60" />
-          ) : (
-            <div className="font-mono text-base font-bold text-primary mt-1">{formatMoney(aging.total)}</div>
-          )}
-        </div>
+
+        {subTab === "receivables" ? (
+          <ExportBtn
+            name="receivables_aging"
+            title="Receivables Aging Summary"
+            data={customerSummaryRows}
+            columns={RECEIVABLES_AGING_EXPORT_COLUMNS}
+          />
+        ) : (
+          <ExportBtn
+            name="payables_aging"
+            title="Payables Aging Summary"
+            data={supplierSummaryRows}
+            columns={PAYABLES_AGING_EXPORT_COLUMNS}
+          />
+        )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="card-soft p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <h3 className="font-semibold text-sm">Receivable Outstanding</h3>
-              <p className="text-[11px] text-muted-foreground">Bill-wise outstanding receivables</p>
+      {subTab === "receivables" ? (
+        <>
+          {/* Section 15: Three-Tier Receivables Clarity */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border bg-card p-3 shadow-xs">
+              <div className="text-xs text-muted-foreground">Gross Open Invoice Dues</div>
+              {!isLoaded ? (
+                <div className="mt-1 h-6 w-28 animate-pulse rounded bg-muted/60" />
+              ) : (
+                <div className="font-mono text-lg font-bold text-foreground mt-0.5">{formatMoney(grossReceivable)}</div>
+              )}
+              <div className="text-[10px] text-muted-foreground mt-1">Total unpaid balance across posted invoices</div>
             </div>
-            <ExportBtn name="receivables.json" data={recv} />
-          </div>
-          <div className="overflow-x-auto rounded border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Invoice</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Due Date</TableHead>
-                  <TableHead className="text-right">Age</TableHead>
-                  <TableHead className="text-right">Original</TableHead>
-                  <TableHead className="text-right">Outstanding</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {recv.map((i) => (
-                  <TableRow key={i.id}>
-                    <TableCell className="font-mono text-xs font-semibold">{i.number}</TableCell>
-                    <TableCell className="text-xs font-medium">{i.customerName}</TableCell>
-                    <TableCell className="text-xs">{i.dueDate ? formatDate(i.dueDate) : formatDate(i.date)}</TableCell>
-                    <TableCell className={`text-right font-mono text-xs ${i.ageDays > 60 ? "text-destructive font-bold" : i.ageDays > 30 ? "text-amber-600 font-semibold" : ""}`}>
-                      {i.ageDays}d
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs text-muted-foreground">{formatMoney(i.grandTotal)}</TableCell>
-                    <TableCell className="text-right font-mono text-xs font-bold text-foreground">{formatMoney(i.balance)}</TableCell>
-                  </TableRow>
-                ))}
-                {recv.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} className="py-6 text-center text-xs text-muted-foreground">
-                      No overdue credit receivables.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </Card>
 
-        <Card className="card-soft p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <h3 className="font-semibold text-sm">Supplier Payables</h3>
-              <p className="text-[11px] text-muted-foreground">Vendor bills awaiting settlement</p>
+            <div className="rounded-xl border bg-card p-3 shadow-xs">
+              <div className="text-xs text-muted-foreground">Available Customer Credit</div>
+              {!isLoaded ? (
+                <div className="mt-1 h-6 w-28 animate-pulse rounded bg-muted/60" />
+              ) : (
+                <div className="font-mono text-lg font-bold text-emerald-600 mt-0.5">{formatMoney(availableCustomerCredit)}</div>
+              )}
+              <div className="text-[10px] text-muted-foreground mt-1">Unallocated customer advances & credit notes</div>
             </div>
-            <ExportBtn name="payables.json" data={pay} />
+
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 shadow-xs">
+              <div className="text-xs text-primary font-semibold">Net Accounts Receivable</div>
+              {!isLoaded ? (
+                <div className="mt-1 h-6 w-28 animate-pulse rounded bg-muted/60" />
+              ) : (
+                <div className="font-mono text-lg font-bold text-primary mt-0.5">{formatMoney(netReceivable)}</div>
+              )}
+              <div className="text-[10px] text-muted-foreground mt-1">Net exposure (Gross Dues - Available Credit)</div>
+            </div>
           </div>
-          <div className="overflow-x-auto rounded border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Bill #</TableHead>
-                  <TableHead>Supplier</TableHead>
-                  <TableHead className="text-right">Original</TableHead>
-                  <TableHead className="text-right">Balance</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pay.map((p) => {
-                  const supplierName = resolvePartyNameFromCollections(p.supplierId, p.supplierSnapshot, parties, suppliers);
-                  return (
+
+          {/* Interactive Aging Bucket Filter */}
+          <div className="grid gap-2 sm:grid-cols-5">
+            <button
+              type="button"
+              onClick={() => setSelectedAgingBucket(selectedAgingBucket === "0-30" ? "all" : "0-30")}
+              className={`rounded-xl border p-2.5 text-left transition-all ${
+                selectedAgingBucket === "0-30" ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/30 ring-1 ring-emerald-600" : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3 text-emerald-600" /> Current (0–30d)
+              </div>
+              <div className="font-mono text-sm font-bold text-foreground mt-1">{formatMoney(recvAging.b0_30)}</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedAgingBucket(selectedAgingBucket === "31-60" ? "all" : "31-60")}
+              className={`rounded-xl border p-2.5 text-left transition-all ${
+                selectedAgingBucket === "31-60" ? "border-blue-600 bg-blue-50 dark:bg-blue-950/30 ring-1 ring-blue-600" : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3 text-blue-600" /> 31–60 Days
+              </div>
+              <div className="font-mono text-sm font-bold text-foreground mt-1">{formatMoney(recvAging.b31_60)}</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedAgingBucket(selectedAgingBucket === "61-90" ? "all" : "61-90")}
+              className={`rounded-xl border p-2.5 text-left transition-all ${
+                selectedAgingBucket === "61-90" ? "border-amber-600 bg-amber-50 dark:bg-amber-950/30 ring-1 ring-amber-600" : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3 text-amber-600" /> 61–90 Days
+              </div>
+              <div className="font-mono text-sm font-bold text-foreground mt-1">{formatMoney(recvAging.b61_90)}</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedAgingBucket(selectedAgingBucket === "90+" ? "all" : "90+")}
+              className={`rounded-xl border p-2.5 text-left transition-all ${
+                selectedAgingBucket === "90+" ? "border-destructive bg-destructive/10 ring-1 ring-destructive" : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3 text-destructive" /> 90+ Days
+              </div>
+              <div className="font-mono text-sm font-bold text-destructive mt-1">{formatMoney(recvAging.b90_plus)}</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedAgingBucket("all")}
+              className={`rounded-xl border p-2.5 text-left transition-all ${
+                selectedAgingBucket === "all" ? "border-primary bg-primary/10 ring-1 ring-primary" : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="text-[11px] text-primary font-semibold flex items-center gap-1">
+                <Filter className="h-3 w-3" /> All Aging (Reset)
+              </div>
+              <div className="font-mono text-sm font-bold text-primary mt-1">{formatMoney(recvAging.total)}</div>
+            </button>
+          </div>
+
+          {/* Customer Summary Table with View Statement Drill-down */}
+          <Card className="card-soft p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-sm">Customer Exposure & Statements</h3>
+                <p className="text-[11px] text-muted-foreground">Per-party balances with direct statement access</p>
+              </div>
+              <span className="text-xs text-muted-foreground font-mono">{customerSummaryRows.length} customers</span>
+            </div>
+            <div className="overflow-x-auto rounded border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Customer</TableHead>
+                    <TableHead className="text-right">Outstanding</TableHead>
+                    <TableHead className="text-right">Available Credit</TableHead>
+                    <TableHead className="text-right">Net Exposure</TableHead>
+                    <TableHead className="text-right">Oldest Due</TableHead>
+                    <TableHead className="text-right">Last Receipt</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {customerSummaryRows.map((c) => (
+                    <TableRow key={c.id}>
+                      <TableCell className="text-xs">
+                        <div className="font-semibold text-foreground">{c.name}</div>
+                        <div className="font-mono text-[10px] text-muted-foreground">{c.partyCode}</div>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs font-semibold text-foreground">
+                        {formatMoney(c.outstanding)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-emerald-600">
+                        {c.availableCredit > 0 ? formatMoney(c.availableCredit) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs font-bold text-primary">
+                        {formatMoney(c.netExposure)}
+                      </TableCell>
+                      <TableCell className="text-right text-xs">
+                        {c.oldestDueDate ? (
+                          <div>
+                            <span className={c.oldestDays > 60 ? "text-destructive font-bold" : c.oldestDays > 30 ? "text-amber-600 font-semibold" : ""}>
+                              {c.oldestDays}d overdue
+                            </span>
+                            <div className="text-[10px] text-muted-foreground">{formatDate(c.oldestDueDate)}</div>
+                          </div>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right text-xs text-muted-foreground">
+                        {c.lastReceiptDate ? formatDate(c.lastReceiptDate) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs gap-1"
+                          onClick={() => {
+                            setSelectedStatementPartyId(c.id);
+                            setStatementPartyType("CUSTOMER");
+                          }}
+                        >
+                          <Eye className="h-3 w-3" /> Statement
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {customerSummaryRows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="py-6 text-center text-xs text-muted-foreground">
+                        No outstanding customer balances found for active scope.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+
+          {/* Invoice-Level Overdue Table */}
+          <Card className="card-soft p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-sm">Bill-Wise Receivables</h3>
+                <p className="text-[11px] text-muted-foreground">
+                  {selectedAgingBucket === "all" ? "Showing all open invoices" : `Filtered by ${selectedAgingBucket} aging bucket`}
+                </p>
+              </div>
+              <span className="text-xs text-muted-foreground font-mono">{filteredRecvInvoices.length} invoices</span>
+            </div>
+            <div className="overflow-x-auto rounded border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Invoice #</TableHead>
+                    <TableHead>Customer</TableHead>
+                    <TableHead>Due Date</TableHead>
+                    <TableHead className="text-right">Age</TableHead>
+                    <TableHead className="text-right">Original</TableHead>
+                    <TableHead className="text-right">Outstanding</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredRecvInvoices.map((i) => (
+                    <TableRow key={i.id}>
+                      <TableCell className="font-mono text-xs font-semibold">
+                        <Link to="/invoices" className="text-primary hover:underline">
+                          {i.number}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-xs font-medium">{i.customerName}</TableCell>
+                      <TableCell className="text-xs">{i.dueDate ? formatDate(i.dueDate) : formatDate(i.date)}</TableCell>
+                      <TableCell className={`text-right font-mono text-xs ${i.ageDays > 60 ? "text-destructive font-bold" : i.ageDays > 30 ? "text-amber-600 font-semibold" : ""}`}>
+                        {i.ageDays}d
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-muted-foreground">{formatMoney(i.grandTotal)}</TableCell>
+                      <TableCell className="text-right font-mono text-xs font-bold text-foreground">{formatMoney(i.balance)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {filteredRecvInvoices.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-6 text-center text-xs text-muted-foreground">
+                        No invoices match current aging selection.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </>
+      ) : (
+        <>
+          {/* Section 16: Three-Tier Payables Clarity */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border bg-card p-3 shadow-xs">
+              <div className="text-xs text-muted-foreground">Gross Supplier Dues</div>
+              {!isLoaded ? (
+                <div className="mt-1 h-6 w-28 animate-pulse rounded bg-muted/60" />
+              ) : (
+                <div className="font-mono text-lg font-bold text-foreground mt-0.5">{formatMoney(grossPayable)}</div>
+              )}
+              <div className="text-[10px] text-muted-foreground mt-1">Total unpaid balance across posted vendor bills</div>
+            </div>
+
+            <div className="rounded-xl border bg-card p-3 shadow-xs">
+              <div className="text-xs text-muted-foreground">Supplier Advances</div>
+              {!isLoaded ? (
+                <div className="mt-1 h-6 w-28 animate-pulse rounded bg-muted/60" />
+              ) : (
+                <div className="font-mono text-lg font-bold text-blue-600 mt-0.5">{formatMoney(totalSupplierAdvances)}</div>
+              )}
+              <div className="text-[10px] text-muted-foreground mt-1">Unallocated advance payments to suppliers</div>
+            </div>
+
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 shadow-xs">
+              <div className="text-xs text-primary font-semibold">Net Accounts Payable</div>
+              {!isLoaded ? (
+                <div className="mt-1 h-6 w-28 animate-pulse rounded bg-muted/60" />
+              ) : (
+                <div className="font-mono text-lg font-bold text-primary mt-0.5">{formatMoney(netPayable)}</div>
+              )}
+              <div className="text-[10px] text-muted-foreground mt-1">Net liabilities (Gross Dues - Advances)</div>
+            </div>
+          </div>
+
+          {/* Interactive Aging Bucket Filter for Payables */}
+          <div className="grid gap-2 sm:grid-cols-5">
+            <button
+              type="button"
+              onClick={() => setSelectedAgingBucket(selectedAgingBucket === "0-30" ? "all" : "0-30")}
+              className={`rounded-xl border p-2.5 text-left transition-all ${
+                selectedAgingBucket === "0-30" ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/30 ring-1 ring-emerald-600" : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3 text-emerald-600" /> Current (0–30d)
+              </div>
+              <div className="font-mono text-sm font-bold text-foreground mt-1">{formatMoney(payAging.b0_30)}</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedAgingBucket(selectedAgingBucket === "31-60" ? "all" : "31-60")}
+              className={`rounded-xl border p-2.5 text-left transition-all ${
+                selectedAgingBucket === "31-60" ? "border-blue-600 bg-blue-50 dark:bg-blue-950/30 ring-1 ring-blue-600" : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3 text-blue-600" /> 31–60 Days
+              </div>
+              <div className="font-mono text-sm font-bold text-foreground mt-1">{formatMoney(payAging.b31_60)}</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedAgingBucket(selectedAgingBucket === "61-90" ? "all" : "61-90")}
+              className={`rounded-xl border p-2.5 text-left transition-all ${
+                selectedAgingBucket === "61-90" ? "border-amber-600 bg-amber-50 dark:bg-amber-950/30 ring-1 ring-amber-600" : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3 text-amber-600" /> 61–90 Days
+              </div>
+              <div className="font-mono text-sm font-bold text-foreground mt-1">{formatMoney(payAging.b61_90)}</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedAgingBucket(selectedAgingBucket === "90+" ? "all" : "90+")}
+              className={`rounded-xl border p-2.5 text-left transition-all ${
+                selectedAgingBucket === "90+" ? "border-destructive bg-destructive/10 ring-1 ring-destructive" : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3 text-destructive" /> 90+ Days
+              </div>
+              <div className="font-mono text-sm font-bold text-destructive mt-1">{formatMoney(payAging.b90_plus)}</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedAgingBucket("all")}
+              className={`rounded-xl border p-2.5 text-left transition-all ${
+                selectedAgingBucket === "all" ? "border-primary bg-primary/10 ring-1 ring-primary" : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="text-[11px] text-primary font-semibold flex items-center gap-1">
+                <Filter className="h-3 w-3" /> All Aging (Reset)
+              </div>
+              <div className="font-mono text-sm font-bold text-primary mt-1">{formatMoney(payAging.total)}</div>
+            </button>
+          </div>
+
+          {/* Supplier Summary Table with View Statement Drill-down */}
+          <Card className="card-soft p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-sm">Supplier Payables & Statements</h3>
+                <p className="text-[11px] text-muted-foreground">Per-vendor balances with direct statement access</p>
+              </div>
+              <span className="text-xs text-muted-foreground font-mono">{supplierSummaryRows.length} suppliers</span>
+            </div>
+            <div className="overflow-x-auto rounded border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Supplier</TableHead>
+                    <TableHead className="text-right">Gross Dues</TableHead>
+                    <TableHead className="text-right">Advances</TableHead>
+                    <TableHead className="text-right">Net Payable</TableHead>
+                    <TableHead className="text-right">Oldest Due</TableHead>
+                    <TableHead className="text-right">Last Payment</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {supplierSummaryRows.map((s) => (
+                    <TableRow key={s.id}>
+                      <TableCell className="text-xs">
+                        <div className="font-semibold text-foreground">{s.name}</div>
+                        <div className="font-mono text-[10px] text-muted-foreground">{s.partyCode}</div>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs font-semibold text-foreground">
+                        {formatMoney(s.grossPayable)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-blue-600">
+                        {s.advances > 0 ? formatMoney(s.advances) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs font-bold text-primary">
+                        {formatMoney(s.netPayable)}
+                      </TableCell>
+                      <TableCell className="text-right text-xs">
+                        {s.oldestDueDate ? (
+                          <div>
+                            <span className={s.oldestDays > 60 ? "text-destructive font-bold" : s.oldestDays > 30 ? "text-amber-600 font-semibold" : ""}>
+                              {s.oldestDays}d overdue
+                            </span>
+                            <div className="text-[10px] text-muted-foreground">{formatDate(s.oldestDueDate)}</div>
+                          </div>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right text-xs text-muted-foreground">
+                        {s.lastPaymentDate ? formatDate(s.lastPaymentDate) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs gap-1"
+                          onClick={() => {
+                            setSelectedStatementPartyId(s.id);
+                            setStatementPartyType("SUPPLIER");
+                          }}
+                        >
+                          <Eye className="h-3 w-3" /> Statement
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {supplierSummaryRows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="py-6 text-center text-xs text-muted-foreground">
+                        No outstanding supplier balances found for active scope.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+
+          {/* Bill-Wise Overdue Table */}
+          <Card className="card-soft p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-sm">Bill-Wise Payables</h3>
+                <p className="text-[11px] text-muted-foreground">
+                  {selectedAgingBucket === "all" ? "Showing all open vendor bills" : `Filtered by ${selectedAgingBucket} aging bucket`}
+                </p>
+              </div>
+              <span className="text-xs text-muted-foreground font-mono">{filteredPayBills.length} bills</span>
+            </div>
+            <div className="overflow-x-auto rounded border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Bill #</TableHead>
+                    <TableHead>Supplier</TableHead>
+                    <TableHead>Due Date</TableHead>
+                    <TableHead className="text-right">Age</TableHead>
+                    <TableHead className="text-right">Original</TableHead>
+                    <TableHead className="text-right">Balance</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredPayBills.map((p) => (
                     <TableRow key={p.id}>
-                      <TableCell className="font-mono text-xs font-semibold">{p.number}</TableCell>
-                      <TableCell className="text-xs">{supplierName}</TableCell>
+                      <TableCell className="font-mono text-xs font-semibold">
+                        <Link to="/purchases" className="text-primary hover:underline">
+                          {p.number}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-xs font-medium">{p.supplierName}</TableCell>
+                      <TableCell className="text-xs">{(p as any).dueDate ? formatDate((p as any).dueDate) : formatDate(p.date)}</TableCell>
+                      <TableCell className={`text-right font-mono text-xs ${p.ageDays > 60 ? "text-destructive font-bold" : p.ageDays > 30 ? "text-amber-600 font-semibold" : ""}`}>
+                        {p.ageDays}d
+                      </TableCell>
                       <TableCell className="text-right font-mono text-xs text-muted-foreground">{formatMoney(p.grandTotal)}</TableCell>
                       <TableCell className="text-right font-mono text-xs font-bold text-foreground">{formatMoney(p.balance)}</TableCell>
                     </TableRow>
-                  );
-                })}
-                {pay.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={4} className="py-6 text-center text-xs text-muted-foreground">
-                      No outstanding supplier payables.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                  ))}
+                  {filteredPayBills.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-6 text-center text-xs text-muted-foreground">
+                        No vendor bills match current aging selection.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </>
+      )}
+
+      {/* Customer / Supplier Statement Modal (Section 14) */}
+      <PartyStatementModal
+        party={selectedParty}
+        open={Boolean(selectedStatementPartyId)}
+        onOpenChange={(open) => {
+          if (!open) setSelectedStatementPartyId(null);
+        }}
+      />
+    </div>
+  );
+}
+
+// ========================================================================
+// 3.5. MONTH-END SNAPSHOT & REVIEW (SECTION 19)
+// ========================================================================
+
+function MonthEndReviewReport({ from, to }: { from?: number; to?: number }) {
+  const { activeBranchId, branches } = useActiveCompany();
+  const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
+  const purchasesState = useLiveState<Purchase>(() => db().purchases.toArray());
+  const receiptsState = useLiveState<Receipt>(() => db().receipts.toArray());
+  const paymentsState = useLiveState<Payment>(() => db().payments.toArray());
+  const salesReturnsState = useLiveState<SalesReturn>(() => db().salesReturns.toArray());
+  const creditNotesState = useLiveState<CreditNote>(() => db().creditNotes.toArray());
+  const isLoaded = invoicesState.isLoaded && purchasesState.isLoaded && receiptsState.isLoaded && paymentsState.isLoaded;
+
+  // Active branch name
+  const branchName = useMemo(() => {
+    if (!activeBranchId || activeBranchId === "all") return "All Branches (Consolidated)";
+    const b = branches.find((br) => br.id === activeBranchId);
+    return b?.name || activeBranchId;
+  }, [activeBranchId, branches]);
+
+  // Scoped documents
+  const scopedInvoices = useMemo(() => {
+    return invoicesState.data.filter((i) => {
+      if (!isPostedInvoice(i)) return false;
+      if (activeBranchId && activeBranchId !== "all" && i.branchId && i.branchId !== activeBranchId) return false;
+      return true;
+    });
+  }, [invoicesState.data, activeBranchId]);
+
+  const scopedPurchases = useMemo(() => {
+    return purchasesState.data.filter((p) => {
+      if (!isPostedPurchase(p)) return false;
+      if (activeBranchId && activeBranchId !== "all" && p.branchId && p.branchId !== activeBranchId) return false;
+      return true;
+    });
+  }, [purchasesState.data, activeBranchId]);
+
+  const scopedReceipts = useMemo(() => {
+    return receiptsState.data.filter((r) => {
+      if (!isPostedReceipt(r)) return false;
+      if (activeBranchId && activeBranchId !== "all" && r.branchId && r.branchId !== activeBranchId) return false;
+      return true;
+    });
+  }, [receiptsState.data, activeBranchId]);
+
+  const scopedPayments = useMemo(() => {
+    return paymentsState.data.filter((p) => {
+      if (!isPostedPayment(p)) return false;
+      if (activeBranchId && activeBranchId !== "all" && p.branchId && p.branchId !== activeBranchId) return false;
+      return true;
+    });
+  }, [paymentsState.data, activeBranchId]);
+
+  const scopedReturns = useMemo(() => {
+    return salesReturnsState.data.filter((r) => {
+      if (!isPostedSalesReturn(r)) return false;
+      if (activeBranchId && activeBranchId !== "all" && r.branchId && r.branchId !== activeBranchId) return false;
+      return true;
+    });
+  }, [salesReturnsState.data, activeBranchId]);
+
+  // Date range filtering
+  const invRange = useRange(scopedInvoices, from, to);
+  const purRange = useRange(scopedPurchases, from, to);
+  const recRange = useRange(scopedReceipts, from, to);
+  const payRange = useRange(scopedPayments, from, to);
+  const retRange = useRange(scopedReturns, from, to);
+
+  // Computations
+  const grossSales = invRange.reduce((s, i) => s + (i.grandTotal || 0), 0);
+  const salesReturns = retRange.reduce((s, r) => s + (r.grandTotal || 0), 0);
+  const netSalesRevenue = Math.max(0, grossSales - salesReturns);
+  const totalPurchases = purRange.reduce((s, p) => s + (p.grandTotal || 0), 0);
+  const grossProfit = netSalesRevenue - totalPurchases;
+  const grossMarginPct = netSalesRevenue > 0 ? (grossProfit / netSalesRevenue) * 100 : 0;
+
+  const totalReceipts = recRange.reduce((s, r) => s + (r.amount || 0), 0);
+  const totalPayments = payRange.reduce((s, p) => s + (p.amount || 0), 0);
+  const netCashMovement = totalReceipts - totalPayments;
+
+  // AR & AP balances for active scope
+  const grossAr = useMemo(() => {
+    return scopedInvoices.reduce((s, i) => {
+      const b = resolveCanonicalInvoiceOutstanding(i, receiptsState.data, salesReturnsState.data, creditNotesState.data).remainingBalance;
+      return s + b;
+    }, 0);
+  }, [scopedInvoices, receiptsState.data, salesReturnsState.data, creditNotesState.data]);
+
+  const customerCredits = useMemo(() => {
+    return resolveCanonicalCustomerCredits({
+      invoices: scopedInvoices,
+      receipts: scopedReceipts,
+      salesReturns: scopedReturns,
+      creditNotes: creditNotesState.data,
+      branchId: activeBranchId,
+    }).totalCustomerCredits;
+  }, [scopedInvoices, scopedReceipts, scopedReturns, creditNotesState.data, activeBranchId]);
+
+  const netAr = Math.max(0, grossAr - customerCredits);
+
+  const grossAp = useMemo(() => {
+    return scopedPurchases.reduce((s, p) => {
+      const b = resolveCanonicalPurchaseOutstanding(p, paymentsState.data).remainingBalance;
+      return s + b;
+    }, 0);
+  }, [scopedPurchases, paymentsState.data]);
+
+  const supplierAdvances = useMemo(() => {
+    return scopedPayments
+      .filter((p) => !p.purchaseId || (p as any).paymentType === "ADVANCE")
+      .reduce((s, p) => s + (p.amount || 0), 0);
+  }, [scopedPayments]);
+
+  const netAp = Math.max(0, grossAp - supplierAdvances);
+
+  // GST calculations
+  const outputGst = useMemo(() => {
+    return invRange.reduce((s, i) => {
+      const t = resolveDocumentTaxes(i);
+      return s + (t.totalTax || 0);
+    }, 0);
+  }, [invRange]);
+
+  const inputGst = useMemo(() => {
+    return purRange.reduce((s, p) => {
+      const t = resolveDocumentTaxes(p);
+      return s + (t.totalTax || 0);
+    }, 0);
+  }, [purRange]);
+
+  const netGstPosition = outputGst - inputGst; // Positive = Tax Payable, Negative = Credit Carried Forward
+
+  // Snapshot Dataset for Export & Review Table
+  const monthEndData = useMemo(() => {
+    return [
+      { category: "Trading & Revenue", metric: "Posted Gross Sales", amount: grossSales, status: "Verified", notes: `${invRange.length} posted invoices` },
+      { category: "Trading & Revenue", metric: "Sales Returns / Credit Notes", amount: salesReturns, status: "Verified", notes: `${retRange.length} returns` },
+      { category: "Trading & Revenue", metric: "Net Sales Revenue", amount: netSalesRevenue, status: "Verified", notes: "Gross Sales - Returns" },
+      { category: "Trading & Revenue", metric: "Posted Purchases", amount: totalPurchases, status: "Verified", notes: `${purRange.length} vendor bills` },
+      { category: "Trading & Revenue", metric: "Gross Trading Margin", amount: grossProfit, status: grossProfit >= 0 ? "Positive" : "Deficit", notes: `${grossMarginPct.toFixed(1)}% margin` },
+
+      { category: "Cash & Settlements", metric: "Customer Collections (Receipts)", amount: totalReceipts, status: "Posted", notes: `${recRange.length} receipts` },
+      { category: "Cash & Settlements", metric: "Supplier Disbursements (Payments)", amount: totalPayments, status: "Posted", notes: `${payRange.length} payments` },
+      { category: "Cash & Settlements", metric: "Net Cash/Bank Movement", amount: netCashMovement, status: netCashMovement >= 0 ? "Surplus" : "Deficit", notes: "Collections - Disbursements" },
+
+      { category: "Balance Sheet Exposure", metric: "Gross Accounts Receivable (AR)", amount: grossAr, status: "Active", notes: "Open invoice balances" },
+      { category: "Balance Sheet Exposure", metric: "Available Customer Credits", amount: customerCredits, status: "Active", notes: "Unapplied advances" },
+      { category: "Balance Sheet Exposure", metric: "Net Accounts Receivable", amount: netAr, status: "Balanced", notes: "Net exposure" },
+      { category: "Balance Sheet Exposure", metric: "Gross Accounts Payable (AP)", amount: grossAp, status: "Active", notes: "Open vendor bills" },
+      { category: "Balance Sheet Exposure", metric: "Supplier Advances", amount: supplierAdvances, status: "Active", notes: "Unapplied advances" },
+      { category: "Balance Sheet Exposure", metric: "Net Accounts Payable", amount: netAp, status: "Balanced", notes: "Net liability" },
+
+      { category: "Statutory Taxation", metric: "Output GST Liability", amount: outputGst, status: "Statutory", notes: "Collected on sales" },
+      { category: "Statutory Taxation", metric: "Input Tax Credit (ITC)", amount: inputGst, status: "Statutory", notes: "Eligible purchases ITC" },
+      { category: "Statutory Taxation", metric: "Net GST Position", amount: Math.abs(netGstPosition), status: netGstPosition >= 0 ? "Payable" : "Credit Forward", notes: netGstPosition >= 0 ? "Tax Payable to Govt" : "Input Tax Credit Carried Forward" },
+    ];
+  }, [
+    grossSales, salesReturns, netSalesRevenue, totalPurchases, grossProfit, grossMarginPct,
+    totalReceipts, totalPayments, netCashMovement, grossAr, customerCredits, netAr,
+    grossAp, supplierAdvances, netAp, outputGst, inputGst, netGstPosition,
+    invRange.length, retRange.length, purRange.length, recRange.length, payRange.length,
+  ]);
+
+  return (
+    <div className="mt-4 space-y-4">
+      {/* Scope Header Card */}
+      <Card className="card-soft p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-foreground flex items-center gap-2">
+              <Scale className="h-4 w-4 text-primary" /> Month-End Accounting & Financial Snapshot
+            </h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Comprehensive period summary of trading operations, settlements, balance sheet exposure, and statutory tax position for {branchName}.
+            </p>
           </div>
-        </Card>
+          <div className="flex items-center gap-2">
+            <ExportBtn
+              name={`Month_End_Review_${activeBranchId || "all"}`}
+              title="Month-End Financial Snapshot"
+              data={monthEndData}
+              columns={MONTH_END_SNAPSHOT_EXPORT_COLUMNS}
+            />
+          </div>
+        </div>
+      </Card>
+
+      {/* Summary KPI Grid */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-xl border bg-card p-3 shadow-xs">
+          <div className="text-xs text-muted-foreground">Net Sales Revenue</div>
+          <div className="font-mono text-xl font-bold text-foreground mt-1">{formatMoney(netSalesRevenue)}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Gross {formatMoney(grossSales)} - Returns {formatMoney(salesReturns)}</div>
+        </div>
+
+        <div className="rounded-xl border bg-card p-3 shadow-xs">
+          <div className="text-xs text-muted-foreground">Gross Trading Margin</div>
+          <div className={`font-mono text-xl font-bold mt-1 ${grossProfit >= 0 ? "text-emerald-600" : "text-destructive"}`}>
+            {formatMoney(grossProfit)}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Margin: {grossMarginPct.toFixed(1)}% on Net Sales</div>
+        </div>
+
+        <div className="rounded-xl border bg-card p-3 shadow-xs">
+          <div className="text-xs text-muted-foreground">Net Working Capital (AR - AP)</div>
+          <div className="font-mono text-xl font-bold text-primary mt-1">{formatMoney(netAr - netAp)}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">AR {formatMoney(netAr)} vs AP {formatMoney(netAp)}</div>
+        </div>
+
+        <div className="rounded-xl border bg-card p-3 shadow-xs">
+          <div className="text-xs text-muted-foreground">Net GST Position</div>
+          <div className={`font-mono text-xl font-bold mt-1 ${netGstPosition >= 0 ? "text-amber-600" : "text-emerald-600"}`}>
+            {formatMoney(Math.abs(netGstPosition))}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">
+            {netGstPosition >= 0 ? "Net Tax Payable" : "ITC Carried Forward"}
+          </div>
+        </div>
       </div>
+
+      {/* Structured Accounting Snapshot Table */}
+      <Card className="card-soft p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h4 className="font-semibold text-sm">Ledger Position Summary</h4>
+            <p className="text-[11px] text-muted-foreground">Structured breakdown for management & CA review</p>
+          </div>
+          <Badge variant="outline" className="font-mono text-xs">
+            {monthEndData.length} Canonical Ledger Positions
+          </Badge>
+        </div>
+
+        <div className="overflow-x-auto rounded border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Accounting Section</TableHead>
+                <TableHead>Key Metric / Ledger</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Audit Notes</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {monthEndData.map((row, idx) => (
+                <TableRow key={idx} className={row.metric.startsWith("Net") ? "bg-muted/15 font-medium" : ""}>
+                  <TableCell className="text-xs font-semibold text-muted-foreground">{row.category}</TableCell>
+                  <TableCell className="text-xs font-medium text-foreground">{row.metric}</TableCell>
+                  <TableCell className="text-right font-mono text-xs font-bold text-foreground">
+                    {formatMoney(row.amount)}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    <Badge variant={row.status === "Positive" || row.status === "Verified" || row.status === "Balanced" ? "secondary" : "outline"} className="text-[10px]">
+                      {row.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{row.notes}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
     </div>
   );
 }

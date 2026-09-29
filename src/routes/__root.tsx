@@ -14,6 +14,7 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { Toaster } from "sonner";
 import { AuthProvider } from "@/modules/auth/context/AuthContext";
 import { ActiveCompanyProvider } from "@/modules/company/context/ActiveCompanyContext";
+import { BusinessScopeProvider } from "@/modules/company/context/BusinessScopeContext";
 import { outboxManager } from "@/modules/sync/outboxManager";
 import { BmsStartupController } from "@/components/app/BmsStartupController";
 
@@ -202,10 +203,12 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ActiveCompanyProvider>
-          <BmsStartupController>
-            <Outlet />
-          </BmsStartupController>
-          <Toaster richColors position="top-right" />
+          <BusinessScopeProvider>
+            <BmsStartupController>
+              <Outlet />
+            </BmsStartupController>
+            <Toaster richColors position="top-right" />
+          </BusinessScopeProvider>
         </ActiveCompanyProvider>
       </AuthProvider>
     </QueryClientProvider>

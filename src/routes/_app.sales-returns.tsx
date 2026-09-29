@@ -34,6 +34,10 @@ import {
 import { postSalesReturn } from "@/functions/salesReturnFn";
 import { getSalesReturnNormalizedDoc } from "@/modules/salesReturns/salesReturnDocumentHelper";
 import { downloadDocumentPDF, buildDocumentPDF } from "@/lib/documentRenderer";
+import { useBusinessScope } from "@/modules/company/context/BusinessScopeContext";
+import { ExportDialog } from "@/components/app/ExportDialog";
+import { CREDIT_NOTE_EXPORT_COLUMNS } from "@/modules/export/exportColumnDefinitions";
+import { FileSpreadsheet } from "lucide-react";
 
 export const Route = createFileRoute("/_app/sales-returns")({
   head: () => ({ meta: [{ title: "Sales Returns & Credit Notes — BMS NEXT" }] }),
@@ -52,6 +56,7 @@ const RETURN_REASONS = [
 function SalesReturnsPage() {
   const { user } = useAuth();
   const { activeCompany, activeBranchId, branches, can, isOwner } = useActiveCompany();
+  const { scope, filterRecords } = useBusinessScope();
 
   // Queries
   const allSalesReturnsState = useLiveState<SalesReturn>(() =>
@@ -67,6 +72,7 @@ function SalesReturnsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>("all");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<SalesReturn | null>(null);
 
   // Form State for Return Creation
@@ -86,16 +92,21 @@ function SalesReturnsPage() {
   const [notes, setNotes] = useState<string>("");
   const [isPosting, setIsPosting] = useState(false);
 
-  // Active branch context filtering
-  const filteredSalesReturns = useMemo(() => {
-    let list = allSalesReturnsState.data || [];
+  // Active branch context & business scope filtering
+  const scopedSalesReturns = useMemo(() => {
+    let list = filterRecords(allSalesReturnsState.data || [], "date");
 
-    // Filter by branch
     if (activeBranchId && activeBranchId !== "all") {
       list = list.filter((r) => r.branchId === activeBranchId);
     } else if (selectedBranchFilter !== "all") {
       list = list.filter((r) => r.branchId === selectedBranchFilter);
     }
+
+    return list;
+  }, [allSalesReturnsState.data, filterRecords, activeBranchId, selectedBranchFilter]);
+
+  const filteredSalesReturns = useMemo(() => {
+    let list = scopedSalesReturns;
 
     // Filter by search
     if (searchTerm.trim()) {
@@ -110,7 +121,7 @@ function SalesReturnsPage() {
     }
 
     return list;
-  }, [allSalesReturnsState.data, activeBranchId, selectedBranchFilter, searchTerm]);
+  }, [scopedSalesReturns, searchTerm]);
 
   // Available invoices for creating returns
   const returnableInvoices = useMemo(() => {
@@ -316,15 +327,26 @@ function SalesReturnsPage() {
           title="Sales Returns & Credit Notes"
           description="Process customer returns, issue authoritative credit notes, and record automated inventory restock and GST reversals."
           actions={
-            can("SALES_RETURN_CREATE") ? (
+            <div className="flex items-center gap-2">
               <Button
-                onClick={() => setIsCreateOpen(true)}
-                className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
+                variant="outline"
+                onClick={() => setIsExportOpen(true)}
+                className="gap-2 shadow-xs"
+                title="Export Credit Notes & Returns"
               >
-                <Plus className="h-4 w-4" />
-                New Sales Return
+                <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
+                Export
               </Button>
-            ) : null
+              {can("SALES_RETURN_CREATE") ? (
+                <Button
+                  onClick={() => setIsCreateOpen(true)}
+                  className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
+                >
+                  <Plus className="h-4 w-4" />
+                  New Sales Return
+                </Button>
+              ) : null}
+            </div>
           }
         />
 
@@ -877,6 +899,17 @@ function SalesReturnsPage() {
             </DialogContent>
           </Dialog>
         )}
+
+        {/* Export Dialog */}
+        <ExportDialog
+          open={isExportOpen}
+          onOpenChange={setIsExportOpen}
+          title="Export Sales Returns & Credit Notes"
+          filename={`Credit_Notes_${new Date().toISOString().split("T")[0]}`}
+          columns={CREDIT_NOTE_EXPORT_COLUMNS}
+          filteredData={filteredSalesReturns}
+          allScopeData={scopedSalesReturns}
+        />
       </div>
     </AppShell>
   );

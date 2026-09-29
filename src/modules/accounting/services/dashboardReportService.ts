@@ -3,6 +3,7 @@ import type { Invoice, Purchase, Product, Customer, Supplier, Receipt, Payment, 
 import { computeMonthlyTrend } from "./dashboardAnalyticsService.ts";
 import { buildCanonicalReportingScope, type CanonicalReportingScope } from "./reportingScope.ts";
 import { logDashboardDiagnostics } from "./dashboardDiagnostics.ts";
+import { getLineDebitPaise, getLineCreditPaise } from "./reportEngine.ts";
 import {
   isPostedInvoice,
   isPostedPurchase,
@@ -386,13 +387,8 @@ export function computeDashboardMetrics(params: {
             if (line.ledgerId === l.id) {
               ledgerHasLines = true;
               // Canonical accounting storage unit is MoneyPaise (integer paise)
-              const rawDr = (line.debit || 0) > 0
-                ? (line.debitPaise ?? line.storedAmountPaise ?? line.debit ?? 0)
-                : 0;
-
-              const rawCr = (line.credit || 0) > 0
-                ? (line.creditPaise ?? line.storedAmountPaise ?? line.credit ?? 0)
-                : 0;
+              const rawDr = getLineDebitPaise(line);
+              const rawCr = getLineCreditPaise(line);
 
               periodDrPaise += Math.round(rawDr);
               periodCrPaise += Math.round(rawCr);
@@ -476,11 +472,13 @@ export function computeDashboardMetrics(params: {
         for (const line of v.lines || []) {
           if (line.ledgerId === l.id) {
             ledgerHasLines = true;
+            const lineDrPaise = getLineDebitPaise(line);
+            const lineCrPaise = getLineCreditPaise(line);
             if (financialYearStart && vTime < financialYearStart) {
-              signedOpeningPaise += (line.debit || 0) - (line.credit || 0);
+              signedOpeningPaise += lineDrPaise - lineCrPaise;
             } else if (!financialYearEnd || vTime <= financialYearEnd) {
-              periodDrPaise += line.debit || 0;
-              periodCrPaise += line.credit || 0;
+              periodDrPaise += lineDrPaise;
+              periodCrPaise += lineCrPaise;
             }
           }
         }

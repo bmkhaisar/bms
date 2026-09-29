@@ -654,6 +654,8 @@ export interface CustomerCreditItem {
   reversalVoucherId?: string;
 }
 
+export const resolveCanonicalCustomerCredits = calculateAuthoritativeCustomerCredits;
+
 export function calculateAuthoritativeCustomerCredits(
   paramsOrInvoices:
     | {
