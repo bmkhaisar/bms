@@ -9,7 +9,6 @@ import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext
 import { toast } from "sonner";
 import { KeyRound, Loader2, ShieldCheck, ShieldAlert, Lock, Eye, EyeOff, Sun, Moon, ArrowLeft } from "lucide-react";
 import { BmsBrandMark } from "@/components/brand/BmsBrandMark";
-import { BRAND_TAGLINE } from "@/config/publicConfig";
 import { checkPlatformAdminSetupStatusFn } from "@/functions/platformAdminFns";
 import { startupState } from "@/modules/app/startupState";
 import {
@@ -207,7 +206,7 @@ function LoginPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(109,93,251,0.08),transparent_80%)] dark:bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(109,93,251,0.12),transparent_80%)] p-4 selection:bg-accent selection:text-accent-foreground">
+    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(109,93,251,0.08),transparent_80%)] dark:bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(109,93,251,0.12),transparent_80%)] px-5 py-8 sm:p-6 selection:bg-accent selection:text-accent-foreground">
       {/* Top right theme toggle */}
       <div className="absolute top-4 right-4">
         <Button
@@ -221,9 +220,9 @@ function LoginPage() {
         </Button>
       </div>
 
-      <div className="relative w-full max-w-[400px]">
+      <div className="relative w-full max-w-[480px]">
         {/* Brand Header — BMS Symbol (Variant A) */}
-        <div className="mb-6 flex flex-col items-center gap-2 text-center">
+        <div className="mb-8 flex flex-col items-center gap-2 text-center">
           <div className="relative">
             <BmsBrandMark size="lg" className="rounded-2xl shadow-soft p-1" />
             <div className="absolute -bottom-1 -right-1 rounded-full bg-card p-0.5 shadow-xs border border-border/80">
@@ -231,13 +230,13 @@ function LoginPage() {
             </div>
           </div>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground">BMS NEXT</h1>
-          <p className="text-xs font-medium text-muted-foreground">
-            Multi-Company Cloud ERP · {BRAND_TAGLINE}
+          <p className="text-[13px] text-muted-foreground">
+            Sign in to continue to your business workspace.
           </p>
         </div>
 
-        {/* Soft Login Card */}
-        <Card className="rounded-3xl border border-border/80 bg-card shadow-raised transition-all">
+        {/* Soft Login Card with ambient glow */}
+        <Card className="rounded-[24px] border border-border/60 bg-card shadow-raised transition-all ring-1 ring-purple-500/[0.04] dark:ring-purple-400/[0.06]">
           <CardHeader className="space-y-1 p-6 pb-2 sm:p-7 sm:pb-2">
             <CardTitle className="text-base font-semibold tracking-tight text-foreground">Sign In</CardTitle>
             <CardDescription className="text-xs text-muted-foreground">
@@ -312,7 +311,7 @@ function LoginPage() {
 
               <Button
                 type="submit"
-                className="w-full h-10 gap-2 font-semibold text-xs rounded-xl shadow-xs active:scale-[0.98]"
+                className="w-full h-11 gap-2 font-semibold text-xs rounded-xl shadow-xs bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 active:scale-[0.98] transition-all"
                 disabled={loading || entering || lockoutStatus.isLocked}
               >
                 {loading ? (

@@ -56,12 +56,7 @@ export function BmsStartupController({
   const nav = useNavigate();
   const loc = useLocation();
 
-  // PUBLIC ROUTE BYPASS: Skip startup overlay entirely for public pages when unauthenticated.
-  // This is the authoritative fix — public pages render immediately without auth resolution.
   const isPublicRoute = PUBLIC_ROUTES.has(loc.pathname);
-  if (isPublicRoute && !user && !authInitializing) {
-    return <>{children}</>;
-  }
 
   // SSR-safe client initialization
   useEffect(() => {
@@ -189,6 +184,12 @@ export function BmsStartupController({
 
   const isExtended = animationDone && authDestination.type === "waiting";
 
+  // PUBLIC ROUTE BYPASS — placed AFTER all hooks to satisfy React Rules of Hooks.
+  // Unauthenticated visitors on public pages skip the startup overlay entirely.
+  if (isPublicRoute && !user && !authInitializing) {
+    return <>{children}</>;
+  }
+
   // When startup has finished, render children directly without any wrapper, inert, or pointer-event restrictions
   if (!isStartupActive) {
     return <>{children}</>;
@@ -223,3 +224,4 @@ export function BmsStartupController({
     </>
   );
 }
+
