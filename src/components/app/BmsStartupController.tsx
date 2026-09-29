@@ -36,6 +36,9 @@ export interface BmsStartupControllerProps {
  * 7. Bounded recovery (>12s) provides clean recovery text and Retry action without revealing protected content.
  * 8. Window-scoped single run: internal navigations DO NOT replay startup.
  */
+/** Public routes that should NEVER be caught by startup redirect logic */
+const PUBLIC_ROUTES = new Set(["/", "/about", "/faq", "/contact", "/terms", "/privacy", "/login"]);
+
 export function BmsStartupController({
   children,
   durationMs = 0,
@@ -52,6 +55,13 @@ export function BmsStartupController({
   const { loading: companyLoading, activeCompany, companies } = useActiveCompany();
   const nav = useNavigate();
   const loc = useLocation();
+
+  // PUBLIC ROUTE BYPASS: Skip startup overlay entirely for public pages when unauthenticated.
+  // This is the authoritative fix — public pages render immediately without auth resolution.
+  const isPublicRoute = PUBLIC_ROUTES.has(loc.pathname);
+  if (isPublicRoute && !user && !authInitializing) {
+    return <>{children}</>;
+  }
 
   // SSR-safe client initialization
   useEffect(() => {
@@ -117,14 +127,6 @@ export function BmsStartupController({
 
       // Determine target destination and preserve valid authorized deep links
       let targetPath: string;
-      const isPublicRoute =
-        loc.pathname === "/" ||
-        loc.pathname === "/about" ||
-        loc.pathname === "/faq" ||
-        loc.pathname === "/terms" ||
-        loc.pathname === "/privacy" ||
-        loc.pathname === "/contact" ||
-        loc.pathname === "/login";
 
       if (authDestination.type === "dashboard") {
         const isAppSubRoute =
@@ -135,6 +137,7 @@ export function BmsStartupController({
 
         targetPath = isAppSubRoute && loc.pathname !== "/" ? loc.pathname : "/";
       } else if (!user && isPublicRoute) {
+        // Unauthenticated user on a public route — stay on current page
         targetPath = loc.pathname;
       } else {
         targetPath = authDestination.to;

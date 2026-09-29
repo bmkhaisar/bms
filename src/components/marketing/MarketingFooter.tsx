@@ -20,8 +20,7 @@ export function MarketingFooter() {
             <p className="text-sm text-muted-foreground leading-relaxed max-w-sm mt-1">
               Connected business operations for growing teams. Quotations, GST billing, multi-branch inventory, and synchronized ledgers in one fast workspace.
             </p>
-            <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/60 px-3 py-1 text-xs text-muted-foreground mt-1">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <div className="inline-flex items-center rounded-full border border-border/60 bg-card/60 px-3.5 py-1.5 text-xs text-muted-foreground mt-1">
               <span>Engineered for Indian Businesses</span>
             </div>
           </div>

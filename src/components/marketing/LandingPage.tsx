@@ -10,7 +10,6 @@ import {
   TrendingUp,
   ShieldCheck,
   Layers,
-  Sparkles,
   ChevronDown,
   Mail,
   Zap,
@@ -43,8 +42,7 @@ export function LandingPage() {
           ================================================== */}
       <section className="pt-12 sm:pt-20 pb-16 sm:pb-24 px-4 sm:px-6 max-w-5xl mx-auto text-center">
         {/* Tagline Pill */}
-        <div className="inline-flex items-center gap-2 rounded-full border border-purple-500/20 bg-purple-500/5 px-4 py-1.5 text-xs font-semibold text-purple-700 dark:text-purple-300 backdrop-blur-md mb-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-          <Sparkles className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+        <div className="inline-flex items-center rounded-full border border-purple-500/20 bg-purple-500/5 px-5 py-1.5 text-xs font-semibold text-purple-700 dark:text-purple-300 backdrop-blur-md mb-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
           <span>BUSINESS MANAGEMENT, WITHOUT THE COMPLEXITY</span>
         </div>
 

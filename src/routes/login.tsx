@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,9 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { toast } from "sonner";
-import { KeyRound, Loader2, ShieldCheck, ShieldAlert, Lock, Eye, EyeOff, Sun, Moon } from "lucide-react";
+import { KeyRound, Loader2, ShieldCheck, ShieldAlert, Lock, Eye, EyeOff, Sun, Moon, ArrowLeft } from "lucide-react";
 import { BmsBrandMark } from "@/components/brand/BmsBrandMark";
-import { BRAND_ATTRIBUTION, BRAND_TAGLINE } from "@/config/publicConfig";
+import { BRAND_TAGLINE } from "@/config/publicConfig";
 import { checkPlatformAdminSetupStatusFn } from "@/functions/platformAdminFns";
 import { startupState } from "@/modules/app/startupState";
 import {
@@ -336,16 +336,20 @@ function LoginPage() {
           </CardContent>
         </Card>
 
-        {/* Supporting Footer Links */}
-        <div className="mt-6 flex flex-col items-center gap-2 text-center text-xs text-muted-foreground">
-          <div className="flex items-center gap-3">
-            <a href="/about" className="transition-colors hover:text-foreground">About</a>
-            <span className="text-muted-foreground/40">·</span>
-            <a href="/contact" className="transition-colors hover:text-foreground">Support</a>
+        {/* Footer: Back to Home + minimal legal */}
+        <div className="mt-6 flex flex-col items-center gap-3 text-center text-xs text-muted-foreground">
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span>Back to Home</span>
+          </Link>
+          <div className="flex items-center gap-3 text-[11px] text-muted-foreground/70">
+            <Link to="/terms" className="transition-colors hover:text-foreground">Terms</Link>
+            <span className="text-muted-foreground/30">·</span>
+            <Link to="/privacy" className="transition-colors hover:text-foreground">Privacy</Link>
           </div>
-          <p className="text-[11px] font-medium text-muted-foreground/80">
-            Product by <span className="font-semibold text-foreground">{BRAND_ATTRIBUTION}</span>
-          </p>
         </div>
       </div>
 
