@@ -44,24 +44,16 @@ export const APP_ENV = (
 export const BMS_DEPLOYMENT_ENV = APP_ENV;
 
 export function isBetaDeployment(): boolean {
-  // Explicit production environment flag strictly disables all staging/beta indicators
+  // Explicit environment configuration strictly takes precedence (SSR and browser client)
   if (APP_ENV === "production") {
     return false;
   }
   if (APP_ENV === "staging" || APP_ENV === "beta") {
     return true;
   }
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname.toLowerCase();
-    if (
-      host.includes("-staging") ||
-      host.includes("staging.") ||
-      host.includes("staging-") ||
-      host.includes("beta.") ||
-      host.includes("-beta-")
-    ) {
-      return true;
-    }
+  // Safe fallback for local Vite dev server
+  if (typeof import.meta !== "undefined" && import.meta.env?.DEV) {
+    return true;
   }
   return false;
 }

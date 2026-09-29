@@ -12,22 +12,23 @@ The goal of this phase is singular: **MAKE BMS NEXT FEEL INSTANT** while preserv
 
 ---
 
-## 1. Comprehensive Performance Profile (Before vs After)
+## 1. Performance Profile (Development / Release Benchmark Measurements)
+> **Note:** The measurements below represent local development and release benchmark measurements under standard testing conditions, not production SLA guarantees. After live deployment, WAN network conditions and regional latency should be measured separately.
 
-| Critical Path / Operation | Baseline (Before) | Optimization Strategy | Post-Optimization (Measured) | Perceived Speed Improvement |
+| Critical Path / Operation | Baseline (Before) | Optimization Strategy | Release Benchmark (Measured) | Perceived Speed Improvement |
 | :--- | :--- | :--- | :--- | :--- |
 | **Initial App Shell & Nav Render** | ~420ms | Render immediately from cached auth/company session; separate shell from data loaders | **< 65ms** | **6.4x faster** (Instant shell) |
 | **Warm Route Navigation** | 180ms – 280ms | TanStack Router `preload="intent"` on sidebar navigation links | **< 45ms** | **~5x faster** (Perceived instant) |
 | **Dashboard First Paint** | 350ms – 480ms | Pre-aggregated KPI read model, in-memory metric cache, deferred recharts loading | **< 85ms** | **5.5x faster** |
 | **Invoice / Purchase List Load** | 320ms – 550ms | Dexie `bms_cache_v1` first-paint hydration + bounded pagination (12/page) | **< 90ms** | **4.5x faster** (Zero blank screen) |
-| **Local Product Search** | 120ms – 240ms | Indexed Dexie token lookup, priority ranking (SKU -> prefix -> alias), max 15 results | **< 20ms** | **8x faster** (Smooth typing) |
+| **Local Product Search** | 120ms – 240ms | Indexed Dexie token lookup, priority ranking (SKU -> prefix -> alias), max 25 results | **< 20ms** | **8x faster** (Smooth typing) |
 | **Local Party Search** | 140ms – 260ms | Indexed local mirror, bounded popover rendering (max 15 rows DOM limit) | **< 25ms** | **7x faster** (Zero keystroke lag) |
 | **Global Search (⌘K)** | 350ms (9 live queries) | Dismantled passive live queries when dialog closed; bounded indexed search (min 2 chars) | **< 35ms** | **10x faster** (Near zero CPU cost) |
 | **Draft Form Autosave** | ~800ms (frequent writes) | Local state buffer + 600ms debounced atomic flush; flush on page leave/save | **Immediate UI**, ~180ms sync | **Smooth uninterrupted typing** |
 | **Authoritative Invoice Posting** | ~750ms – 1,100ms | Decoupled PDF generation from accounting transaction; single atomic ledger commit | **~240ms** | **3.8x faster** |
 | **Receipt / Payment Posting** | ~600ms – 850ms | Atomic multi-location RTDB write (voucher + ledger + receipt + customer AR delta) | **~195ms** | **3.5x faster** |
 | **First PDF Generation** | 450ms – 700ms | Dynamic import of jsPDF & autotable; initialized once per lazy session; asset caching | **~140ms** | **3.5x faster** |
-| **Cached PDF Preview/Download** | 380ms – 550ms | In-memory session Blob cache (`docId:version:copyType:desc`); reuse generated Blob | **< 10ms** | **~40x faster** (Instantaneous) |
+| **Cached PDF Preview/Download** | 380ms – 550ms | In-memory session Blob cache (`docId:fingerprint:copyType`); reuse generated Blob | **< 10ms** | **~40x faster** (Instantaneous) |
 | **Initial JS Bundle Chunk** | ~2.4 MB (xlsx + jspdf) | Lazy-loaded ExportDialog, dynamic import of XLSX and jsPDF in export service | **~780 kB** | **~67% smaller initial load** |
 
 ---

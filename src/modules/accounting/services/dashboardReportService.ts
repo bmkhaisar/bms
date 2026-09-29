@@ -869,3 +869,29 @@ export function computeDashboardMetrics(params: {
     hasData,
   };
 }
+
+/**
+ * Reconciles and rebuilds the Dashboard Summary Projection from canonical posted ledgers and documents.
+ * Invariant: Summary projection is a READ MODEL only and never writes back to accounting records.
+ */
+export function reconcileDashboardSummaryProjection(params: Parameters<typeof computeDashboardMetrics>[0]): {
+  rebuiltProjection: DashboardMetrics;
+  isConsistent: boolean;
+  reconciliationAudit: {
+    arReconciled: boolean;
+    discrepancyPaise: number;
+    rebuiltAt: number;
+  };
+} {
+  const rebuilt = computeDashboardMetrics(params);
+  const arDiscrepancy = Math.abs((rebuilt.netReceivables || 0) - (rebuilt.controlLedgerReceivable || 0));
+  return {
+    rebuiltProjection: rebuilt,
+    isConsistent: arDiscrepancy < 0.05,
+    reconciliationAudit: {
+      arReconciled: rebuilt.isArReconciled ?? true,
+      discrepancyPaise: Math.round(arDiscrepancy * 100),
+      rebuiltAt: Date.now(),
+    },
+  };
+}

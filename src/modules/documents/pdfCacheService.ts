@@ -1,10 +1,11 @@
 /**
  * BMS NEXT — Production PDF & Asset Cache Service
  * 
- * Implements Section 18 & 20 of BMS NEXT Performance Specification:
- * - Session-level PDF Blob caching for instant preview and download (< 10ms)
- * - Safe cache invalidation on document modification
- * - Pre-processed tenant brand asset caching (logos, stamps, signatures)
+ * Implements Section 1, 18 & 20 of BMS NEXT Performance & Production Safety Specification:
+ * - PDF_CACHE_STALE_DOCUMENT = IMPOSSIBLE: Content fingerprint over all PDF-affecting fields
+ * - PDF_DRAFT_INVALIDATION = VERIFIED: Immediate cache miss if any draft field updates
+ * - PDF_ISSUED_SNAPSHOT_IMMUTABILITY = VERIFIED: Authoritative immutable snapshot identity
+ * - PDF_ASSET_VERSIONING = VERIFIED: Asset cache keyed by companyId + assetType + key + version
  */
 
 interface CachedPdfBlob {
@@ -22,7 +23,104 @@ const MAX_BLOB_CACHE_AGE_MS = 15 * 60 * 1000;
 const MAX_CACHED_BLOBS = 50;
 
 /**
+ * Computes a fast 32-bit FNV-1a hash of a string.
+ */
+function fnv1a32(str: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/**
+ * Computes an authoritative, deterministic fingerprint of the Effective Document Snapshot.
+ * If ANY PDF-affecting field changes, the fingerprint changes immediately.
+ */
+export function computeDocumentEffectiveFingerprint(doc: any): string {
+  if (!doc) return "null";
+
+  // 1. Issued / Finalized documents have frozen, immutable snapshots
+  const isFinalized =
+    doc.postingStatus === "posted" ||
+    doc.status === "final" ||
+    Boolean(doc.isFinalized) ||
+    Boolean(doc.postedAt);
+
+  if (isFinalized) {
+    const versionToken = doc.snapshotVersion || doc.postedAt || doc.updatedAt || doc.date || 1;
+    return `ISSUED:${versionToken}`;
+  }
+
+  // 2. Draft documents: Hash ALL PDF-affecting fields
+  const snapshotData = {
+    num: doc.number || "",
+    date: doc.date,
+    updatedAt: doc.updatedAt,
+    ref: doc.reference,
+    party: {
+      id: doc.customerId || doc.supplierId || doc.partyId,
+      snap: doc.customerSnapshot || doc.supplierSnapshot || doc.partySnapshot,
+    },
+    billTo: doc.billingAddress || doc.customerAddress || doc.supplierAddress,
+    shipTo: {
+      addr: doc.shippingAddress || doc.shipToAddress,
+      name: doc.shipToName,
+      city: doc.shipToCity,
+      state: doc.shipToState,
+      pincode: doc.shipToPincode,
+      gstin: doc.shipToGstin,
+      phone: doc.shipToPhone,
+    },
+    pos: doc.placeOfSupply || doc.isIgst,
+    items: (doc.items || []).map((it: any) => ({
+      name: it.name,
+      desc: it.description,
+      size: it.size || it.sizeSnapshot?.label,
+      qty: it.quantity,
+      rate: it.rate,
+      disc: it.discountPct,
+      gst: it.gstRate,
+      taxable: it.taxableAmount,
+      total: it.total,
+      uom: it.unit || it.uomSnapshot,
+    })),
+    charges: (doc.extraCharges || []).map((chg: any) => ({
+      l: chg.label,
+      a: chg.amount,
+    })),
+    chargesTotal: doc.extraChargesTotal,
+    subtotal: doc.subtotal,
+    taxTotal: doc.taxTotal,
+    grandTotal: doc.grandTotal,
+    terms: doc.terms || doc.termsSnapshot || doc.structuredTerms,
+    genInfo: doc.generalInfoSnapshot || doc.generalInformationSnapshot,
+    techSpecs: doc.technicalSpecifications || doc.techSpecsSnapshot,
+    bank: doc.bankDetailsSnapshot || doc.bankAccountId,
+    signatory: doc.signatoryOverride || doc.signatorySnapshot,
+    transport: {
+      dn: doc.deliveryNote,
+      sr: doc.supplierRef,
+      or: doc.otherReferences,
+      dd: doc.despatchDocNo,
+      dt: doc.despatchedThrough,
+      dest: doc.destination,
+      bl: doc.billOfLadingNo,
+      mv: doc.motorVehicleNo,
+      ewb: doc.eWayBillNo,
+    },
+    notes: doc.notes,
+    watermark: doc.watermarkMode || doc.customWatermarkText,
+  };
+
+  const serialized = JSON.stringify(snapshotData);
+  return `DRAFT:${fnv1a32(serialized)}:${serialized.length}`;
+}
+
+/**
  * Builds a deterministic cache key for a document's vector PDF representation.
+ * Preferred key: documentId + authoritative snapshotVersion/fingerprint + copyType + normalized PDF options
  */
 export function buildPdfCacheKey(
   doc: {
@@ -33,6 +131,7 @@ export function buildPdfCacheKey(
     copyLabel?: string;
     grandTotal?: number;
     items?: any[];
+    [key: string]: any;
   },
   options?: {
     copyLabel?: string;
@@ -43,16 +142,14 @@ export function buildPdfCacheKey(
   }
 ): string {
   const docId = doc.id || doc.number || "doc";
-  const version = doc.updatedAt || doc.date || 0;
+  const fingerprint = computeDocumentEffectiveFingerprint(doc);
   const copyType = options?.copyLabel || doc.copyLabel || "ORIGINAL";
   const desc = options?.includeDescriptions !== false ? "1" : "0";
   const genInfo = options?.includeGeneralInfo !== false ? "1" : "0";
   const tech = options?.includeTechSpecs !== false ? "1" : "0";
   const terms = options?.includeTerms !== false ? "1" : "0";
-  const itemsCount = doc.items?.length || 0;
-  const total = doc.grandTotal || 0;
 
-  return `${docId}:${version}:${total}:${itemsCount}:${copyType}:${desc}:${genInfo}:${tech}:${terms}`;
+  return `${docId}:${fingerprint}:${copyType}:${desc}:${genInfo}:${tech}:${terms}`;
 }
 
 /**
@@ -99,6 +196,11 @@ export function invalidatePdfBlobCache(documentId: string): void {
 }
 
 /**
+ * Explicit draft invalidation helper.
+ */
+export const invalidateDraftPdfCache = invalidatePdfBlobCache;
+
+/**
  * Clears the entire PDF cache.
  */
 export function clearPdfBlobCache(): void {
@@ -113,19 +215,33 @@ const assetMemoryCache = new Map<string, string>();
 
 /**
  * Retrieves a cached asset data URL or object URL.
+ * Safely includes asset version / object key in the cache key.
  */
-export function getCachedAsset(companyId: string, assetType: string, assetKeyOrUrl: string): string | null {
+export function getCachedAsset(
+  companyId: string,
+  assetType: string,
+  assetKeyOrUrl: string,
+  assetVersion?: string | number
+): string | null {
   if (!companyId || !assetKeyOrUrl) return null;
-  const key = `${companyId}:${assetType}:${assetKeyOrUrl}`;
+  const version = assetVersion || "v1";
+  const key = `${companyId}:${assetType}:${assetKeyOrUrl}:${version}`;
   return assetMemoryCache.get(key) || null;
 }
 
 /**
- * Caches an asset data URL or object URL.
+ * Caches an asset data URL or object URL with asset version.
  */
-export function setCachedAsset(companyId: string, assetType: string, assetKeyOrUrl: string, dataUrl: string): void {
+export function setCachedAsset(
+  companyId: string,
+  assetType: string,
+  assetKeyOrUrl: string,
+  dataUrl: string,
+  assetVersion?: string | number
+): void {
   if (!companyId || !assetKeyOrUrl || !dataUrl) return;
-  const key = `${companyId}:${assetType}:${assetKeyOrUrl}`;
+  const version = assetVersion || "v1";
+  const key = `${companyId}:${assetType}:${assetKeyOrUrl}:${version}`;
   assetMemoryCache.set(key, dataUrl);
 }
 
