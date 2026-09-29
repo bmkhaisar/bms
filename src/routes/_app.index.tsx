@@ -265,6 +265,7 @@ function Dashboard() {
   }, [
     isDataLoaded,
     ledgers,
+    vouchers,
     invoices,
     purchases,
     products,

@@ -326,39 +326,11 @@ export function computeDashboardMetrics(params: {
   let totalPayables = 0;
 
   // AR & AP Derivation
-  if (isBranchScoped) {
-    // STRICT BRANCH SCOPE: Zero organization-wide AR/AP leakage
-    totalReceivables = invoiceSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
-    totalPayables = purchaseSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
-  } else {
-    // CONSOLIDATED SCOPE: Authoritative double-entry ledger balances across all branches
-    const receivableLedgers = ledgers.filter(
-      (l) => l.partyType === "customer" || l.groupId === "grp_sundry_debtors"
-    );
-    const payableLedgers = ledgers.filter(
-      (l) => l.partyType === "supplier" || l.groupId === "grp_sundry_creditors"
-    );
-
-    if (receivableLedgers.length > 0) {
-      let debtorDr = 0;
-      let debtorCr = 0;
-      for (const l of receivableLedgers) {
-        const bal = (l.currentBalance || 0) / 100;
-        if (bal > 0) debtorDr += bal;
-        else if (bal < 0) debtorCr += Math.abs(bal);
-      }
-      totalReceivables = debtorDr;
-      if (debtorCr > 0) totalCustomerCredits = debtorCr;
-    } else {
-      totalReceivables = invoiceSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
-    }
-
-    if (payableLedgers.length > 0) {
-      totalPayables = payableLedgers.reduce((sum, l) => sum + Math.max(0, -Math.min(0, (l.currentBalance || 0) / 100)), 0);
-    } else {
-      totalPayables = purchaseSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
-    }
-  }
+  // Accounts Receivable and Accounts Payable derive authoritatively from canonical bill-wise settlements:
+  // Opening AR/AP + Posted Invoices/Purchases + Adjustments - Posted Receipts/Payments - Credit/Debit Notes - Advances - Write-offs
+  // This guarantees 100% cross-screen consistency between Invoice row balances, Dashboard AR, Aging, Customer Insights, and CA Review.
+  totalReceivables = invoiceSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
+  totalPayables = purchaseSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
 
   // 4b. CANONICAL DOUBLE-ENTRY CASH & BANK DERIVATION
   // Canonical Cash & Bank equals signed closing balances of active Cash and Bank ledgers

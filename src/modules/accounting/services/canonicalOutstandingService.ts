@@ -103,6 +103,101 @@ export interface InvoiceSettlementDetail {
 }
 
 /**
+ * Robust matching helper for invoice allocations across UUIDs, formatted document numbers,
+ * amended/corrected lineage IDs, and source quotations.
+ */
+export function isAllocationForInvoice(
+  targetIdOrNum: unknown,
+  invoice: Invoice
+): boolean {
+  if (!targetIdOrNum || typeof targetIdOrNum !== "string") return false;
+  const target = targetIdOrNum.trim().toLowerCase();
+  if (!target || target === "none") return false;
+
+  const candidates = [
+    invoice.id,
+    invoice.number,
+    invoice.amendedFromId,
+    (invoice as any).amendedFromNumber,
+    invoice.originalDocumentId,
+    (invoice as any).originalDocumentNumber,
+    (invoice as any).supersededByInvoiceId,
+    (invoice as any).sourceQuotationId,
+    (invoice as any).sourceQuotationNumber,
+    (invoice as any).convertedFromQuotationId,
+  ]
+    .filter(Boolean)
+    .map((s) => String(s).trim().toLowerCase());
+
+  if (candidates.includes(target)) return true;
+
+  // Comparison without dashes, slashes, or whitespace
+  const normalizedTarget = target.replace(/[-_/\s]/g, "");
+  for (const c of candidates) {
+    if (c.replace(/[-_/\s]/g, "") === normalizedTarget) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Robust matching helper for purchase allocations across bill IDs and supplier invoice numbers.
+ */
+export function isAllocationForPurchase(
+  targetIdOrNum: unknown,
+  purchase: Purchase
+): boolean {
+  if (!targetIdOrNum || typeof targetIdOrNum !== "string") return false;
+  const target = targetIdOrNum.trim().toLowerCase();
+  if (!target || target === "none") return false;
+
+  const candidates = [
+    purchase.id,
+    purchase.number,
+    purchase.supplierInvoiceNumber,
+    purchase.amendedFromId,
+    (purchase as any).amendedFromNumber,
+    purchase.originalDocumentId,
+    (purchase as any).originalDocumentNumber,
+    (purchase as any).supersededByPurchaseId,
+  ]
+    .filter(Boolean)
+    .map((s) => String(s).trim().toLowerCase());
+
+  if (candidates.includes(target)) return true;
+
+  const normalizedTarget = target.replace(/[-_/\s]/g, "");
+  for (const c of candidates) {
+    if (c.replace(/[-_/\s]/g, "") === normalizedTarget) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Extract allocated paise from polymorphic allocation record formats.
+ */
+export function extractAllocationPaise(a: any): number {
+  if (!a || typeof a !== "object") return 0;
+  if (typeof a.amountPaise === "number" && !isNaN(a.amountPaise) && a.amountPaise > 0) {
+    return a.amountPaise;
+  }
+  if (typeof a.allocatedPaise === "number" && !isNaN(a.allocatedPaise) && a.allocatedPaise > 0) {
+    return a.allocatedPaise;
+  }
+  if (typeof a.amount === "number" && !isNaN(a.amount) && a.amount > 0) {
+    return Math.round(a.amount * 100);
+  }
+  if (typeof a.amountRupees === "number" && !isNaN(a.amountRupees) && a.amountRupees > 0) {
+    return Math.round(a.amountRupees * 100);
+  }
+  if (typeof a.allocatedRupees === "number" && !isNaN(a.allocatedRupees) && a.allocatedRupees > 0) {
+    return Math.round(a.allocatedRupees * 100);
+  }
+  return 0;
+}
+
+/**
  * Authoritatively calculates the outstanding balance for an Invoice.
  * Resolves bill-wise across:
  * Opening AR + Posted Invoices + Debit Adjustments - Posted Receipts - Posted Credit Notes
@@ -152,18 +247,36 @@ export function resolveCanonicalInvoiceOutstanding(
   for (const r of receipts) {
     if (!isPostedReceipt(r)) continue;
 
+    let matchedInAllocations = false;
     if (r.allocatedInvoices && r.allocatedInvoices.length > 0) {
       for (const a of r.allocatedInvoices) {
-        if (a.invoiceId === invoice.id || (a.invoiceNumber && a.invoiceNumber === invoice.number)) {
-          receiptAllocatedPaise += a.amountPaise !== undefined ? a.amountPaise : Math.round(((a as any).amount || 0) * 100);
+        if (
+          isAllocationForInvoice(a.invoiceId, invoice) ||
+          isAllocationForInvoice(a.invoiceNumber, invoice) ||
+          isAllocationForInvoice((a as any).billNumber, invoice) ||
+          isAllocationForInvoice((a as any).number, invoice) ||
+          isAllocationForInvoice((a as any).id, invoice)
+        ) {
+          receiptAllocatedPaise += extractAllocationPaise(a);
+          matchedInAllocations = true;
         }
       }
-    } else if (r.invoiceId === invoice.id || (r as any).invoiceNumber === invoice.number) {
-      // Explicit single-invoice link
-      const receiptTotalPaise = Math.round((r.amount || 0) * 100);
-      const explicitExcess = r.customerCreditPaise ?? r.advanceAvailablePaise ?? r.unappliedCreditPaise;
-      const excessPaise = typeof explicitExcess === "number" ? explicitExcess : 0;
-      receiptAllocatedPaise += Math.max(0, receiptTotalPaise - excessPaise);
+    }
+
+    if (!matchedInAllocations) {
+      const isTopLevelMatch =
+        isAllocationForInvoice(r.invoiceId, invoice) ||
+        isAllocationForInvoice((r as any).invoiceNumber, invoice) ||
+        isAllocationForInvoice((r as any).billNumber, invoice) ||
+        isAllocationForInvoice((r as any).reference, invoice) ||
+        isAllocationForInvoice((r as any).referenceNumber, invoice);
+
+      if (isTopLevelMatch) {
+        const receiptTotalPaise = Math.round((r.amount || 0) * 100);
+        const explicitExcess = r.customerCreditPaise ?? r.advanceAvailablePaise ?? r.unappliedCreditPaise;
+        const excessPaise = typeof explicitExcess === "number" ? explicitExcess : 0;
+        receiptAllocatedPaise += Math.max(0, receiptTotalPaise - excessPaise);
+      }
     }
   }
 
@@ -172,10 +285,10 @@ export function resolveCanonicalInvoiceOutstanding(
   for (const ret of salesReturns) {
     if (!isPostedSalesReturn(ret)) continue;
     if (
-      ret.originalInvoiceId === invoice.id ||
-      ret.originalInvoiceNumber === invoice.number ||
-      (ret as any).invoiceId === invoice.id ||
-      (ret as any).invoiceNumber === invoice.number
+      isAllocationForInvoice(ret.originalInvoiceId, invoice) ||
+      isAllocationForInvoice(ret.originalInvoiceNumber, invoice) ||
+      isAllocationForInvoice((ret as any).invoiceId, invoice) ||
+      isAllocationForInvoice((ret as any).invoiceNumber, invoice)
     ) {
       const reduction = ret.outstandingReducedPaise !== undefined
         ? ret.outstandingReducedPaise
@@ -186,10 +299,10 @@ export function resolveCanonicalInvoiceOutstanding(
   for (const cn of creditNotes) {
     if (!isPostedCreditNote(cn)) continue;
     if (
-      cn.originalInvoiceId === invoice.id ||
-      cn.originalInvoiceNumber === invoice.number ||
-      (cn as any).invoiceId === invoice.id ||
-      (cn as any).invoiceNumber === invoice.number
+      isAllocationForInvoice(cn.originalInvoiceId, invoice) ||
+      isAllocationForInvoice(cn.originalInvoiceNumber, invoice) ||
+      isAllocationForInvoice((cn as any).invoiceId, invoice) ||
+      isAllocationForInvoice((cn as any).invoiceNumber, invoice)
     ) {
       const alreadyHandledInReturns = salesReturns.some((s) => s.creditNoteId === cn.id || s.id === cn.salesReturnId);
       if (!alreadyHandledInReturns) {
@@ -315,14 +428,33 @@ export function resolveCanonicalPurchaseOutstanding(
   for (const p of payments) {
     if (!isPostedPayment(p)) continue;
 
+    let matchedInAllocations = false;
     if (p.allocatedPurchases && p.allocatedPurchases.length > 0) {
       for (const a of p.allocatedPurchases) {
-        if (a.purchaseId === purchase.id || a.purchaseNumber === purchase.number || ((a as any).billNumber && (a as any).billNumber === purchase.number)) {
-          paymentAllocatedPaise += a.amountPaise !== undefined ? a.amountPaise : Math.round(((a as any).amount || 0) * 100);
+        if (
+          isAllocationForPurchase(a.purchaseId, purchase) ||
+          isAllocationForPurchase(a.purchaseNumber, purchase) ||
+          isAllocationForPurchase((a as any).billNumber, purchase) ||
+          isAllocationForPurchase((a as any).number, purchase) ||
+          isAllocationForPurchase((a as any).id, purchase)
+        ) {
+          paymentAllocatedPaise += extractAllocationPaise(a);
+          matchedInAllocations = true;
         }
       }
-    } else if (p.purchaseId === purchase.id || (p as any).purchaseNumber === purchase.number) {
-      paymentAllocatedPaise += Math.round((p.amount || 0) * 100);
+    }
+
+    if (!matchedInAllocations) {
+      const isTopLevelMatch =
+        isAllocationForPurchase(p.purchaseId, purchase) ||
+        isAllocationForPurchase((p as any).purchaseNumber, purchase) ||
+        isAllocationForPurchase((p as any).billNumber, purchase) ||
+        isAllocationForPurchase((p as any).reference, purchase) ||
+        isAllocationForPurchase((p as any).referenceNumber, purchase);
+
+      if (isTopLevelMatch) {
+        paymentAllocatedPaise += Math.round((p.amount || 0) * 100);
+      }
     }
   }
 
@@ -453,7 +585,7 @@ export function calculateAuthoritativeCustomerCredits(
 
     if (r.allocatedInvoices && r.allocatedInvoices.length > 0) {
       for (const a of r.allocatedInvoices) {
-        allocatedPaise += a.amountPaise !== undefined ? a.amountPaise : Math.round(((a as any).amount || 0) * 100);
+        allocatedPaise += extractAllocationPaise(a);
         if (!appliedInvoiceNumber && a.invoiceNumber) {
           appliedInvoiceNumber = a.invoiceNumber;
         }
@@ -462,7 +594,7 @@ export function calculateAuthoritativeCustomerCredits(
         }
       }
     } else if (r.invoiceId && r.invoiceId !== "none") {
-      const targetInv = invoices.find((i) => i.id === r.invoiceId || i.number === (r as any).invoiceNumber);
+      const targetInv = invoices.find((i) => isAllocationForInvoice(r.invoiceId, i) || isAllocationForInvoice((r as any).invoiceNumber, i));
       if (targetInv) {
         matchedInvoiceId = targetInv.id;
         appliedInvoiceNumber = targetInv.number;
@@ -514,10 +646,10 @@ export function calculateAuthoritativeCustomerCredits(
 
     const targetInv = invoices.find(
       (i) =>
-        i.id === ret.originalInvoiceId ||
-        i.id === (ret as any).invoiceId ||
-        i.number === ret.originalInvoiceNumber ||
-        i.number === (ret as any).invoiceNumber
+        isAllocationForInvoice(ret.originalInvoiceId, i) ||
+        isAllocationForInvoice((ret as any).invoiceId, i) ||
+        isAllocationForInvoice(ret.originalInvoiceNumber, i) ||
+        isAllocationForInvoice((ret as any).invoiceNumber, i)
     );
 
     let creditGenerated = ret.customerCreditGeneratedPaise || (ret.customerCreditCreated ? Math.round(ret.customerCreditCreated * 100) : 0);

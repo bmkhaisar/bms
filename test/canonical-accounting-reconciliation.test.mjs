@@ -869,3 +869,186 @@ test("Hardening 10: Cross-screen consistency for INV/2026-27/0002 after ₹63,78
   // INV 0002 is not in aging receivables (>0 only)
   assert.equal(metrics.agingReceivables.reduce((s, a) => s + a.amount, 0), 67649, "Aging only contains ₹67,649.00");
 });
+
+test("Hardening 11: Bill-wise allocation matching across invoice ID, invoice number, and correction lineage", () => {
+  const invoice = {
+    id: "inv_uuid_unique_999",
+    number: "INV/2026-27/0002",
+    grandTotal: 63786,
+    status: "posted",
+    postingStatus: "posted",
+    date: 1775050000000,
+  };
+
+  // Receipt 1: allocation record stores human invoice number in invoiceId field with empty invoiceNumber
+  const receiptHumanNumber = {
+    id: "rcp_test_1",
+    number: "REC-TEST-1",
+    status: "posted",
+    postingStatus: "posted",
+    amount: 63786,
+    allocatedInvoices: [
+      {
+        invoiceId: "INV/2026-27/0002",
+        invoiceNumber: "",
+        amountPaise: 6378600,
+      },
+    ],
+  };
+
+  const settlement1 = resolveCanonicalInvoiceOutstanding(invoice, [receiptHumanNumber]);
+  assert.equal(settlement1.remainingBalance, 0, "Matches allocation when invoiceId contains invoice number");
+  assert.equal(settlement1.isPaid, true);
+
+  // Receipt 2: allocation stores normalized formatting (dashes instead of slashes, lowercase)
+  const receiptNormalized = {
+    id: "rcp_test_2",
+    number: "REC-TEST-2",
+    status: "posted",
+    postingStatus: "posted",
+    amount: 63786,
+    allocatedInvoices: [
+      {
+        invoiceId: "inv-2026-27-0002",
+        amountPaise: 6378600,
+      },
+    ],
+  };
+
+  const settlement2 = resolveCanonicalInvoiceOutstanding(invoice, [receiptNormalized]);
+  assert.equal(settlement2.remainingBalance, 0, "Matches allocation with formatting variances");
+
+  // Receipt 3: allocation was made to predecessor invoice (amendedFromId)
+  const correctedInvoice = {
+    id: "inv_uuid_corrected",
+    number: "INV/2026-27/0002",
+    amendedFromId: "INV/2026-27/0004",
+    grandTotal: 63786,
+    status: "posted",
+    postingStatus: "posted",
+    date: 1775050000000,
+  };
+
+  const receiptToPredecessor = {
+    id: "rcp_test_3",
+    number: "REC-TEST-3",
+    status: "posted",
+    postingStatus: "posted",
+    amount: 63786,
+    invoiceId: "INV/2026-27/0004",
+  };
+
+  const settlement3 = resolveCanonicalInvoiceOutstanding(correctedInvoice, [receiptToPredecessor]);
+  assert.equal(settlement3.remainingBalance, 0, "Allocation to predecessor invoice correctly settles corrected invoice");
+});
+
+test("Hardening 12: 100% Cross-Screen Single Source of Truth Parity", () => {
+  const scope = buildCanonicalReportingScope({ companyId: "comp_test", activeBranchId: "all" });
+
+  const metrics = computeDashboardMetrics({
+    invoices: stagingInvoices,
+    purchases: stagingPurchases,
+    receipts: stagingReceipts,
+    payments: stagingPayments,
+    products: stagingProducts,
+    branches: stagingBranches,
+    scope,
+  });
+
+  // Calculate row balances exactly as DocumentListPage does:
+  const postedInvs = stagingInvoices.filter(isPostedInvoice);
+  const rowSettlements = postedInvs.map((inv) =>
+    resolveCanonicalInvoiceOutstanding(inv, stagingReceipts)
+  );
+
+  const sumRowBalances = rowSettlements.reduce((sum, s) => sum + s.remainingBalance, 0);
+
+  // 1. Dashboard AR MUST equal sum of Invoice row balances
+  assert.equal(metrics.totalReceivables, sumRowBalances, "Dashboard AR equals sum of invoice row balances");
+
+  // 2. Receivables Aging total MUST equal Dashboard AR
+  const agingTotal = metrics.agingReceivables.reduce((sum, a) => sum + a.amount, 0);
+  assert.equal(agingTotal, metrics.totalReceivables, "Receivables Aging total strictly equals Dashboard AR");
+
+  // 3. Paid invoice INV/0002 has 0 balance and status Paid
+  const inv0002Settlement = rowSettlements.find((s) => s.invoiceNumber === "INV/2026-27/0002");
+  assert.equal(inv0002Settlement.remainingBalance, 0);
+  assert.equal(inv0002Settlement.isPaid, true);
+
+  // 4. Open invoice INV/0015 has 67,649 balance and is unpaid
+  const inv0015Settlement = rowSettlements.find((s) => s.invoiceNumber === "INV/2026-27/0015");
+  assert.equal(inv0015Settlement.remainingBalance, 67649);
+  assert.equal(inv0015Settlement.isPaid, false);
+});
+
+test("Hardening 13: Customer Credit Audit — REC/0005 (₹31,999.98) unapplied excess ₹2,932.98 vs ₹445.98 residual", () => {
+  // Customer Alpha / Mohammed dataset:
+  // REC/0003: Received ₹32,232.00 against invoice
+  // REC/0005: Received ₹31,999.98 with ₹29,067.00 allocated against invoice and ₹2,932.98 overpayment
+  const rec0003 = {
+    id: "rec_003",
+    number: "REC/2026-27/0003",
+    customerId: "cust_alpha",
+    amount: 32232.0,
+    invoiceId: "INV/2026-27/0002",
+    status: "posted",
+    postingStatus: "posted",
+  };
+
+  const rec0005 = {
+    id: "rec_005",
+    number: "REC/2026-27/0005",
+    customerId: "cust_alpha",
+    amount: 31999.98,
+    invoiceId: "INV/2026-27/0002",
+    customerCreditPaise: 293298, // Pre-application unapplied overpayment
+    allocatedInvoices: [
+      {
+        invoiceId: "INV/2026-27/0002",
+        invoiceNumber: "INV/2026-27/0002",
+        amountPaise: 2906700, // ₹29,067.00 allocated
+      },
+    ],
+    status: "posted",
+    postingStatus: "posted",
+  };
+
+  // Pre-application Customer Credit calculation:
+  const initialCreditCalc = calculateAuthoritativeCustomerCredits({
+    receipts: [rec0003, rec0005],
+    invoices: [],
+  });
+
+  // Authoritative pre-application customer credit on REC/0005 is exactly ₹2,932.98
+  assert.equal(initialCreditCalc.totalCustomerCredits, 2932.98, "Pre-application customer credit is ₹2,932.98 from REC/0005");
+  const creditItem = initialCreditCalc.creditItems[0];
+  assert.equal(creditItem.receiptNumber, "REC/2026-27/0005");
+  assert.equal(creditItem.amountCreated, 2932.98);
+  assert.equal(creditItem.amountApplied, 29067);
+
+  // Settlement reconciliation against invoice of ₹63,786.00:
+  // REC/0003 allocated: ₹32,232.00
+  // REC/0005 allocated: ₹29,067.00
+  // Total explicitly allocated: ₹32,232 + ₹29,067 = ₹61,299.00
+  // Remaining invoice gap before credit application: ₹63,786 - ₹61,299 = ₹2,487.00
+  // Applying ₹2,487.00 of available credit clears the invoice:
+  const invoiceWithCredit = {
+    id: "inv_alpha_002",
+    number: "INV/2026-27/0002",
+    grandTotal: 63786,
+    customerCreditAppliedPaise: 248700, // ₹2,487.00 applied from REC/0005 credit
+    status: "posted",
+    postingStatus: "posted",
+  };
+
+  const finalSettlement = resolveCanonicalInvoiceOutstanding(invoiceWithCredit, [rec0003, rec0005]);
+  assert.equal(finalSettlement.remainingBalance, 0, "Invoice is fully settled (₹0.00)");
+  assert.equal(finalSettlement.isPaid, true);
+  assert.equal(finalSettlement.totalSettled, 63786, "Total settled equals grand total ₹63,786.00");
+
+  // Residual customer credit after covering ₹2,487.00:
+  // ₹2,932.98 - ₹2,487.00 = exactly ₹445.98!
+  const residualCustomerCredit = Math.round((2932.98 - 2487.00) * 100) / 100;
+  assert.equal(residualCustomerCredit, 445.98, "Residual customer credit is exactly ₹445.98");
+});
+

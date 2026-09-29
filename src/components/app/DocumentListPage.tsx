@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LineItemsEditor } from "./LineItemsEditor";
 import { computeLine, computeTotals, applyStockDelta } from "@/lib/calc";
-import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge, AddressSnapshot, BankAccount, TermsTemplate, StructuredTermItem, Party, Receipt, Payment, SalesReturn } from "@/lib/db";
+import type { Customer, Supplier, LineItem, Invoice, Quotation, Purchase, CompanySettings, ExtraCharge, AddressSnapshot, BankAccount, TermsTemplate, StructuredTermItem, Party, Receipt, Payment, SalesReturn, CreditNote } from "@/lib/db";
 import { db, nextNumber, uid, getCompany } from "@/lib/db";
 import { useAccounting } from "@/modules/accounting/useAccounting";
 import { migrateLegacyCustomersAndSuppliersToParties } from "@/modules/accounting/domain/partyResolver";
@@ -248,6 +248,7 @@ export function DocumentListPage<T extends AnyDoc>({
   const [shareTargetDoc, setShareTargetDoc] = useState<{ doc: Invoice; mode: "share" | "reminder" } | null>(null);
   const allReceipts = useLive<Receipt>(() => (kind === "invoice" ? db().receipts.toArray() : Promise.resolve([])));
   const allSalesReturns = useLive<SalesReturn>(() => (kind === "invoice" ? db().salesReturns.toArray() : Promise.resolve([])));
+  const allCreditNotes = useLive<CreditNote>(() => (kind === "invoice" ? db().creditNotes.toArray() : Promise.resolve([])));
   const allPayments = useLive<Payment>(() => (kind === "purchase" ? db().payments.toArray() : Promise.resolve([])));
 
   useEffect(() => {
@@ -1830,7 +1831,7 @@ async function openNew() {
                       const rawDocPosting = ((r as any).postingStatus || "").toLowerCase();
                       const isDraft = rawDocStatus === "draft" || rawDocPosting === "draft";
                       const invBalance = isInv
-                        ? (isDraft ? 0 : resolveCanonicalInvoiceOutstanding(r as unknown as Invoice, allReceipts, allSalesReturns).remainingBalance)
+                        ? (isDraft ? 0 : resolveCanonicalInvoiceOutstanding(r as unknown as Invoice, allReceipts, allSalesReturns, allCreditNotes).remainingBalance)
                         : isPur
                         ? (isDraft ? 0 : resolveCanonicalPurchaseOutstanding(r as unknown as Purchase, allPayments).remainingBalance)
                         : 0;

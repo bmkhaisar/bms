@@ -10,9 +10,16 @@ import {
   type Supplier,
   type Invoice,
   type Purchase,
+  type SalesReturn,
+  type CreditNote,
   type CompanySettings,
   getCompany,
 } from "@/lib/db";
+import {
+  resolveCanonicalInvoiceOutstanding,
+  isPostedInvoice,
+  isAllocationForInvoice,
+} from "@/modules/accounting/services/canonicalOutstandingService";
 import { useLive, useLiveState } from "@/lib/useLive";
 import { ListSkeleton } from "@/components/app/Skeletons";
 import { useEffect, useState, useMemo } from "react";
@@ -70,6 +77,8 @@ function ReceiptsAndPaymentsPage() {
   const receiptsState = useLiveState<Receipt>(() => db().receipts.orderBy("createdAt").reverse().toArray());
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const invoices = useLive<Invoice>(() => db().invoices.orderBy("createdAt").reverse().toArray());
+  const salesReturns = useLive<SalesReturn>(() => db().salesReturns.toArray());
+  const creditNotes = useLive<CreditNote>(() => db().creditNotes.toArray());
   const receipts = receiptsState.data;
 
   // Payments data
@@ -184,7 +193,14 @@ function ReceiptsAndPaymentsPage() {
     const customer = customers.find((c) => c.id === r.customerId);
     const comp = activeCompany || r.companySnapshot;
     const isAdvance = r.allocationType === "ADVANCE" || !r.invoiceId;
-    const inv = invoices.find((i) => i.id === r.invoiceId) || (r.allocatedInvoices && r.allocatedInvoices[0] ? invoices.find(i => i.id === r.allocatedInvoices![0].invoiceId) : undefined);
+    const inv = invoices.find(
+      (i) =>
+        isAllocationForInvoice(r.invoiceId, i) ||
+        (r.allocatedInvoices &&
+          r.allocatedInvoices.some(
+            (a) => isAllocationForInvoice(a.invoiceId, i) || isAllocationForInvoice(a.invoiceNumber, i)
+          ))
+    );
 
     const allocPaise = r.allocatedInvoices && r.allocatedInvoices[0]
       ? r.allocatedInvoices[0].amountPaise
@@ -925,7 +941,12 @@ function ReceiptsAndPaymentsPage() {
   }
 
   const custInvoices = editingReceipt
-    ? invoices.filter((i) => i.customerId === editingReceipt.customerId && i.balance > 0)
+    ? invoices.filter((i) => {
+        if (i.customerId !== editingReceipt.customerId) return false;
+        if (!isPostedInvoice(i)) return false;
+        const s = resolveCanonicalInvoiceOutstanding(i, receipts, salesReturns, creditNotes);
+        return s.remainingBalance > 0.01;
+      })
     : [];
 
   return (
@@ -1301,11 +1322,14 @@ function ReceiptsAndPaymentsPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">Select Invoice</SelectItem>
-                        {custInvoices.map((i) => (
-                          <SelectItem key={i.id} value={i.id}>
-                            {i.number} · Bal {formatMoney(i.balance)}
-                          </SelectItem>
-                        ))}
+                        {custInvoices.map((i) => {
+                          const s = resolveCanonicalInvoiceOutstanding(i, receipts, salesReturns, creditNotes);
+                          return (
+                            <SelectItem key={i.id} value={i.id}>
+                              {i.number} · Bal {formatMoney(s.remainingBalance)}
+                            </SelectItem>
+                          );
+                        })}
                       </SelectContent>
                     </Select>
                   </div>
@@ -1313,11 +1337,12 @@ function ReceiptsAndPaymentsPage() {
 
                 {/* PRD § 7 & 8: Real-Time Invoice Balance & Overpayment Warning */}
                 {editingReceipt.allocationType === "AGAINST_REF" && editingReceipt.invoiceId && (() => {
-                  const selectedInv = custInvoices.find(i => i.id === editingReceipt.invoiceId);
+                  const selectedInv = invoices.find(i => isAllocationForInvoice(editingReceipt.invoiceId, i));
                   if (!selectedInv) return null;
-                  const invTotal = selectedInv.grandTotal;
-                  const alreadyReceived = selectedInv.amountPaid || 0;
-                  const outstanding = Math.max(0, selectedInv.balance ?? (invTotal - alreadyReceived));
+                  const settlement = resolveCanonicalInvoiceOutstanding(selectedInv, receipts, salesReturns, creditNotes);
+                  const invTotal = settlement.effectiveBilledTotal;
+                  const alreadyReceived = settlement.totalSettled;
+                  const outstanding = settlement.remainingBalance;
                   const typedAmount = Number(editingReceipt.amount) || 0;
                   const allocated = Math.min(typedAmount, outstanding);
                   const projectedRemaining = Math.max(0, outstanding - typedAmount);

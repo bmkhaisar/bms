@@ -1,6 +1,10 @@
 import type { Invoice, Party, CompanySettings, Receipt } from "../../../lib/db.ts";
 import type { PaymentDueInsight } from "./bmsShareTypes";
-import { resolveCanonicalInvoiceOutstanding } from "../../accounting/services/canonicalOutstandingService.ts";
+import {
+  resolveCanonicalInvoiceOutstanding,
+  isAllocationForInvoice,
+  extractAllocationPaise,
+} from "../../accounting/services/canonicalOutstandingService.ts";
 
 export const DEFAULT_CREDIT_DAYS = 30;
 
@@ -43,11 +47,15 @@ export function computeInvoiceDueDate(
  * Extracts receipts allocated to a specific invoice.
  */
 export function findAllocatedReceiptsForInvoice(
-  invoiceId: string,
+  invoiceOrId: Invoice | string,
   receipts: Receipt[] = []
 ): { matchingReceipts: Receipt[]; totalAllocatedPaise: number } {
   const matching: Receipt[] = [];
   let totalAllocatedPaise = 0;
+  const dummyInv: Invoice =
+    typeof invoiceOrId === "string"
+      ? ({ id: invoiceOrId, number: invoiceOrId } as any)
+      : invoiceOrId;
 
   for (const r of receipts) {
     const status = ((r as any).status || "").toLowerCase();
@@ -56,17 +64,36 @@ export function findAllocatedReceiptsForInvoice(
       continue;
     }
 
+    let matchedInAlloc = false;
     if (r.allocatedInvoices && r.allocatedInvoices.length > 0) {
-      const match = r.allocatedInvoices.find((a) => a.invoiceId === invoiceId);
-      if (match) {
-        matching.push(r);
-        totalAllocatedPaise += match.amountPaise || 0;
-        continue;
+      for (const a of r.allocatedInvoices) {
+        if (
+          isAllocationForInvoice(a.invoiceId, dummyInv) ||
+          isAllocationForInvoice(a.invoiceNumber, dummyInv) ||
+          isAllocationForInvoice((a as any).billNumber, dummyInv)
+        ) {
+          matching.push(r);
+          totalAllocatedPaise += extractAllocationPaise(a);
+          matchedInAlloc = true;
+          break;
+        }
       }
-    } else if (r.invoiceId === invoiceId) {
-      matching.push(r);
-      totalAllocatedPaise += Math.round((r.amount || 0) * 100);
-      continue;
+    }
+
+    if (!matchedInAlloc) {
+      const isTopLevelMatch =
+        isAllocationForInvoice(r.invoiceId, dummyInv) ||
+        isAllocationForInvoice((r as any).invoiceNumber, dummyInv) ||
+        isAllocationForInvoice((r as any).reference, dummyInv) ||
+        isAllocationForInvoice((r as any).referenceNumber, dummyInv);
+
+      if (isTopLevelMatch) {
+        matching.push(r);
+        const receiptTotalPaise = Math.round((r.amount || 0) * 100);
+        const explicitExcess = r.customerCreditPaise ?? r.advanceAvailablePaise ?? r.unappliedCreditPaise;
+        const excessPaise = typeof explicitExcess === "number" ? explicitExcess : 0;
+        totalAllocatedPaise += Math.max(0, receiptTotalPaise - excessPaise);
+      }
     }
   }
 
@@ -105,7 +132,7 @@ export function computeInvoicePaymentInsight(params: {
   }
 
   const { matchingReceipts, totalAllocatedPaise } = findAllocatedReceiptsForInvoice(
-    invoice.id,
+    invoice,
     receipts
   );
 
