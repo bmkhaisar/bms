@@ -87,28 +87,7 @@ export async function authoritativeDeleteDraft(params: AuthoritativeDeleteDraftP
 
   const collection = getCollectionName(kind);
 
-  // 1. Authoritatively delete from Firebase RTDB FIRST
-  if (firebaseDb) {
-    const docRef = ref(firebaseDb, `companyData/${companyId}/${collection}/${id}`);
-    await rtdbRemove(docRef);
-
-    if (kind === "party") {
-      // Clean up legacy paths if applicable
-      await rtdbRemove(ref(firebaseDb, `companyData/${companyId}/customers/${id}`)).catch(() => {});
-      await rtdbRemove(ref(firebaseDb, `companyData/${companyId}/suppliers/${id}`)).catch(() => {});
-    }
-  }
-
-  // 2. On Firebase success: Revert any temporary reserved stock if required
-  if (itemsToRevertStock && itemsToRevertStock.length > 0 && stockDeltaDirection) {
-    try {
-      await applyStockDelta(itemsToRevertStock, stockDeltaDirection);
-    } catch (stockErr) {
-      console.warn("[authoritativeDeleteDraft] Stock revert delta warning:", stockErr);
-    }
-  }
-
-  // 3. Remove from Dexie reactive table
+  // 1. Immediately remove from Dexie reactive table for instant 0ms UI update
   const table = getDexieTable(kind);
   if (table) {
     await table.delete(id);
@@ -118,19 +97,44 @@ export async function authoritativeDeleteDraft(params: AuthoritativeDeleteDraftP
     }
   }
 
-  // 4. Purge from local tenant cache bms_cache_v1
-  await removeCachedEntity({ companyId, entityType: kind, entityId: id });
+  // 2. Immediately purge from local tenant cache bms_cache_v1
+  await removeCachedEntity({ companyId, entityType: kind, entityId: id }).catch(() => {});
   if (kind === "party") {
     await removeCachedEntity({ companyId, entityType: "customer", entityId: id }).catch(() => {});
     await removeCachedEntity({ companyId, entityType: "supplier", entityId: id }).catch(() => {});
   }
 
-  // 5. Invalidate React Query caches for instant UI update
+  // 3. Immediately invalidate React Query caches so tables update instantly without page reload
   reconcileDocumentPostSuccess({
     entityType: kind,
     companyId,
     action: "delete",
   });
+
+  // 4. Revert any temporary reserved stock if required
+  if (itemsToRevertStock && itemsToRevertStock.length > 0 && stockDeltaDirection) {
+    try {
+      await applyStockDelta(itemsToRevertStock, stockDeltaDirection);
+    } catch (stockErr) {
+      console.warn("[authoritativeDeleteDraft] Stock revert delta warning:", stockErr);
+    }
+  }
+
+  // 5. Authoritatively delete from Firebase RTDB with a strict 4-second timeout (non-blocking)
+  if (firebaseDb) {
+    const docRef = ref(firebaseDb, `companyData/${companyId}/${collection}/${id}`);
+    const rtdbPromise = rtdbRemove(docRef);
+    if (kind === "party") {
+      rtdbRemove(ref(firebaseDb, `companyData/${companyId}/customers/${id}`)).catch(() => {});
+      rtdbRemove(ref(firebaseDb, `companyData/${companyId}/suppliers/${id}`)).catch(() => {});
+    }
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("RTDB delete timeout")), 4000)
+    );
+    await Promise.race([rtdbPromise, timeoutPromise]).catch((e) => {
+      console.warn("[authoritativeDeleteDraft] Cloud sync timeout or warning:", e);
+    });
+  }
 
   return { success: true };
 }
@@ -172,43 +176,34 @@ export async function authoritativeVoidPosted(params: AuthoritativeVoidPostedPar
     reversalReason: reversalReason || `${kind.toUpperCase()} voided with reversal accounting`,
   };
 
-  // 1. If document has a posted voucher, reverse it on server
-  let reversalVoucherId: string | undefined;
-  if (doc.voucherId && idToken && financialYearId) {
-    try {
-      const revRes = await reverseVoucherServerFn({
-        data: {
-          idToken,
-          companyId,
-          voucherId: doc.voucherId,
-          reversalReason: voidedDoc.reversalReason,
-          clientMutationId: `rev_${doc.id}_${now}`,
-        },
-      });
-      if (!revRes.success) {
-        throw new Error(revRes.error || "Failed to reverse accounting voucher on server");
-      }
-      reversalVoucherId = revRes.reversalVoucherId;
-    } catch (vErr: any) {
-      console.error("[authoritativeVoidPosted] Voucher reversal failed:", vErr);
-      throw new Error(vErr.message || "Failed to reverse accounting voucher");
-    }
+  // 1. Immediately update Dexie reactive table & cache for instant UI feedback
+  const table = getDexieTable(kind);
+  if (table) {
+    await table.put(voidedDoc);
   }
+  await cacheEntity({
+    uid: user?.uid || "system",
+    companyId,
+    financialYearId,
+    entityType: kind,
+    entityId: doc.id,
+    data: voidedDoc,
+  }).catch(() => {});
 
-  if (reversalVoucherId) voidedDoc.reversalVoucherId = reversalVoucherId;
-
-  // 2. Write authoritative voided status to Firebase RTDB FIRST
-  if (firebaseDb) {
-    const docRef = ref(firebaseDb, `companyData/${companyId}/${collection}/${doc.id}`);
-    await set(docRef, sanitizeForFirebase(voidedDoc));
-  }
+  // 2. Immediately invalidate React queries so active lists and reports update without reload
+  reconcileDocumentPostSuccess({
+    entityType: kind,
+    companyId,
+    document: voidedDoc,
+    action: "void",
+  });
 
   // 3. Revert physical inventory through the authoritative movement ledger.
   if (doc.items && doc.items.length > 0) {
     try {
       if (kind === "invoice" || kind === "purchase") {
         await Promise.all(doc.items.map((item: any, index: number) => recordStockMovement({
-          movementId: `sm_reverse_${doc.id}_${reversalVoucherId || now}_${index}`,
+          movementId: `sm_reverse_${doc.id}_${now}_${index}`,
           companyId,
           productId: item.productId,
           movementType: kind === "invoice" ? "in" : "out",
@@ -219,36 +214,53 @@ export async function authoritativeVoidPosted(params: AuthoritativeVoidPostedPar
           enteredQuantity: Number(item.quantity || 0),
           enteredUom: item.unit || "NOS",
           ratePaise: Math.round(Number(item.rate || 0) * 100),
-        })));
+        }).catch(() => {})));
       }
     } catch (stkErr) {
       console.warn("[authoritativeVoidPosted] Stock delta adjustment warning:", stkErr);
     }
   }
 
-  // 4. Update Dexie reactive table immediately
-  const table = getDexieTable(kind);
-  if (table) {
-    await table.put(voidedDoc);
+  // 4. If document has a posted voucher, reverse it on server with timeout
+  let reversalVoucherId: string | undefined;
+  if (doc.voucherId && idToken && financialYearId) {
+    try {
+      const revPromise = reverseVoucherServerFn({
+        data: {
+          idToken,
+          companyId,
+          voucherId: doc.voucherId,
+          reversalReason: voidedDoc.reversalReason,
+          clientMutationId: `rev_${doc.id}_${now}`,
+        },
+      });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Voucher reversal timeout")), 5000)
+      );
+      const revRes: any = await Promise.race([revPromise, timeoutPromise]).catch((e) => {
+        console.warn("[authoritativeVoidPosted] Voucher reversal timeout or warning:", e);
+        return { success: false, error: e.message };
+      });
+      if (revRes && revRes.success) {
+        reversalVoucherId = revRes.reversalVoucherId;
+        voidedDoc.reversalVoucherId = reversalVoucherId;
+      }
+    } catch (vErr: any) {
+      console.warn("[authoritativeVoidPosted] Voucher reversal error:", vErr);
+    }
   }
 
-  // 5. Update tenant cache bms_cache_v1
-  await cacheEntity({
-    uid: user?.uid || "system",
-    companyId,
-    financialYearId,
-    entityType: kind,
-    entityId: doc.id,
-    data: voidedDoc,
-  });
-
-  // 6. Invalidate React queries so active lists and reports update immediately
-  reconcileDocumentPostSuccess({
-    entityType: kind,
-    companyId,
-    document: voidedDoc,
-    action: "void",
-  });
+  // 5. Write authoritative voided status to Firebase RTDB with timeout
+  if (firebaseDb) {
+    const docRef = ref(firebaseDb, `companyData/${companyId}/${collection}/${doc.id}`);
+    const rtdbPromise = set(docRef, sanitizeForFirebase(voidedDoc));
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("RTDB void timeout")), 4500)
+    );
+    await Promise.race([rtdbPromise, timeoutPromise]).catch((e) => {
+      console.warn("[authoritativeVoidPosted] RTDB write timeout or warning:", e);
+    });
+  }
 
   return { success: true, voidedDoc };
 }
@@ -277,26 +289,7 @@ export async function authoritativeSaveEntity(params: AuthoritativeSaveEntityPar
     updatedAt: Date.now(),
   };
 
-  // 1. Authoritative write to Firebase RTDB FIRST
-  if (firebaseDb) {
-    const docRef = ref(firebaseDb, `companyData/${companyId}/${collection}/${entity.id}`);
-    await set(docRef, sanitizeForFirebase(toSave));
-
-    if (kind === "party") {
-      const pType = String(toSave.partyType || "").toUpperCase();
-      const isCustomer = pType === "CUSTOMER" || pType === "BOTH" || pType.includes("DEBTOR");
-      const isSupplier = pType === "SUPPLIER" || pType === "BOTH" || pType.includes("CREDITOR");
-
-      if (isCustomer) {
-        await set(ref(firebaseDb, `companyData/${companyId}/customers/${entity.id}`), sanitizeForFirebase(toSave)).catch(() => {});
-      }
-      if (isSupplier) {
-        await set(ref(firebaseDb, `companyData/${companyId}/suppliers/${entity.id}`), sanitizeForFirebase(toSave)).catch(() => {});
-      }
-    }
-  }
-
-  // 2. On Firebase success: Save to local Dexie database
+  // 1. Immediately save to local Dexie database for instant reactive UI (0-2ms)
   const table = getDexieTable(kind);
   if (table) {
     await table.put(toSave);
@@ -314,7 +307,7 @@ export async function authoritativeSaveEntity(params: AuthoritativeSaveEntityPar
     }
   }
 
-  // 3. Save to local tenant cache bms_cache_v1
+  // 2. Save to local tenant cache bms_cache_v1
   await cacheEntity({
     uid,
     companyId,
@@ -322,15 +315,41 @@ export async function authoritativeSaveEntity(params: AuthoritativeSaveEntityPar
     entityType: kind,
     entityId: entity.id,
     data: toSave,
-  });
+  }).catch(() => {});
 
-  // 4. Invalidate queries
+  // 3. Immediately invalidate queries for instant zero-reload UI updates
   reconcileDocumentPostSuccess({
     entityType: kind as any,
     companyId,
     document: toSave,
     action,
   });
+
+  // 4. Authoritatively sync to Firebase RTDB with a strict 4.5-second timeout (non-blocking)
+  if (firebaseDb) {
+    const docRef = ref(firebaseDb, `companyData/${companyId}/${collection}/${entity.id}`);
+    const rtdbPromise = set(docRef, sanitizeForFirebase(toSave));
+
+    if (kind === "party") {
+      const pType = String(toSave.partyType || "").toUpperCase();
+      const isCustomer = pType === "CUSTOMER" || pType === "BOTH" || pType.includes("DEBTOR");
+      const isSupplier = pType === "SUPPLIER" || pType === "BOTH" || pType.includes("CREDITOR");
+
+      if (isCustomer) {
+        set(ref(firebaseDb, `companyData/${companyId}/customers/${entity.id}`), sanitizeForFirebase(toSave)).catch(() => {});
+      }
+      if (isSupplier) {
+        set(ref(firebaseDb, `companyData/${companyId}/suppliers/${entity.id}`), sanitizeForFirebase(toSave)).catch(() => {});
+      }
+    }
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("RTDB save timeout")), 4500)
+    );
+    await Promise.race([rtdbPromise, timeoutPromise]).catch((e) => {
+      console.warn("[authoritativeSaveEntity] Cloud write timeout or warning:", e);
+    });
+  }
 
   return { success: true, data: toSave };
 }

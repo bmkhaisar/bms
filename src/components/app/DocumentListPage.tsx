@@ -19,7 +19,7 @@ import { toDateInput, fromDateInput, formatDate, formatMoney } from "@/lib/forma
 import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { Copy, Download, FileText, Pencil, Plus, Printer, Trash2, UserPlus, Truck, HandCoins, Loader2, AlertTriangle, Share2, Bell, Calendar } from "lucide-react";
+import { Copy, Download, FileText, Pencil, Plus, Printer, Trash2, UserPlus, Truck, HandCoins, Loader2, AlertTriangle, Share2, Bell, Calendar, Save } from "lucide-react";
 import { ListToolbar, EmptyState, usePagination, Pager } from "./ListHelpers";
 import { cn } from "@/lib/utils";
 import { downloadDocumentPDF, generateDocumentPDFBlob, generateDocumentPDFBlobUrl, buildDocumentPDF, type NormalizedDocument } from "@/lib/documentRenderer";
@@ -1355,9 +1355,8 @@ async function openNew() {
       clearDraft(kind);
       setRecoverableDraft(null);
       initialEditingStateRef.current = null;
-      setOpen(false);
-      setEditing(null);
-      closeDocument();
+      setSavingDoc(false);
+      forceCloseEditor();
       toast.success("Invoice posted");
 
       void db().invoices.put(authoritativeInvoice).catch((error) =>
@@ -1494,13 +1493,77 @@ async function openNew() {
       clearDraft(kind);
       setRecoverableDraft(null);
       initialEditingStateRef.current = null;
-      setOpen(false);
-      setEditing(null);
-      closeDocument();
+      setSavingDoc(false);
+      forceCloseEditor();
       toast.success(kind === "purchase" ? "Purchase posted" : "Quotation saved");
     } catch (err: any) {
       toast.error(err?.message || "Failed to save document");
     } finally {
+      setSavingDoc(false);
+      setPostingPhase("idle");
+    }
+  }
+
+  async function saveAsDraft() {
+    if (!editing) return;
+    const partyId = (editing as any).customerId ?? (editing as Purchase).supplierId;
+    if (!partyId) { toast.error(`Please select a ${tableFor}`); return; }
+    if (!editing.items?.length) { toast.error("Please add at least one line item"); return; }
+
+    setSavingDoc(true);
+    try {
+      const isIgst = kind === "invoice" && (editing as unknown as Invoice).isIgst;
+      const extraCharges = (editing as any).extraCharges || [];
+      const extraChargesTotal = extraCharges.reduce((s: number, c: ExtraCharge) => s + (Number(c.amount) || 0), 0);
+
+      const totals = computeTotals(editing.items, isIgst, {
+        enableGst,
+        gstCalculationMode: (editing as any).gstCalculationMode,
+        overallGstRate: (editing as any).overallGstRate,
+      });
+      const finalGrandTotal = totals.grandTotal + extraChargesTotal;
+      const party = partyById(partyId);
+
+      const draftDoc = {
+        ...(editing as AnyDoc),
+        ...totals,
+        extraCharges,
+        extraChargesTotal,
+        grandTotal: finalGrandTotal,
+        balance: finalGrandTotal,
+        amountPaid: (editing as any).amountPaid || 0,
+        status: "draft",
+        postingStatus: "draft",
+        updatedAt: Date.now(),
+        ...(tableFor === "customer" ? { customerSnapshot: party as Customer | undefined } : { supplierSnapshot: party as Supplier | undefined }),
+      } as AnyDoc;
+
+      // Optimistic instant update
+      setOptimisticOverrides(prevMap => new Map(prevMap).set(draftDoc.id, draftDoc as unknown as T));
+
+      if (activeCompany?.id) {
+        await authoritativeSaveEntity({
+          companyId: activeCompany.id,
+          financialYearId: (draftDoc as any).financialYearId || activeFinancialYear?.id,
+          kind: kind as any,
+          entity: draftDoc,
+          uid: user?.uid,
+          action: rows.some(r => r.id === draftDoc.id) ? "update" : "create",
+        });
+      } else {
+        const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
+        await (table as any).put(draftDoc);
+      }
+
+      toast.success(`${kind === "invoice" ? "Invoice" : kind === "purchase" ? "Purchase" : "Document"} draft saved`);
+      clearDraft(kind);
+      setRecoverableDraft(null);
+      initialEditingStateRef.current = null;
+      setSavingDoc(false);
+      forceCloseEditor();
+    } catch (err: any) {
+      console.error("[saveAsDraft] Failed:", err);
+      toast.error(err?.message || "Failed to save draft");
       setSavingDoc(false);
     }
   }
@@ -1514,6 +1577,9 @@ async function openNew() {
       postingStatus: "reversed",
     };
     setOptimisticOverrides(prevMap => new Map(prevMap).set(id, optimisticVoided as unknown as T));
+
+    // Immediate local Dexie update for instant reactivity
+    await (kind === "invoice" ? db().invoices : db().purchases).put(optimisticVoided as any);
 
     try {
       if (activeCompany?.id) {
@@ -1550,6 +1616,10 @@ async function openNew() {
     const id = doc.id;
     // Immediate optimistic removal
     setOptimisticOverrides(prevMap => new Map(prevMap).set(id, null));
+
+    // Immediate local Dexie deletion so the record vanishes in 0ms
+    const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
+    await table.delete(id);
 
     try {
       if (activeCompany?.id) {
@@ -3233,6 +3303,12 @@ async function openNew() {
                 <FileText className="h-4 w-4" /> Invoice Preview
               </Button>
             )}
+            {/* If document is draft or unposted, offer quick Save Draft button! */}
+            {editing && ((editing as any).postingStatus !== "posted" && (editing as any).status !== "posted") && (
+              <Button type="button" variant="secondary" onClick={saveAsDraft} disabled={savingDoc} className="w-full sm:w-auto gap-1.5">
+                <Save className="h-4 w-4" /> Save Draft
+              </Button>
+            )}
             <Button onClick={save} disabled={savingDoc} className="w-full sm:w-auto gap-1.5">
               {savingDoc ? (
                 <>
@@ -3689,13 +3765,15 @@ async function openNew() {
         busyText="Deleting…"
         onConfirm={async () => {
           if (!deleteTargetDoc) return;
-          setIsDeletingDoc(true);
+          const target = deleteTargetDoc;
+          // Immediately dismiss modal so user is never stuck on "Deleting..."
+          setDeleteTargetDoc(null);
+          setIsDeletingDoc(false);
           try {
-            if (deleteTargetDoc.isPosted) await cancelPostedDoc(deleteTargetDoc.doc);
-            else await removeDraftDoc(deleteTargetDoc.doc);
-            setDeleteTargetDoc(null);
-          } finally {
-            setIsDeletingDoc(false);
+            if (target.isPosted) await cancelPostedDoc(target.doc);
+            else await removeDraftDoc(target.doc);
+          } catch (err: any) {
+            console.error("Delete operation failed:", err);
           }
         }}
       />

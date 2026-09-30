@@ -3,7 +3,7 @@ import { firebaseAuth, firebaseDb, sanitizeForFirebase } from "@/config/firebase
 import { allocatePartyCodeServerFn } from "@/functions/allocatePartyCodeFn";
 import { savePartyWithLedgerServerFn } from "@/functions/savePartyWithLedgerFn";
 import type { Ledger } from "../types";
-import { cacheEntity, getCachedEntities } from "@/modules/sync/dexieCache";
+import { cacheEntity, getCachedEntities, getCachedEntity } from "@/modules/sync/dexieCache";
 
 export interface CustomerParty {
   id: string;
@@ -50,33 +50,35 @@ export async function ensureCustomerLedger(params: {
   const { companyId, customer, uid } = params;
   const canonicalLedgerId = customer.ledgerId || `led_${companyId}_cust_${customer.id}`;
 
+  // Check local Dexie first for instant resolution (0ms)
+  try {
+    const local = await getCachedEntity<Ledger>({
+      uid,
+      companyId,
+      entityType: "ledger",
+      entityId: canonicalLedgerId,
+    });
+    if (local) return canonicalLedgerId;
+  } catch {}
+
   if (firebaseDb) {
-    const existingLedgerRef = ref(firebaseDb, `companyData/${companyId}/ledgers/${canonicalLedgerId}`);
-    const snap = await get(existingLedgerRef);
+    try {
+      const existingLedgerRef = ref(firebaseDb, `companyData/${companyId}/ledgers/${canonicalLedgerId}`);
+      const snapPromise = get(existingLedgerRef);
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500));
+      const snap = await Promise.race([snapPromise, timeoutPromise]);
 
-    if (snap.exists()) {
-      // Existing ledger found: update metadata idempotently without overwriting balances
-      await update(existingLedgerRef, {
-        name: customer.company ? `${customer.name} (${customer.company})` : customer.name,
-        gstin: customer.gstin || null,
-        partyType: "customer",
-        partyId: customer.id,
-        updatedAt: Date.now(),
-      });
-      return canonicalLedgerId;
-    }
-
-    // Also check if any ledger exists for this partyId
-    const allLedgersRef = ref(firebaseDb, `companyData/${companyId}/ledgers`);
-    const allSnap = await get(allLedgersRef);
-    if (allSnap.exists()) {
-      const ledgers = allSnap.val();
-      for (const [lId, l] of Object.entries(ledgers) as [string, any][]) {
-        if (l.partyType === "customer" && l.partyId === customer.id) {
-          return lId;
-        }
+      if (snap && snap.exists()) {
+        update(existingLedgerRef, {
+          name: customer.company ? `${customer.name} (${customer.company})` : customer.name,
+          gstin: customer.gstin || null,
+          partyType: "customer",
+          partyId: customer.id,
+          updatedAt: Date.now(),
+        }).catch(() => {});
+        return canonicalLedgerId;
       }
-    }
+    } catch {}
 
     // Create new customer receivable subledger under Sundry Debtors
     const openingPaise = Math.round((customer.openingBalance || 0) * 100);
@@ -98,16 +100,14 @@ export async function ensureCustomerLedger(params: {
       updatedAt: Date.now(),
     };
 
-    await set(existingLedgerRef, sanitizeForFirebase(newLedger));
-
-    // Save in local Dexie cache
-    await cacheEntity({
+    set(ref(firebaseDb, `companyData/${companyId}/ledgers/${canonicalLedgerId}`), sanitizeForFirebase(newLedger)).catch(() => {});
+    cacheEntity({
       uid,
       companyId,
       entityType: "ledger",
       entityId: canonicalLedgerId,
       data: newLedger,
-    });
+    }).catch(() => {});
 
     return canonicalLedgerId;
   }
@@ -127,33 +127,35 @@ export async function ensureSupplierLedger(params: {
   const { companyId, supplier, uid } = params;
   const canonicalLedgerId = supplier.ledgerId || `led_${companyId}_supp_${supplier.id}`;
 
+  // Check local Dexie first for instant resolution (0ms)
+  try {
+    const local = await getCachedEntity<Ledger>({
+      uid,
+      companyId,
+      entityType: "ledger",
+      entityId: canonicalLedgerId,
+    });
+    if (local) return canonicalLedgerId;
+  } catch {}
+
   if (firebaseDb) {
-    const existingLedgerRef = ref(firebaseDb, `companyData/${companyId}/ledgers/${canonicalLedgerId}`);
-    const snap = await get(existingLedgerRef);
+    try {
+      const existingLedgerRef = ref(firebaseDb, `companyData/${companyId}/ledgers/${canonicalLedgerId}`);
+      const snapPromise = get(existingLedgerRef);
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500));
+      const snap = await Promise.race([snapPromise, timeoutPromise]);
 
-    if (snap.exists()) {
-      // Existing ledger found: update metadata idempotently
-      await update(existingLedgerRef, {
-        name: supplier.company ? `${supplier.name} (${supplier.company})` : supplier.name,
-        gstin: supplier.gstin || null,
-        partyType: "supplier",
-        partyId: supplier.id,
-        updatedAt: Date.now(),
-      });
-      return canonicalLedgerId;
-    }
-
-    // Check if any ledger exists for this partyId
-    const allLedgersRef = ref(firebaseDb, `companyData/${companyId}/ledgers`);
-    const allSnap = await get(allLedgersRef);
-    if (allSnap.exists()) {
-      const ledgers = allSnap.val();
-      for (const [lId, l] of Object.entries(ledgers) as [string, any][]) {
-        if (l.partyType === "supplier" && l.partyId === supplier.id) {
-          return lId;
-        }
+      if (snap && snap.exists()) {
+        update(existingLedgerRef, {
+          name: supplier.company ? `${supplier.name} (${supplier.company})` : supplier.name,
+          gstin: supplier.gstin || null,
+          partyType: "supplier",
+          partyId: supplier.id,
+          updatedAt: Date.now(),
+        }).catch(() => {});
+        return canonicalLedgerId;
       }
-    }
+    } catch {}
 
     // Create new supplier payable subledger under Sundry Creditors
     const openingPaise = Math.round((supplier.openingBalance || 0) * 100);
@@ -175,16 +177,14 @@ export async function ensureSupplierLedger(params: {
       updatedAt: Date.now(),
     };
 
-    await set(existingLedgerRef, sanitizeForFirebase(newLedger));
-
-    // Save in local Dexie cache
-    await cacheEntity({
+    set(ref(firebaseDb, `companyData/${companyId}/ledgers/${canonicalLedgerId}`), sanitizeForFirebase(newLedger)).catch(() => {});
+    cacheEntity({
       uid,
       companyId,
       entityType: "ledger",
       entityId: canonicalLedgerId,
       data: newLedger,
-    });
+    }).catch(() => {});
 
     return canonicalLedgerId;
   }

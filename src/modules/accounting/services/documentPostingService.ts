@@ -210,7 +210,7 @@ export async function postInvoiceTransaction(params: {
       `mut-inv-${invoice.id}`;
 
     if (idToken) {
-      const voucherRes = await postVoucherServerFn({
+      const voucherPromise = postVoucherServerFn({
         data: {
           idToken,
           companyId,
@@ -222,6 +222,10 @@ export async function postInvoiceTransaction(params: {
           lines,
         },
       });
+      const timeoutPromise = new Promise<{ success: boolean; error?: string; voucher?: any }>((_, reject) =>
+        setTimeout(() => reject(new Error("Voucher posting server timeout (7s)")), 7000)
+      );
+      const voucherRes = await Promise.race([voucherPromise, timeoutPromise]);
 
       if (voucherRes.success && voucherRes.voucher) {
         voucherId = voucherRes.voucher.id;
@@ -319,10 +323,16 @@ export async function postInvoiceTransaction(params: {
       updatedAt: Date.now(),
     };
 
-    // 7. Authoritatively persist to Firebase RTDB FIRST
+    // 7. Authoritatively persist to Firebase RTDB with timeout
     if (firebaseDb) {
       const invRef = ref(firebaseDb, `companyData/${companyId}/invoices/${invoice.id}`);
-      await set(invRef, sanitizeForFirebase(updatedInvoice));
+      const rtdbPromise = set(invRef, sanitizeForFirebase(updatedInvoice));
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("RTDB save timeout")), 4500)
+      );
+      await Promise.race([rtdbPromise, timeoutPromise]).catch((e) => {
+        console.warn("[postInvoiceTransaction] Cloud RTDB write timeout or warning:", e);
+      });
     }
 
     // The authoritative voucher + invoice commits are complete. Local cache,
@@ -462,7 +472,7 @@ export async function postPurchaseTransaction(params: {
       `mut-pur-${purchase.id}`;
 
     if (idToken) {
-      const voucherRes = await postVoucherServerFn({
+      const voucherPromise = postVoucherServerFn({
         data: {
           idToken,
           companyId,
@@ -474,6 +484,10 @@ export async function postPurchaseTransaction(params: {
           lines,
         },
       });
+      const timeoutPromise = new Promise<{ success: boolean; error?: string; voucher?: any }>((_, reject) =>
+        setTimeout(() => reject(new Error("Voucher posting server timeout (7s)")), 7000)
+      );
+      const voucherRes = await Promise.race([voucherPromise, timeoutPromise]);
 
       if (voucherRes.success && voucherRes.voucher) {
         voucherId = voucherRes.voucher.id;
@@ -550,10 +564,16 @@ export async function postPurchaseTransaction(params: {
       updatedAt: Date.now(),
     };
 
-    // 4. Authoritatively persist to Firebase RTDB FIRST
+    // 4. Authoritatively persist to Firebase RTDB with timeout
     if (firebaseDb) {
       const puRef = ref(firebaseDb, `companyData/${companyId}/purchases/${purchase.id}`);
-      await set(puRef, sanitizeForFirebase(updatedPurchase));
+      const rtdbPromise = set(puRef, sanitizeForFirebase(updatedPurchase));
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("RTDB save timeout")), 4500)
+      );
+      await Promise.race([rtdbPromise, timeoutPromise]).catch((e) => {
+        console.warn("[postPurchaseTransaction] Cloud RTDB write timeout or warning:", e);
+      });
     }
 
     // 5. Save immediately to local Dexie database
