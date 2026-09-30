@@ -31,6 +31,7 @@ import { convertQuotationToInvoice as doConvertQuotation } from "@/modules/docum
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useBusinessScope } from "@/modules/company/context/BusinessScopeContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
+import { useCompanySyncStatus } from "@/modules/sync/companyRealtimeSync";
 import { getNextDocumentNumber } from "@/lib/numberingClient";
 import { postInvoiceTransaction, postPurchaseTransaction, amendPostedInvoiceTransaction, postReceiptTransaction } from "@/modules/accounting/services/documentPostingService";
 import { ensureCustomerLedger, ensureSupplierLedger } from "@/modules/accounting/services/partyLedgerSyncService";
@@ -105,11 +106,13 @@ export function DocumentListPage<T extends AnyDoc>({
   const { activeCompany, activeFinancialYear, activeBranchId, branches, isOwner } = useActiveCompany();
   const { scope, dateRange } = useBusinessScope();
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const syncStatus = useCompanySyncStatus();
   const rowsState = useLiveState<T>(async () => {
     const table = kind === "invoice" ? db().invoices : kind === "quotation" ? db().quotations : db().purchases;
     return (await table.orderBy("createdAt").reverse().toArray()) as unknown as T[];
   });
   const rows = rowsState.data;
+  const isSyncingInitial = (!syncStatus.isHydrated || syncStatus.isInitialSyncRunning) && rows.length === 0;
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.orderBy("name").toArray());
   const canonicalParties = useLive<Party>(() => db().parties.orderBy("name").toArray());
@@ -1916,7 +1919,20 @@ async function openNew() {
           </div>
           <ListToolbar query={q} onQuery={setQ} placeholder="Search by number, party name, or details…" />
 
-          {rows.length === 0 ? (
+          {isSyncingInitial ? (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex items-center gap-3 rounded-2xl border border-primary/25 bg-primary/5 p-4 text-xs text-primary shadow-soft">
+                <div className="relative flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                </div>
+                <div>
+                  <div className="font-semibold text-foreground">Syncing {title.toLowerCase()} from cloud…</div>
+                  <div className="text-[11px] text-muted-foreground">Pulling real-time workspace data across your devices</div>
+                </div>
+              </div>
+              <ListSkeleton columns={kind === "purchase" ? 8 : 7} rows={7} />
+            </div>
+          ) : rows.length === 0 ? (
             <EmptyState
               title={`No ${title.toLowerCase()} yet`}
               description={`Create your first ${title.toLowerCase()} with automatic double-entry ledger linking.`}

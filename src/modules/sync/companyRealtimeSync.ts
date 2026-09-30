@@ -26,10 +26,68 @@
  */
 
 import { firebaseDb } from "@/config/firebase";
-import { ref, query, orderByChild, equalTo, onValue, type Unsubscribe } from "firebase/database";
+import { ref, get, query, orderByChild, equalTo, onValue, type Unsubscribe } from "firebase/database";
 import { db } from "@/lib/db";
 import { cacheEntitiesBulk, removeCachedEntity, purgeCompanyCacheAndOutbox } from "./dexieCache";
 import { normalizeQuotationRecord } from "@/modules/documents/quotationNormalization";
+import { useState, useEffect } from "react";
+
+export interface CompanySyncStatus {
+  companyId: string | null;
+  isInitialSyncRunning: boolean;
+  isHydrated: boolean;
+  lastSyncedAt: number | null;
+}
+
+type SyncListener = (status: CompanySyncStatus) => void;
+
+class CompanySyncTracker {
+  private status: CompanySyncStatus = {
+    companyId: null,
+    isInitialSyncRunning: false,
+    isHydrated: false,
+    lastSyncedAt: null,
+  };
+  private listeners = new Set<SyncListener>();
+
+  getStatus(): CompanySyncStatus {
+    return this.status;
+  }
+
+  update(partial: Partial<CompanySyncStatus>) {
+    this.status = { ...this.status, ...partial };
+    this.notify();
+  }
+
+  subscribe(fn: SyncListener): () => void {
+    this.listeners.add(fn);
+    return () => {
+      this.listeners.delete(fn);
+    };
+  }
+
+  private notify() {
+    for (const listener of this.listeners) {
+      try {
+        listener(this.status);
+      } catch {}
+    }
+  }
+}
+
+export const companySyncTracker = new CompanySyncTracker();
+
+export function useCompanySyncStatus(): CompanySyncStatus {
+  const [status, setStatus] = useState<CompanySyncStatus>(() => companySyncTracker.getStatus());
+
+  useEffect(() => {
+    return companySyncTracker.subscribe((newStatus) => {
+      setStatus(newStatus);
+    });
+  }, []);
+
+  return status;
+}
 
 export interface CompanyRealtimeSyncOptions {
   companyId: string;
@@ -166,11 +224,15 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
         // BRANCH-SCOPED OPERATIONAL: Bound query subscription to caller's branch only
         // Non-owner attempting activeBranchId === "all" is strictly rejected from consolidated listener
         if (!isOwner && (activeBranchId === "all" || !activeBranchId)) {
-          colRef = query(
-            ref(currentDb, `companyData/${companyId}/${col.name}`),
-            orderByChild("branchId"),
-            equalTo(authorizedBranchIds[0] || "__UNAUTHORIZED_ALL_BRANCH_BYPASS__")
-          );
+          if (authorizedBranchIds.length > 0) {
+            colRef = query(
+              ref(currentDb, `companyData/${companyId}/${col.name}`),
+              orderByChild("branchId"),
+              equalTo(authorizedBranchIds[0])
+            );
+          } else {
+            colRef = ref(currentDb, `companyData/${companyId}/${col.name}`);
+          }
         } else {
           colRef = query(
             ref(currentDb, `companyData/${companyId}/${col.name}`),
@@ -281,6 +343,94 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
   for (const col of operationalCollections) {
     bindCollectionListener(col, true);
   }
+
+  // 3. Fast Parallel Proactive Hydration (Cross-Device Instant Loading)
+  const performFastHydration = async () => {
+    // Check if Dexie already has records on this local device
+    try {
+      const [invCount, custCount, prodCount] = await Promise.all([
+        db().invoices.count(),
+        db().customers.count(),
+        db().products.count(),
+      ]);
+      const hasLocalData = (invCount + custCount + prodCount) > 0;
+      if (hasLocalData) {
+        // Device already has cached local data, mark hydrated immediately so UI is 0ms responsive
+        companySyncTracker.update({
+          companyId,
+          isHydrated: true,
+        });
+      }
+    } catch {}
+
+    companySyncTracker.update({
+      companyId,
+      isInitialSyncRunning: true,
+    });
+
+    const allColsToHydrate = [...masterCollections, ...operationalCollections];
+
+    try {
+      await Promise.allSettled(
+        allColsToHydrate.map(async (col) => {
+          try {
+            const queryRef = ref(currentDb, `companyData/${companyId}/${col.name}`);
+            const getPromise = get(queryRef);
+            const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5500));
+            const snap = await Promise.race([getPromise, timeoutPromise]);
+
+            if (snap && snap.exists() && snap.val()) {
+              const val = snap.val();
+              let records = Object.entries(val).map(([id, record]: [string, any]) => {
+                const raw = { ...record, id: record?.id || id };
+                return "normalize" in col && (col as any).normalize ? (col as any).normalize(raw) : raw;
+              });
+
+              const isOperational = operationalCollections.some((oc) => oc.name === col.name);
+              if (isOperational && !isOwner && activeBranchId && activeBranchId !== "all") {
+                records = records.filter(
+                  (r) => r.branchId === activeBranchId || (authorizedBranchIds.length > 0 && r.branchId === authorizedBranchIds[0])
+                );
+              }
+
+              if (records.length > 0) {
+                await (col.table as any).bulkPut(records);
+                const cacheItems = records.map((r) => ({
+                  uid,
+                  companyId,
+                  branchId: r.branchId || (isOperational ? activeBranchId : undefined),
+                  financialYearId,
+                  entityType: col.entityType,
+                  entityId: r.id || String(r),
+                  data: r,
+                  version: r.version || 1,
+                  serverUpdatedAt: r.updatedAt || Date.now(),
+                }));
+                cacheEntitiesBulk(cacheItems).catch(() => {});
+              }
+            }
+          } catch (colErr) {
+            console.warn(`[fastHydrate] Error hydrating ${col.name}:`, colErr);
+          }
+        })
+      );
+    } catch (e) {
+      console.warn("[fastHydrate] Overall hydration warning:", e);
+    } finally {
+      companySyncTracker.update({
+        companyId,
+        isInitialSyncRunning: false,
+        isHydrated: true,
+        lastSyncedAt: Date.now(),
+      });
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("bms:company-data-hydrated", { detail: { companyId } }));
+      }
+    }
+  };
+
+  // Launch fast parallel hydration immediately
+  performFastHydration();
 
   // Authoritative listener teardown callback
   return () => {

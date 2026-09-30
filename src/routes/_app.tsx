@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, useNavigate, useLocation } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { startCompanyRealtimeSync } from "@/modules/sync/companyRealtimeSync";
@@ -32,6 +32,9 @@ function AppGuard() {
   } = useAuth();
   const { activeCompany, loading: companyLoading, companies, activeFinancialYear, activeBranchId, branches, isOwner } = useActiveCompany();
 
+  const authorizedBranchIds = useMemo(() => (branches || []).map((b) => b.id), [branches]);
+  const branchIdsKey = useMemo(() => authorizedBranchIds.slice().sort().join(","), [authorizedBranchIds]);
+
   // Central multi-device realtime company synchronization (PRD §§ 49, 56-59, 77-78, Pre-Merge Blocker 4)
   useEffect(() => {
     if (!activeCompany?.id || !isAuthenticated) return;
@@ -40,11 +43,11 @@ function AppGuard() {
       uid: user?.uid,
       financialYearId: activeFinancialYear?.id,
       activeBranchId,
-      authorizedBranchIds: branches?.map((b) => b.id) || [],
+      authorizedBranchIds,
       isOwner,
     });
     return () => stopSync();
-  }, [activeCompany?.id, isAuthenticated, user?.uid, activeFinancialYear?.id, activeBranchId, isOwner, branches]);
+  }, [activeCompany?.id, isAuthenticated, user?.uid, activeFinancialYear?.id, activeBranchId, isOwner, branchIdsKey]);
 
   // Concurrently signal startup readiness as soon as auth & active company resolve
   useEffect(() => {

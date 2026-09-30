@@ -134,17 +134,22 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
       }
 
       const companyIds = Object.keys(val);
-      const summaries: CompanySummary[] = [];
-
-      for (const cId of companyIds) {
+      const summaryPromises = companyIds.map(async (cId) => {
         try {
-          const compSnap = await get(ref(firebaseDb!, `companies/${cId}`));
-          const memSnap = await get(ref(firebaseDb!, `memberships/${cId}/${user.uid}`));
-          if (compSnap.exists() && memSnap.exists()) {
+          const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500));
+          const [compSnap, memSnap] = await Promise.race([
+            Promise.all([
+              get(ref(firebaseDb!, `companies/${cId}`)),
+              get(ref(firebaseDb!, `memberships/${cId}/${user.uid}`)),
+            ]),
+            timeoutPromise.then(() => [null, null]),
+          ]);
+
+          if (compSnap && compSnap.exists() && memSnap && memSnap.exists()) {
             const compData = compSnap.val();
             const memData = memSnap.val();
             const isDemo = Boolean(compData.isDemo || compData.organizationType === "DEMO");
-            summaries.push({
+            return {
               id: cId,
               name: compData.name || "Unnamed Company",
               legalName: compData.legalName,
@@ -152,28 +157,33 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
               organizationType: isDemo ? "DEMO" : "NORMAL",
               isDemo,
               demoExpiresAt: compData.demoExpiresAt,
-            });
+            } as CompanySummary;
           } else {
             // Fallback to companySummaries
-            const sumSnap = await get(ref(firebaseDb!, `companySummaries/${cId}`));
-            if (sumSnap.exists()) {
+            const sumSnap = await Promise.race([
+              get(ref(firebaseDb!, `companySummaries/${cId}`)),
+              timeoutPromise.then(() => null),
+            ]);
+            if (sumSnap && sumSnap.exists()) {
               const sumData = sumSnap.val();
               const isDemo = Boolean(sumData.isDemo || sumData.organizationType === "DEMO");
-              summaries.push({
+              return {
                 id: cId,
                 name: sumData.name || "Unnamed Company",
                 role: "viewer",
                 organizationType: isDemo ? "DEMO" : "NORMAL",
                 isDemo,
                 demoExpiresAt: sumData.demoExpiresAt,
-              });
+              } as CompanySummary;
             }
           }
         } catch (e) {
           console.warn(`Could not load summary for company ${cId}:`, e);
         }
-      }
+        return null;
+      });
 
+      const summaries = (await Promise.all(summaryPromises)).filter((s): s is CompanySummary => Boolean(s));
       setCompanies(summaries);
 
       // Auto-select if only 1 company or keep existing selection if still valid

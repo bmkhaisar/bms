@@ -18,6 +18,7 @@ import { ListSkeleton } from "@/components/app/Skeletons";
 import { Pencil, Plus, Trash2, Truck, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { useCompanySyncStatus } from "@/modules/sync/companyRealtimeSync";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, set, remove as rtdbRemove } from "firebase/database";
@@ -47,9 +48,11 @@ const empty: Supplier = {
 function SuppliersPage() {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
+  const syncStatus = useCompanySyncStatus();
   const dexieRowsState = useLiveState<Supplier>(() => db().suppliers.orderBy("name").toArray());
   const rows = dexieRowsState.data;
   const initialLoading = !dexieRowsState.isLoaded;
+  const isSyncingInitial = (!syncStatus.isHydrated || syncStatus.isInitialSyncRunning) && rows.length === 0;
   const [, setCloudRows] = useState<Supplier[]>([]);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "ALL" | "INACTIVE">("ACTIVE");
@@ -337,8 +340,19 @@ function SuppliersPage() {
         </Tabs>
       </div>
 
-      {initialLoading ? (
-        <ListSkeleton columns={6} />
+      {initialLoading || isSyncingInitial ? (
+        <div className="space-y-4 animate-fade-in">
+          <div className="flex items-center gap-3 rounded-2xl border border-primary/25 bg-primary/5 p-4 text-xs text-primary shadow-soft">
+            <div className="relative flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            </div>
+            <div>
+              <div className="font-semibold text-foreground">Syncing suppliers from cloud…</div>
+              <div className="text-[11px] text-muted-foreground">Pulling real-time workspace data across your devices</div>
+            </div>
+          </div>
+          <ListSkeleton columns={6} rows={7} />
+        </div>
       ) : filtered.length === 0 ? (
         <EmptyState
           title={statusFilter === "INACTIVE" ? "No inactive suppliers" : "No suppliers yet"}

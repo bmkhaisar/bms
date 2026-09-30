@@ -13,12 +13,14 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { ListToolbar, EmptyState, usePagination, Pager } from "@/components/app/ListHelpers";
+import { ListSkeleton } from "@/components/app/Skeletons";
 import { PackagePlus, Pencil, Plus, Trash2, BarChart3, Loader2, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { formatMoney } from "@/lib/format";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { useCompanySyncStatus } from "@/modules/sync/companyRealtimeSync";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, set, remove as rtdbRemove } from "firebase/database";
@@ -58,6 +60,7 @@ const empty: Product = {
 function ProductsPage() {
   const { user } = useAuth();
   const { activeCompany } = useActiveCompany();
+  const syncStatus = useCompanySyncStatus();
   const dexieRows = useLive<Product>(() => db().products.orderBy("name").toArray());
   const [, setCloudRows] = useState<Product[]>([]);
   const cats = useLive<Category>(() => db().categories.orderBy("name").toArray());
@@ -79,6 +82,7 @@ function ProductsPage() {
 
   // The company-level ordered realtime synchronizer is the single read owner.
   const rows = dexieRows;
+  const isSyncingInitial = (!syncStatus.isHydrated || syncStatus.isInitialSyncRunning) && rows.length === 0;
 
   // Deep-link support: auto-filter and open product editor if id or q present in URL
   useEffect(() => {
@@ -394,7 +398,20 @@ function ProductsPage() {
         </Tabs>
       </div>
 
-      {filtered.length === 0 ? (
+      {isSyncingInitial ? (
+        <div className="space-y-4 animate-fade-in">
+          <div className="flex items-center gap-3 rounded-2xl border border-primary/25 bg-primary/5 p-4 text-xs text-primary shadow-soft">
+            <div className="relative flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            </div>
+            <div>
+              <div className="font-semibold text-foreground">Syncing products from cloud…</div>
+              <div className="text-[11px] text-muted-foreground">Pulling real-time workspace data across your devices</div>
+            </div>
+          </div>
+          <ListSkeleton columns={6} rows={7} />
+        </div>
+      ) : filtered.length === 0 ? (
         <EmptyState
           title={statusFilter === "INACTIVE" ? "No inactive products" : "No products found"}
           description={

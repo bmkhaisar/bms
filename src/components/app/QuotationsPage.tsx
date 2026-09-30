@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  Copy, Download, FileText, Pencil, Plus, Printer, Trash2, FileType2, Share2, FileCheck, Eye,
+  Copy, Download, FileText, Pencil, Plus, Printer, Trash2, FileType2, Share2, FileCheck, Eye, Loader2,
 } from "lucide-react";
 import {
   db, uid, nextNumber, getCompany,
@@ -25,6 +25,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { ListSkeleton } from "./Skeletons";
 import { BmsShareDialog, type ShareDocumentData } from "./share";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { useCompanySyncStatus } from "@/modules/sync/companyRealtimeSync";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { getNextDocumentNumber } from "@/lib/numberingClient";
 import { freezeQuotationSnapshots } from "@/modules/documents/quotationSnapshot";
@@ -43,10 +44,12 @@ import {
 } from "@/modules/documents/documentContentHydration";
 
 export function QuotationsPage() {
+  const syncStatus = useCompanySyncStatus();
   const rawRowsState = useLiveState<Quotation>(() => db().quotations.orderBy("createdAt").reverse().toArray());
   const rawRows = rawRowsState.data;
   const initialLoading = !rawRowsState.isLoaded;
   const rows = useMemo(() => rawRows.map(normalizeQuotationRecord), [rawRows]);
+  const isSyncingInitial = (!syncStatus.isHydrated || syncStatus.isInitialSyncRunning) && rows.length === 0;
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const templates = useLive<QuotationTemplate>(() => db().quotationTemplates.orderBy("name").toArray());
   const invoices = useLive<Invoice>(() => db().invoices.orderBy("createdAt").reverse().toArray());
@@ -467,8 +470,19 @@ export function QuotationsPage() {
         <Button className="gap-2 hover-scale" onClick={openNew}><Plus className="h-4 w-4" /> New quotation</Button>
       </div>
 
-      {initialLoading ? (
-        <ListSkeleton columns={6} />
+      {initialLoading || isSyncingInitial ? (
+        <div className="space-y-4 animate-fade-in">
+          <div className="flex items-center gap-3 rounded-2xl border border-primary/25 bg-primary/5 p-4 text-xs text-primary shadow-soft">
+            <div className="relative flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            </div>
+            <div>
+              <div className="font-semibold text-foreground">Syncing quotations from cloud…</div>
+              <div className="text-[11px] text-muted-foreground">Pulling real-time workspace data across your devices</div>
+            </div>
+          </div>
+          <ListSkeleton columns={6} rows={7} />
+        </div>
       ) : (
         <div className="animate-fade-in">
           <ListToolbar

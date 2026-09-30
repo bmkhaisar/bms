@@ -48,6 +48,7 @@ import { motion } from "framer-motion";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
+import { useCompanySyncStatus } from "@/modules/sync/companyRealtimeSync";
 import {
   computeDashboardMetrics,
   getCachedDashboardSummary,
@@ -346,11 +347,20 @@ function Dashboard() {
     }
   }, [isDataLoaded, invoices, purchases, receipts, activeFinancialYear?.startDate, activeFinancialYear?.endDate]);
 
+  const syncStatus = useCompanySyncStatus();
+  const isSyncingInitial = (!syncStatus.isHydrated || syncStatus.isInitialSyncRunning) && invoices.length === 0 && purchases.length === 0;
+
   // If data is still querying and no memory cache exists yet, show skeleton rather than flashing fake ₹0 (PRD § 9)
-  if (!isDataLoaded || !metrics) {
+  if (!isDataLoaded || !metrics || isSyncingInitial) {
     return (
       <AppShell title="Dashboard">
-        <DashboardSkeleton />
+        <div className="space-y-4 animate-fade-in">
+          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground/80">
+            <span className="inline-block h-2 w-2 rounded-full bg-primary/60 animate-pulse" />
+            <span>Syncing workspace data from cloud…</span>
+          </div>
+          <DashboardSkeleton />
+        </div>
       </AppShell>
     );
   }
