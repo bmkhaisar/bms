@@ -50,49 +50,51 @@ test("About Leadership Team: KHAISAR_HUSSAIN_TITLE_UPDATED = VERIFIED", () => {
   );
 });
 
-test("About Leadership Team: ARIF_RUMAN_ADDED = VERIFIED", () => {
+test("About Leadership Team: AKIF_RUMAN_ADDED = VERIFIED", () => {
   const content = fs.readFileSync(aboutPath, "utf-8");
 
-  assert.ok(content.includes("Arif Ruman"), "Must contain exact name Arif Ruman");
+  assert.ok(content.includes("Akif Ruman"), "Must contain exact name Akif Ruman");
   assert.ok(
     content.includes("Co-Founder · Technical Lead · Head of Client Acquisition & Relations"),
     "Must contain exact title: Co-Founder · Technical Lead · Head of Client Acquisition & Relations"
   );
   assert.ok(
     content.includes("Leads technical coordination, client acquisition, customer relationships,"),
-    "Must contain exact description for Arif Ruman"
+    "Must contain exact description for Akif Ruman"
   );
 });
 
-test("About Leadership Team: ARIF_PLACEHOLDER_NO_FAKE_PHOTO = VERIFIED", () => {
+test("About Leadership Team: AKIF_PLACEHOLDER_NO_FAKE_PHOTO = VERIFIED", () => {
   const content = fs.readFileSync(aboutPath, "utf-8");
 
-  // Verify Arif card uses AR initials in rounded container
+  // Verify Akif card uses AR initials in rounded container
   assert.ok(content.includes(">AR<") || /\bAR\b/.test(content), "Must contain AR initials placeholder");
   assert.ok(
+    !content.includes("akif.png") &&
+    !content.includes("akif.jpg") &&
     !content.includes("arif.png") &&
     !content.includes("arif.jpg") &&
     !content.includes("avatar.iran.liara.run") &&
     !content.includes("unsplash") &&
     !content.includes("randomuser.me") &&
     !content.includes("pravatar"),
-    "Must NOT use fake photo or random stock avatar for Arif Ruman"
+    "Must NOT use fake photo or random stock avatar for Akif Ruman"
   );
 });
 
-test("About Leadership Team: Order is Mohammed Maaz A, Khaisar Hussain, Arif Ruman", () => {
+test("About Leadership Team: Order is Mohammed Maaz A, Khaisar Hussain, Akif Ruman", () => {
   const content = fs.readFileSync(aboutPath, "utf-8");
 
   const maazPos = content.indexOf("Mohammed Maaz A");
   const khaisarPos = content.indexOf("Khaisar Hussain");
-  const arifPos = content.indexOf("Arif Ruman");
+  const akifPos = content.indexOf("Akif Ruman");
 
   assert.ok(maazPos !== -1, "Maaz must exist");
   assert.ok(khaisarPos !== -1, "Khaisar must exist");
-  assert.ok(arifPos !== -1, "Arif must exist");
+  assert.ok(akifPos !== -1, "Akif must exist");
 
   assert.ok(maazPos < khaisarPos, "Mohammed Maaz A must precede Khaisar Hussain");
-  assert.ok(khaisarPos < arifPos, "Khaisar Hussain must precede Arif Ruman");
+  assert.ok(khaisarPos < akifPos, "Khaisar Hussain must precede Akif Ruman");
 });
 
 test("About Leadership Team: ABOUT_RESPONSIVE = VERIFIED (Grid layout and card equality)", () => {
@@ -109,6 +111,6 @@ test("About Leadership Team: ABOUT_RESPONSIVE = VERIFIED (Grid layout and card e
     content.includes("md:col-span-2") &&
     content.includes("md:max-w-md") &&
     content.includes("lg:col-span-1"),
-    "Arif card must center on tablet in 2+1 layout and fit 1 col on desktop"
+    "Akif card must center on tablet in 2+1 layout and fit 1 col on desktop"
   );
 });

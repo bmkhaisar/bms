@@ -91,7 +91,7 @@ function AboutPage() {
               </p>
             </div>
 
-            {/* Arif Ruman */}
+            {/* Akif Ruman */}
             <div className="rounded-3xl border border-blue-500/20 bg-card p-6 shadow-soft flex flex-col items-center text-center h-full md:col-span-2 md:max-w-md md:w-full md:mx-auto lg:col-span-1 lg:max-w-none">
               <div className="relative mb-4">
                 <div className="h-28 w-28 rounded-full bg-gradient-to-br from-blue-500/20 to-indigo-500/20 border-2 border-blue-500/30 flex items-center justify-center text-2xl font-black text-blue-700 dark:text-blue-300 shadow-md">
@@ -101,7 +101,7 @@ function AboutPage() {
                   <Users className="h-3.5 w-3.5" />
                 </div>
               </div>
-              <h3 className="text-lg font-bold text-foreground">Arif Ruman</h3>
+              <h3 className="text-lg font-bold text-foreground">Akif Ruman</h3>
               <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 mt-1 min-h-[3rem] sm:min-h-[3.25rem] flex items-center justify-center text-center px-2">
                 Co-Founder · Technical Lead · Head of Client Acquisition & Relations
               </p>
