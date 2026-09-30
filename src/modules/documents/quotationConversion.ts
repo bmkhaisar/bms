@@ -8,6 +8,7 @@ import type { Company } from "@/modules/company/types";
 import { firebaseDb, sanitizeForFirebase } from "@/config/firebase";
 import { ref, get, update, runTransaction } from "firebase/database";
 import { cacheEntity } from "@/modules/sync/dexieCache";
+import { reconcileDocumentPostSuccess } from "@/lib/reconciliation";
 import { applyQuotationToLinkedDraft, isInvoiceImmutable } from "./linkedDraftInvoice";
 import { resolveCreditDays, computeInvoiceDueDate } from "@/modules/documents/sharing/paymentInsightService";
 import { normalizeTechSpecSections } from "@/lib/techSpecResolution";
@@ -17,6 +18,9 @@ export interface ConvertQuotationOptions {
   activeCompany?: Partial<Company> | null;
   financialYearId?: string;
   fyName?: string;
+  branchId?: string;
+  activeBranchId?: string;
+  branches?: any[];
   user?: { uid: string; getIdToken?: () => Promise<string> } | null;
   idToken?: string;
   companySettings?: CompanySettings | null;
@@ -36,6 +40,20 @@ export async function updateLinkedDraftInvoiceFromQuotation(
 ): Promise<Invoice> {
   const now = Date.now();
   let updated = applyQuotationToLinkedDraft(quotation, invoice, now);
+  const effectiveBranchId =
+    updated.branchId ||
+    invoice.branchId ||
+    quotation.branchId ||
+    options?.branchId ||
+    (options?.activeBranchId && options.activeBranchId !== "all" ? options.activeBranchId : undefined) ||
+    (options?.branches?.find((b: any) => b.isMain || b.isMainBranch)?.id || options?.branches?.[0]?.id || "main");
+
+  updated = {
+    ...updated,
+    branchId: effectiveBranchId,
+    companyId: updated.companyId || options?.activeCompany?.id || quotation.companyId,
+    updatedAt: now,
+  };
 
   if (options?.activeCompany?.id && firebaseDb) {
     let rejection = "Linked invoice no longer exists.";
@@ -44,7 +62,10 @@ export async function updateLinkedDraftInvoiceFromQuotation(
       (current) => {
         if (!current) return;
         try {
-          return sanitizeForFirebase(applyQuotationToLinkedDraft(quotation, current as Invoice, now));
+          const applied = applyQuotationToLinkedDraft(quotation, current as Invoice, now);
+          applied.branchId = applied.branchId || effectiveBranchId;
+          applied.companyId = applied.companyId || options.activeCompany?.id;
+          return sanitizeForFirebase(applied);
         } catch (error) {
           rejection = error instanceof Error ? error.message : rejection;
           return;
@@ -61,11 +82,18 @@ export async function updateLinkedDraftInvoiceFromQuotation(
     await cacheEntity({
       uid: options.user?.uid || "",
       companyId: options.activeCompany.id,
+      branchId: effectiveBranchId,
       entityType: "invoice",
       entityId: updated.id,
       data: updated,
       financialYearId: updated.financialYearId,
       name: updated.number,
+    });
+    reconcileDocumentPostSuccess({
+      entityType: "invoice",
+      companyId: options.activeCompany.id,
+      document: updated,
+      action: "update",
     });
   }
   return updated;
@@ -82,10 +110,25 @@ export async function convertQuotationToInvoice(
   options?: ConvertQuotationOptions
 ): Promise<QuotationConversionResult> {
   try {
+    const effectiveBranchId =
+      quotation.branchId ||
+      options?.branchId ||
+      (options?.activeBranchId && options.activeBranchId !== "all" ? options.activeBranchId : undefined) ||
+      (options?.branches?.find((b: any) => b.isMain || b.isMainBranch)?.id || options?.branches?.[0]?.id || "main");
+
     // 1. Idempotency Check: Firebase is authoritative; Dexie is only a cache.
     if (quotation.convertedInvoiceId) {
       const existing = await db().invoices.get(quotation.convertedInvoiceId);
       if (existing) {
+        if (!existing.branchId && effectiveBranchId) {
+          existing.branchId = effectiveBranchId;
+          await db().invoices.put(existing);
+          if (options?.activeCompany?.id && firebaseDb) {
+            await update(ref(firebaseDb), {
+              [`companyData/${options.activeCompany.id}/invoices/${existing.id}/branchId`]: effectiveBranchId,
+            }).catch(() => {});
+          }
+        }
         toast.info(`Quotation was already converted to Invoice ${existing.number}`);
         return { success: true, invoice: existing, isExisting: true };
       }
@@ -98,8 +141,19 @@ export async function convertQuotationToInvoice(
         const cloudInvoice = await get(ref(firebaseDb, `companyData/${options.activeCompany.id}/invoices/${convertedInvoiceId}`));
         if (cloudInvoice.exists()) {
           const existing = cloudInvoice.val() as Invoice;
+          if (!existing.branchId && effectiveBranchId) {
+            existing.branchId = effectiveBranchId;
+            await update(ref(firebaseDb), {
+              [`companyData/${options.activeCompany.id}/invoices/${existing.id}/branchId`]: effectiveBranchId,
+            }).catch(() => {});
+          }
           await db().invoices.put(existing);
-          await db().quotations.update(quotation.id, { status: "converted", convertedInvoiceId });
+          await db().quotations.update(quotation.id, {
+            status: "converted",
+            convertedInvoiceId,
+            convertedInvoiceNumber: existing.number,
+            branchId: quotation.branchId || effectiveBranchId,
+          });
           toast.info(`Quotation was already converted to Invoice ${existing.number}`);
           return { success: true, invoice: existing, isExisting: true };
         }
@@ -174,6 +228,8 @@ export async function convertQuotationToInvoice(
       id: invoiceId,
       number,
       date: now,
+      companyId: options?.activeCompany?.id || quotation.companyId,
+      branchId: effectiveBranchId,
       financialYearId: options?.financialYearId || quotation.financialYearId,
       customerId: quotation.customerId,
       customerSnapshot,
@@ -269,11 +325,14 @@ export async function convertQuotationToInvoice(
         [`companyData/${options.activeCompany.id}/invoices/${invoice.id}`]: sanitizeForFirebase({
           ...invoice,
           companyId: options.activeCompany.id,
-          financialYearId: options.financialYearId,
+          branchId: effectiveBranchId,
+          financialYearId: invoice.financialYearId,
           updatedAt: now,
         }),
         [`companyData/${options.activeCompany.id}/quotations/${quotation.id}/status`]: "converted",
         [`companyData/${options.activeCompany.id}/quotations/${quotation.id}/convertedInvoiceId`]: invoiceId,
+        [`companyData/${options.activeCompany.id}/quotations/${quotation.id}/convertedInvoiceNumber`]: number,
+        [`companyData/${options.activeCompany.id}/quotations/${quotation.id}/branchId`]: quotation.branchId || effectiveBranchId,
         [`companyData/${options.activeCompany.id}/quotations/${quotation.id}/updatedAt`]: now,
       };
       await update(ref(firebaseDb), rootUpdates);
@@ -281,31 +340,61 @@ export async function convertQuotationToInvoice(
 
     // Only reconcile local caches after cloud acknowledgement.
     await db().invoices.put(invoice);
-    await db().quotations.update(quotation.id, { status: "converted", convertedInvoiceId: invoiceId });
-
-    if (options?.activeCompany?.id) await cacheEntity({
-      uid: options.user?.uid || "",
-      companyId: options.activeCompany.id,
-      entityType: "invoice",
-      entityId: invoice.id,
-      data: invoice,
-      financialYearId: options.financialYearId,
-      name: invoice.number,
+    await db().quotations.update(quotation.id, {
+      status: "converted",
+      convertedInvoiceId: invoiceId,
+      convertedInvoiceNumber: number,
+      branchId: quotation.branchId || effectiveBranchId,
+      updatedAt: now,
     });
 
-    // Also update Dexie bms_cache_v1 if company scoped
     if (options?.activeCompany?.id) {
       await cacheEntity({
         uid: options.user?.uid || "",
         companyId: options.activeCompany.id,
+        branchId: effectiveBranchId,
+        entityType: "invoice",
+        entityId: invoice.id,
+        data: invoice,
+        financialYearId: invoice.financialYearId,
+        name: invoice.number,
+      });
+
+      // Also update Dexie bms_cache_v1 if company scoped
+      await cacheEntity({
+        uid: options.user?.uid || "",
+        companyId: options.activeCompany.id,
+        branchId: quotation.branchId || effectiveBranchId,
         entityType: "quotation",
         entityId: quotation.id,
         data: {
           ...quotation,
           status: "converted",
           convertedInvoiceId: invoiceId,
+          convertedInvoiceNumber: number,
+          branchId: quotation.branchId || effectiveBranchId,
+          updatedAt: now,
         },
         name: quotation.number,
+      });
+
+      reconcileDocumentPostSuccess({
+        entityType: "invoice",
+        companyId: options.activeCompany.id,
+        document: invoice,
+        action: "create",
+      });
+      reconcileDocumentPostSuccess({
+        entityType: "quotation",
+        companyId: options.activeCompany.id,
+        document: {
+          ...quotation,
+          status: "converted",
+          convertedInvoiceId: invoiceId,
+          convertedInvoiceNumber: number,
+          branchId: quotation.branchId || effectiveBranchId,
+        },
+        action: "update",
       });
     }
 

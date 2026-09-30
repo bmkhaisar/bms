@@ -35,6 +35,7 @@ import { ensureActiveFinancialYearServerFn } from "@/functions/ensureFinancialYe
 import { normalizeQuotationRecord } from "@/modules/documents/quotationNormalization";
 import { useDocumentDeepLink, documentDeepLink } from "@/lib/useDocumentDeepLink";
 import { useNavigate } from "@tanstack/react-router";
+import { cn } from "@/lib/utils";
 import {
   parseMarkdownToStructuredTerms,
   parseMarkdownToTechSpecSections,
@@ -60,8 +61,14 @@ export function QuotationsPage() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const { user } = useAuth();
-  const { activeCompany, activeFinancialYear } = useActiveCompany();
+  const { activeCompany, activeFinancialYear, activeBranchId, branches } = useActiveCompany();
   const navigate = useNavigate();
+
+  const effectiveBranchId = useMemo(() => {
+    if (activeBranchId && activeBranchId !== "all") return activeBranchId;
+    const mainBranch = (branches || []).find((b: any) => b.isMain || b.isMainBranch) || branches?.[0];
+    return mainBranch?.id || "br_main";
+  }, [activeBranchId, branches]);
 
   const { closeDocument: closeQuotationEditor, markManualOpen } = useDocumentDeepLink({
     documents: rows,
@@ -153,6 +160,8 @@ export function QuotationsPage() {
     const initialGen = parseMarkdownToGeneralInfoRows(activeCompany?.quotationGeneralInfoMarkdown, [], undefined, false, (activeCompany as any)?.generalInfoFields);
     setEditing({
       id: uid(), number, date: Date.now(), customerId: "",
+      companyId: activeCompany?.id,
+      branchId: effectiveBranchId,
       items: [], subtotal: 0, discountTotal: 0, gstTotal: 0, roundOff: 0, grandTotal: 0,
       status: "draft", createdAt: Date.now(), financialYearId: financialYear.id, extraCharges: [],
       includeTerms: activeCompany?.showQuotationTerms !== false,
@@ -195,27 +204,91 @@ export function QuotationsPage() {
       ...restOfQuotation,
       id: uid(),
       number,
+      companyId: activeCompany?.id || r.companyId,
+      branchId: r.branchId || effectiveBranchId,
       financialYearId: financialYear.id,
       createdAt: Date.now(),
       date: Date.now(),
       status: "draft",
+      convertedInvoiceId: undefined,
+      convertedInvoiceNumber: undefined,
       companySnapshot: activeCompany ? createCompanySnapshot(activeCompany) : undefined,
     });
   }
-  async function saveQuotation(next: Quotation) {
+
+  const effectiveLinkedInvoice = useMemo(() => {
+    if (!editing) return null;
+    const match = invoices.find(
+      (inv) =>
+        (editing.convertedInvoiceId && inv.id === editing.convertedInvoiceId) ||
+        (editing.convertedInvoiceNumber && inv.number === editing.convertedInvoiceNumber) ||
+        inv.convertedFromQuotationId === editing.id ||
+        inv.sourceQuotationId === editing.id
+    );
+    if (match) {
+      return {
+        id: match.id,
+        number: match.number,
+        isPosted: isInvoiceImmutable(match),
+        status: match.status,
+        rawInvoice: match,
+      };
+    }
+    if (editing.convertedInvoiceId || editing.convertedInvoiceNumber) {
+      return {
+        id: editing.convertedInvoiceId || "",
+        number: editing.convertedInvoiceNumber || "Invoice",
+        isPosted: false,
+        status: "draft",
+        rawInvoice: undefined,
+      };
+    }
+    return null;
+  }, [editing, invoices]);
+
+  async function saveQuotation(next: Quotation, shouldUpdateLinkedInvoice = false) {
     const comp = activeCompany || company;
+    const branchId = next.branchId || effectiveBranchId;
     const toSave: Quotation = freezeQuotationSnapshots({
       ...next,
+      branchId,
+      companyId: activeCompany?.id || next.companyId,
       createdAt: next.createdAt || Date.now(),
       updatedAt: Date.now(),
     }, comp);
 
-    // Optimistic UI update
+    // Optimistic local update for instant UI feedback
     setOptimisticOverrides(prev => new Map(prev).set(toSave.id, toSave));
+    await db().quotations.put(toSave);
+
+    // If user confirmed updating the linked invoice
+    if (shouldUpdateLinkedInvoice && (effectiveLinkedInvoice || toSave.convertedInvoiceId)) {
+      let targetInvoice = effectiveLinkedInvoice?.rawInvoice;
+      if (!targetInvoice && toSave.convertedInvoiceId) {
+        targetInvoice = await db().invoices.get(toSave.convertedInvoiceId);
+      }
+      if (targetInvoice) {
+        if (isInvoiceImmutable(targetInvoice)) {
+          toast.warning(`Quotation saved, but linked invoice ${targetInvoice.number} is posted and immutable.`);
+        } else {
+          try {
+            await updateLinkedDraftInvoiceFromQuotation(toSave, targetInvoice, {
+              activeCompany,
+              user,
+              branchId,
+            });
+            toast.success(`Quotation and linked draft invoice ${targetInvoice.number} updated.`);
+          } catch (linkErr: any) {
+            console.error("[saveQuotation] Failed to update linked draft invoice:", linkErr);
+            toast.error(linkErr?.message || "Quotation saved, but failed to update linked draft invoice.");
+          }
+        }
+      }
+    }
 
     try {
       if (activeCompany?.id) {
-        await authoritativeSaveEntity({
+        const savePromise = authoritativeSaveEntity({
           companyId: activeCompany.id,
           financialYearId: toSave.financialYearId || activeFinancialYear?.id,
           kind: "quotation",
@@ -223,42 +296,35 @@ export function QuotationsPage() {
           uid: user?.uid,
           action: rows.find(r => r.id === toSave.id) ? "update" : "create",
         });
-      } else {
-        await db().quotations.put(toSave);
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Cloud save timeout")), 6000)
+        );
+        await Promise.race([savePromise, timeoutPromise]).catch((e) => {
+          console.warn("[saveQuotation] Cloud sync running in background or timed out:", e);
+        });
       }
 
-      toast.success("Quotation saved");
+      if (!shouldUpdateLinkedInvoice || !effectiveLinkedInvoice?.rawInvoice) {
+        toast.success("Quotation saved");
+      }
       closeQuotationEditor();
     } catch (err: any) {
-      setOptimisticOverrides(prev => {
-        const nextMap = new Map(prev);
-        nextMap.delete(toSave.id);
-        return nextMap;
-      });
-      console.error("[saveQuotation] Failed to save quotation:", err);
-      toast.error(err?.message || "Failed to save quotation to cloud");
+      console.error("[saveQuotation] Error during authoritative save:", err);
+      toast.success("Quotation saved locally");
+      closeQuotationEditor();
     }
   }
 
   async function saveQuotationDraft(next: Quotation) {
     const draft: Quotation = {
       ...next,
-      status: "draft",
+      branchId: next.branchId || effectiveBranchId,
+      companyId: activeCompany?.id || next.companyId,
+      status: next.status || "draft",
       updatedAt: Date.now(),
       companySnapshot: activeCompany ? createCompanySnapshot(activeCompany) : next.companySnapshot,
     };
-    if (activeCompany?.id) {
-      await authoritativeSaveEntity({
-        companyId: activeCompany.id,
-        financialYearId: draft.financialYearId || activeFinancialYear?.id,
-        kind: "quotation",
-        entity: draft,
-        uid: user?.uid,
-        action: rows.some((row) => row.id === draft.id) ? "update" : "create",
-      });
-    } else {
-      await db().quotations.put(draft);
-    }
+    await db().quotations.put(draft);
     setOptimisticOverrides((current) => new Map(current).set(draft.id, draft));
   }
 
@@ -294,30 +360,40 @@ export function QuotationsPage() {
     let idToken: string | undefined;
     try { idToken = await user?.getIdToken(); } catch {}
     const financialYear = await resolveFinancialYear(idToken);
-    await convertQuotationToInvoice(r, {
+    const branchId = r.branchId || effectiveBranchId;
+    const result = await convertQuotationToInvoice(r, {
       activeCompany,
+      branchId,
+      activeBranchId,
+      branches,
       financialYearId: r.financialYearId || financialYear.id,
       fyName: financialYear.name,
       user,
       idToken,
       companySettings: company,
     });
+    if (result.success && result.invoice) {
+      const updatedQuotation: Quotation = {
+        ...r,
+        status: "converted",
+        convertedInvoiceId: result.invoice.id,
+        convertedInvoiceNumber: result.invoice.number,
+        branchId,
+        updatedAt: Date.now(),
+      };
+      setOptimisticOverrides(prev => new Map(prev).set(r.id, updatedQuotation));
+    }
   }
 
-  const linkedInvoice = editing?.convertedInvoiceId
-    ? invoices.find((invoice) => invoice.id === editing.convertedInvoiceId)
-    : undefined;
-  const linkedInvoiceIsPosted = linkedInvoice ? isInvoiceImmutable(linkedInvoice) : false;
-  const quotationChangedSinceLink = Boolean(
-    editing && linkedInvoice &&
-    Number(editing.updatedAt || editing.createdAt) > Number(linkedInvoice.sourceQuotationUpdatedAt || linkedInvoice.createdAt),
-  );
-
   async function updateLinkedDraft() {
-    if (!editing || !linkedInvoice) return;
+    if (!editing || !effectiveLinkedInvoice?.rawInvoice) return;
     try {
-      await updateLinkedDraftInvoiceFromQuotation(editing, linkedInvoice, { activeCompany, user });
-      toast.success(`Linked draft invoice ${linkedInvoice.number} updated`);
+      await updateLinkedDraftInvoiceFromQuotation(editing, effectiveLinkedInvoice.rawInvoice, {
+        activeCompany,
+        user,
+        branchId: editing.branchId || effectiveBranchId,
+      });
+      toast.success(`Linked draft invoice ${effectiveLinkedInvoice.number} updated`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not update linked draft invoice");
     }
@@ -452,7 +528,25 @@ export function QuotationsPage() {
                         <TableCell className="text-muted-foreground">{r.validity ? formatDate(r.validity) : "—"}</TableCell>
                         <TableCell>{r.items.length}</TableCell>
                         <TableCell className="text-right font-mono font-semibold">{formatMoney(r.grandTotal)}</TableCell>
-                        <TableCell><span className="rounded-md bg-muted px-2 py-0.5 text-xs uppercase font-semibold">{r.status}</span></TableCell>
+                        <TableCell>
+                          <span className={cn(
+                            "rounded-md px-2 py-0.5 text-xs uppercase font-semibold inline-flex items-center gap-1",
+                            r.status === "converted"
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
+                              : r.status === "accepted"
+                              ? "bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800"
+                              : r.status === "rejected"
+                              ? "bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800"
+                              : "bg-muted text-muted-foreground"
+                          )}>
+                            {r.status}
+                          </span>
+                          {r.status === "converted" && r.convertedInvoiceNumber && (
+                            <div className="text-[10px] text-muted-foreground mt-0.5 font-mono">
+                              {r.convertedInvoiceNumber}
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right">
                           {/* 1. Preview */}
                           <Button size="icon" variant="ghost" title="Quick Preview" onClick={() => setPreviewQuotation(r)} className="text-primary hover:bg-primary/10">
@@ -470,9 +564,24 @@ export function QuotationsPage() {
                           <Button size="icon" variant="ghost" title="Print" onClick={() => printQuote(r)}>
                             <Printer className="h-4 w-4" />
                           </Button>
-                          <Button size="icon" variant="ghost" title="Convert to Invoice" onClick={() => handleConvert(r)} className="text-emerald-600 hover:bg-emerald-500/10">
-                            <FileCheck className="h-4 w-4" />
-                          </Button>
+                          {r.status === "converted" ? (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              title={r.convertedInvoiceNumber ? `View Invoice (${r.convertedInvoiceNumber})` : "View Linked Invoice"}
+                              onClick={() => {
+                                const invId = r.convertedInvoiceId || `inv_from_${r.id}`;
+                                navigate({ to: documentDeepLink("/invoices", invId) as never });
+                              }}
+                              className="text-emerald-600 hover:bg-emerald-500/10"
+                            >
+                              <FileText className="h-4 w-4" />
+                            </Button>
+                          ) : (
+                            <Button size="icon" variant="ghost" title="Convert to Invoice" onClick={() => handleConvert(r)} className="text-emerald-600 hover:bg-emerald-500/10">
+                              <FileCheck className="h-4 w-4" />
+                            </Button>
+                          )}
                           <Button size="icon" variant="ghost" title="Edit" onClick={() => { markManualOpen(); setEditing({ ...r }); }}><Pencil className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Duplicate" onClick={() => duplicate(r)}><Copy className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title="Delete" onClick={() => setDeleteId(r.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
@@ -500,35 +609,14 @@ export function QuotationsPage() {
 
       <Dialog open={!!editing} onOpenChange={o => !o && closeQuotationEditor()}>
         <DialogContent className="max-w-6xl w-[96vw] p-0 gap-0 h-[95vh] max-h-[95vh] overflow-hidden flex flex-col [&>button.absolute]:hidden">
-          {editing && linkedInvoice && (
-            <div className="shrink-0 border-b bg-muted/35 px-4 py-2.5 text-xs sm:flex sm:items-center sm:justify-between sm:gap-3">
-              <div>
-                <div className="font-semibold">
-                  {linkedInvoiceIsPosted
-                    ? `Invoice ${linkedInvoice.number} is already posted.`
-                    : `Linked Draft Invoice: ${linkedInvoice.number}`}
-                </div>
-                <div className="mt-0.5 text-muted-foreground">
-                  {linkedInvoiceIsPosted
-                    ? "Changes to this quotation will not modify the posted invoice."
-                    : quotationChangedSinceLink
-                      ? "This quotation has changed since the linked draft invoice was created."
-                      : "The linked draft invoice matches this quotation."}
-                </div>
-              </div>
-              <div className="mt-2 flex shrink-0 gap-2 sm:mt-0">
-                <Button size="sm" variant="outline" onClick={() => navigate({ to: documentDeepLink("/invoices", linkedInvoice.id) as never })}>
-                  View Invoice
-                </Button>
-                {!linkedInvoiceIsPosted && quotationChangedSinceLink && (
-                  <Button size="sm" onClick={updateLinkedDraft}>Update Linked Draft Invoice</Button>
-                )}
-              </div>
-            </div>
-          )}
           {editing && (
             <QuotationForm
               initial={editing}
+              linkedInvoice={effectiveLinkedInvoice}
+              onViewLinkedInvoice={(invoiceId) => {
+                closeQuotationEditor();
+                navigate({ to: documentDeepLink("/invoices", invoiceId) as never });
+              }}
               onSave={saveQuotation}
               onDraftSave={saveQuotationDraft}
               onCancel={closeQuotationEditor}

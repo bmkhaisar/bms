@@ -227,9 +227,8 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
             const idsToDelete = localRows
               .filter((r: any) => {
                 if (!r.id) return false;
-                if (isOperational && !isOwner) {
-                  const effective = activeBranchId && activeBranchId !== "all" ? activeBranchId : authorizedBranchIds[0];
-                  return r.branchId === effective && !cloudIds.has(r.id);
+                if (isOperational && activeBranchId && activeBranchId !== "all") {
+                  return r.branchId === activeBranchId && !cloudIds.has(r.id);
                 }
                 return !cloudIds.has(r.id);
               })

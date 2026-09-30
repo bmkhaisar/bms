@@ -513,8 +513,13 @@ export function DocumentListPage<T extends AnyDoc>({
       // Strict Branch Isolation & Document List Parity (PRD Section 7):
       // If user is scoped to a specific branch, only show that branch's records
       if (activeBranchId && activeBranchId !== "all") {
-        if ((r as any).branchId !== activeBranchId) {
-          return false;
+        const docBranch = (r as any).branchId;
+        const mainBranch = (branches || []).find((b: any) => b.isMain || b.isMainBranch) || branches?.[0];
+        const isCurrentActiveMain = !mainBranch || mainBranch.id === activeBranchId;
+        if (docBranch) {
+          if (docBranch !== activeBranchId) return false;
+        } else {
+          if (!isCurrentActiveMain) return false;
         }
       }
 
@@ -1602,7 +1607,19 @@ async function openNew() {
   }
 
   async function convertQuotationToInvoice(q: Quotation) {
-    await doConvertQuotation(q);
+    const effectiveBranchId =
+      q.branchId ||
+      (activeBranchId && activeBranchId !== "all" ? activeBranchId : undefined) ||
+      (branches?.find(b => (b as any).isMain || b.isMainBranch)?.id || branches?.[0]?.id || "main");
+
+    await doConvertQuotation(q, {
+      activeCompany,
+      branchId: effectiveBranchId,
+      activeBranchId,
+      branches,
+      financialYearId: q.financialYearId || activeFinancialYear?.id,
+      user,
+    });
   }
 
   function applyQuotationToInvoice(id: string) {

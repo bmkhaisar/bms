@@ -387,6 +387,7 @@ export interface Quotation {
   bankDetailsSnapshot?: BankAccount;
   templateId?: ID;
   convertedInvoiceId?: ID;
+  convertedInvoiceNumber?: string;
   companySnapshot?: any;
   signatoryOverride?: any;
   signatorySnapshot?: any;

@@ -18,7 +18,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  Plus, Trash2, Copy, GripVertical, Save, X, Eye,
+  Plus, Trash2, Copy, GripVertical, Save, X, Eye, AlertCircle, FileCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { QuotationQuickPreviewModal } from "./QuotationQuickPreviewModal";
@@ -70,12 +70,19 @@ import { isDocumentFinalized } from "@/lib/documentModel";
 
 interface Props {
   initial: Quotation;
-  onSave: (q: Quotation) => Promise<void> | void;
+  linkedInvoice?: {
+    id: string;
+    number: string;
+    isPosted?: boolean;
+    status?: string;
+  } | null;
+  onSave: (q: Quotation, shouldUpdateLinkedInvoice?: boolean) => Promise<void> | void;
   onDraftSave?: (q: Quotation) => Promise<void> | void;
   onCancel: () => void;
+  onViewLinkedInvoice?: (invoiceId: string) => void;
 }
 
-export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props) {
+export function QuotationForm({ initial, linkedInvoice, onSave, onDraftSave, onCancel, onViewLinkedInvoice }: Props) {
   const normalizedInitial = useMemo(() => normalizeQuotationRecord(initial), [initial]);
   const customers = useLive<Customer>(() => db().customers.orderBy("name").toArray());
   const products = useLive<Product>(() => db().products.orderBy("name").toArray());
@@ -96,7 +103,9 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
   const [pendingGstMode, setPendingGstMode] = useState<"item_wise" | "overall" | null>(null);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [showLinkedInvoiceSaveConfirm, setShowLinkedInvoiceSaveConfirm] = useState(false);
   const draftFlushRef = useRef<Quotation | null>(null);
+  const autosaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     let initialQ = { ...normalizedInitial };
@@ -223,17 +232,20 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
   draftFlushRef.current = workingDraft;
   useEffect(() => {
     if (!draftSaveCallbackRef.current || isDocumentFinalized(q) || (!q.customerId && q.items.length === 0)) return;
-    const timer = setTimeout(() => {
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
       const saveDraft = draftSaveCallbackRef.current;
       if (saveDraft) void Promise.resolve(saveDraft(workingDraft)).catch((error) => console.warn("[QuotationForm] Draft autosave failed:", error));
-    }, 750);
-    return () => clearTimeout(timer);
+    }, 2500);
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
   }, [workingDraft, q.status, q.customerId, q.items.length]);
 
   useEffect(() => () => {
-    const pending = draftFlushRef.current;
-    if (pending && draftSaveCallbackRef.current && !isDocumentFinalized(pending) && (pending.customerId || pending.items.length > 0)) {
-      void Promise.resolve(draftSaveCallbackRef.current(pending)).catch((error) => console.warn("[QuotationForm] Final draft flush failed:", error));
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
     }
   }, []);
 
@@ -266,6 +278,10 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
   }, [normalizedInitial, q]);
 
   const handleCancel = () => {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
     if (isDirty) {
       setShowDiscardConfirm(true);
       return;
@@ -444,6 +460,20 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
   async function handleSave() {
     if (!q.customerId) { toast.error("Select a customer"); return; }
     if (!q.items.length) { toast.error("Add at least one item"); return; }
+
+    if (linkedInvoice) {
+      setShowLinkedInvoiceSaveConfirm(true);
+      return;
+    }
+
+    await executeSave(false);
+  }
+
+  async function executeSave(updateLinked: boolean) {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
     setSaving(true);
     const cust = customers.find(c => c.id === q.customerId);
     const comp = activeCompany;
@@ -573,10 +603,16 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
       },
     };
     const frozenQ = freezeQuotationSnapshots(finalQ, comp, banks);
-    // Save any custom sizes typed in items
-    for (const it of frozenQ.items) if (it.size) await saveSizeIfNew(it.size);
+
+    // Save custom sizes in parallel without blocking or toasts
+    const customSizes = Array.from(new Set(frozenQ.items.map(it => it.size?.trim()).filter(Boolean) as string[]));
+    const newSizes = customSizes.filter(s => !sizes.some(sz => sz.label.toLowerCase() === s.toLowerCase()));
+    if (newSizes.length > 0) {
+      await Promise.all(newSizes.map(s => db().sizes.put({ id: uid(), label: s, createdAt: Date.now() }))).catch(() => {});
+    }
+
     try {
-      await onSave(frozenQ);
+      await onSave(frozenQ, updateLinked);
     } finally {
       setSaving(false);
     }
@@ -596,6 +632,34 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
           </Button>
         </div>
       </div>
+
+      {linkedInvoice && (
+        <div className="shrink-0 border-b border-amber-200 dark:border-amber-900/60 bg-amber-500/10 px-3 py-2.5 sm:px-4 text-xs text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2 animate-fade-in">
+          <div className="flex items-center gap-2 min-w-0">
+            <FileCheck className="h-4 w-4 text-amber-600 shrink-0" />
+            <span className="font-medium">
+              This quotation is already converted to Invoice:{" "}
+              <span className="font-mono font-bold text-amber-800 dark:text-amber-300">{linkedInvoice.number}</span>
+            </span>
+            <span className="text-muted-foreground hidden md:inline">
+              {linkedInvoice.isPosted
+                ? "— (Posted in accounting; immutable)"
+                : "— (Draft invoice; saving will update the linked invoice as well)"}
+            </span>
+          </div>
+          {onViewLinkedInvoice && linkedInvoice.id && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => onViewLinkedInvoice(linkedInvoice.id)}
+              className="h-6 text-xs px-2.5 bg-background/80 hover:bg-background border-amber-300 dark:border-amber-800 shadow-xs"
+            >
+              View Invoice {linkedInvoice.number}
+            </Button>
+          )}
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hidden p-3 sm:p-4">
         <Tabs defaultValue="details" className="space-y-4">
@@ -1104,6 +1168,51 @@ export function QuotationForm({ initial, onSave, onDraftSave, onCancel }: Props)
               }}
             >
               Apply Overall GST
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showLinkedInvoiceSaveConfirm} onOpenChange={setShowLinkedInvoiceSaveConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-amber-500" />
+              {linkedInvoice?.isPosted ? "Quotation Converted to Posted Invoice" : "Update Linked Invoice?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm space-y-2">
+              {linkedInvoice?.isPosted ? (
+                <div>
+                  This quotation has already been converted to Invoice <span className="font-mono font-semibold text-foreground">{linkedInvoice?.number}</span>, which is posted in accounting.
+                  <div className="mt-2 text-muted-foreground">
+                    Saving changes here will update this quotation only. Posted accounting invoices cannot be altered directly.
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  This quotation has already been converted to Invoice <span className="font-mono font-semibold text-foreground">{linkedInvoice?.number}</span>.
+                  <div className="mt-2 font-medium text-foreground">
+                    Saving changes here will also update the linked invoice <span className="font-mono font-bold">{linkedInvoice?.number}</span> with the revised items, rates, and totals.
+                  </div>
+                  <div className="mt-1 text-muted-foreground text-xs">
+                    Do you want to proceed and save both documents?
+                  </div>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowLinkedInvoiceSaveConfirm(false)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                setShowLinkedInvoiceSaveConfirm(false);
+                await executeSave(!linkedInvoice?.isPosted);
+              }}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              {linkedInvoice?.isPosted ? "Save Quotation Only" : "Save & Update Invoice"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -12,6 +12,8 @@ export function applyQuotationToLinkedDraft(quotation: Quotation, invoice: Invoi
   const extraCharges = (quotation.extraCharges || []).map((charge) => ({ ...charge }));
   return {
     ...invoice,
+    companyId: invoice.companyId || quotation.companyId,
+    branchId: invoice.branchId || quotation.branchId,
     customerId: quotation.customerId,
     customerSnapshot: quotation.customerSnapshot,
     billToPartyId: quotation.billToPartyId || quotation.customerId,
