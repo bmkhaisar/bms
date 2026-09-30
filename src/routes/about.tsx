@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PublicShell } from "@/components/app/PublicShell";
 import { BmsBrandLockup } from "@/components/brand/BmsBrandLockup";
-import { ShieldCheck, Cloud, Database, Layers, Sparkles, Building2, Terminal, Briefcase } from "lucide-react";
+import { ShieldCheck, Cloud, Database, Layers, Sparkles, Building2, Terminal, Briefcase, Users } from "lucide-react";
 import { PUBLIC_SUPPORT_EMAIL } from "@/config/publicConfig";
 
 export const Route = createFileRoute("/about")({
@@ -44,48 +44,69 @@ function AboutPage() {
             </h2>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-3xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-5xl mx-auto">
             {/* Mohammed Maaz A */}
-            <div className="rounded-3xl border border-purple-500/20 bg-card p-6 shadow-soft flex flex-col items-center text-center">
+            <div className="rounded-3xl border border-purple-500/20 bg-card p-6 shadow-soft flex flex-col items-center text-center h-full">
               <div className="relative mb-4">
-                <img
-                  src="/images/team/maaz.png"
-                  alt="Mohammed Maaz A"
-                  className="h-28 w-28 rounded-full object-cover border-2 border-purple-500/30 shadow-md"
-                  onError={(e) => {
-                    // Fallback to initials if image path fails to load
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
-                <div className="absolute bottom-0 right-0 rounded-full bg-purple-600 text-white p-1 shadow-xs">
+                <div className="h-28 w-28 rounded-full bg-gradient-to-br from-purple-500/20 to-indigo-500/20 border-2 border-purple-500/30 flex items-center justify-center text-2xl font-black text-purple-700 dark:text-purple-300 shadow-md overflow-hidden relative">
+                  <span className="select-none">MMA</span>
+                  <img
+                    src="/images/team/maaz.png"
+                    alt="Mohammed Maaz A"
+                    className="absolute inset-0 h-full w-full object-cover"
+                    onError={(e) => {
+                      e.currentTarget.style.display = "none";
+                    }}
+                  />
+                </div>
+                <div className="absolute bottom-0 right-0 rounded-full bg-purple-600 text-white p-1 shadow-xs z-10">
                   <Terminal className="h-3.5 w-3.5" />
                 </div>
               </div>
               <h3 className="text-lg font-bold text-foreground">Mohammed Maaz A</h3>
-              <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 mt-0.5">
-                Co-Founder & Developer
+              <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 mt-1 min-h-[3rem] sm:min-h-[3.25rem] flex items-center justify-center text-center px-2">
+                Founder · Product & Technology
               </p>
-              <p className="text-xs text-muted-foreground leading-relaxed mt-3 max-w-xs">
-                Architect of the BMS NEXT realtime engine, offline-first sync layer, Indian GST calculation pipelines, and high-performance UI.
+              <p className="text-xs text-muted-foreground leading-relaxed mt-3 max-w-xs flex-1">
+                Builds and leads the BMS NEXT product, technology architecture, automation, and overall platform development.
               </p>
             </div>
 
             {/* Khaisar Hussain */}
-            <div className="rounded-3xl border border-border/80 bg-card p-6 shadow-soft flex flex-col items-center text-center">
+            <div className="rounded-3xl border border-indigo-500/20 bg-card p-6 shadow-soft flex flex-col items-center text-center h-full">
               <div className="relative mb-4">
                 <div className="h-28 w-28 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border-2 border-indigo-500/30 flex items-center justify-center text-2xl font-black text-indigo-700 dark:text-indigo-300 shadow-md">
                   KH
                 </div>
-                <div className="absolute bottom-0 right-0 rounded-full bg-indigo-600 text-white p-1 shadow-xs">
+                <div className="absolute bottom-0 right-0 rounded-full bg-indigo-600 text-white p-1 shadow-xs z-10">
                   <Briefcase className="h-3.5 w-3.5" />
                 </div>
               </div>
               <h3 className="text-lg font-bold text-foreground">Khaisar Hussain</h3>
-              <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mt-0.5">
-                Co-Founder — Sales & Operations
+              <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mt-1 min-h-[3rem] sm:min-h-[3.25rem] flex items-center justify-center text-center px-2">
+                Founder · Sales & Operations
               </p>
-              <p className="text-xs text-muted-foreground leading-relaxed mt-3 max-w-xs">
-                Directing business development, client relationship strategy, vendor onboarding, and daily field operation requirements across trading sectors.
+              <p className="text-xs text-muted-foreground leading-relaxed mt-3 max-w-xs flex-1">
+                Leads business operations, sales strategy, customer coordination, and growth for BMS NEXT.
+              </p>
+            </div>
+
+            {/* Arif Ruman */}
+            <div className="rounded-3xl border border-blue-500/20 bg-card p-6 shadow-soft flex flex-col items-center text-center h-full md:col-span-2 md:max-w-md md:w-full md:mx-auto lg:col-span-1 lg:max-w-none">
+              <div className="relative mb-4">
+                <div className="h-28 w-28 rounded-full bg-gradient-to-br from-blue-500/20 to-indigo-500/20 border-2 border-blue-500/30 flex items-center justify-center text-2xl font-black text-blue-700 dark:text-blue-300 shadow-md">
+                  AR
+                </div>
+                <div className="absolute bottom-0 right-0 rounded-full bg-blue-600 text-white p-1 shadow-xs z-10">
+                  <Users className="h-3.5 w-3.5" />
+                </div>
+              </div>
+              <h3 className="text-lg font-bold text-foreground">Arif Ruman</h3>
+              <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 mt-1 min-h-[3rem] sm:min-h-[3.25rem] flex items-center justify-center text-center px-2">
+                Co-Founder · Technical Lead · Head of Client Acquisition & Relations
+              </p>
+              <p className="text-xs text-muted-foreground leading-relaxed mt-3 max-w-xs flex-1">
+                Leads technical coordination, client acquisition, customer relationships, and represents BMS NEXT across client engagements.
               </p>
             </div>
           </div>
