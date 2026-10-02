@@ -130,6 +130,8 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     { name: "bankAccounts", table: db().bankAccounts, entityType: "bankAccount" },
     { name: "quotationTemplates", table: db().quotationTemplates, entityType: "quotationTemplate" },
     { name: "branches", table: db().branches, entityType: "branch" },
+    { name: "ledgers", table: db().ledgers, entityType: "ledger" },
+    { name: "accountGroups", table: db().accountGroups, entityType: "accountGroup" },
   ];
 
   // Operational collections: transactional, strictly branch-scoped
@@ -141,6 +143,10 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     { name: "quotations", table: db().quotations, entityType: "quotation", normalize: normalizeQuotationRecord },
     { name: "salesReturns", table: db().salesReturns, entityType: "salesReturn" },
     { name: "creditNotes", table: db().creditNotes, entityType: "creditNote" },
+    { name: "vouchers", table: db().vouchers, entityType: "voucher" },
+    { name: "purchaseOrders", table: db().purchaseOrders, entityType: "purchaseOrder" },
+    { name: "purchaseGrns", table: db().purchaseGrns, entityType: "purchaseGrn" },
+    { name: "salesOrders", table: db().salesOrders, entityType: "salesOrder" },
   ];
 
   // Serialize snapshots per collection so a slow older reconciliation can never overwrite a newer event.
@@ -155,8 +161,10 @@ export function startCompanyRealtimeSync(options: CompanyRealtimeSyncOptions): (
     if (Number(localStorage.getItem(markerKey) || 0) >= resetAt) return;
     await Promise.all([
       db().invoices.clear(), db().quotations.clear(), db().purchases.clear(), db().receipts.clear(), db().payments.clear(),
-      db().salesReturns.clear(), db().creditNotes.clear(),
+      db().salesReturns.clear(), db().creditNotes.clear(), db().vouchers.clear(),
+      db().purchaseOrders.clear(), db().purchaseGrns.clear(), db().salesOrders.clear(),
       db().parties.clear(), db().customers.clear(), db().suppliers.clear(), db().productSizes.clear(), db().sizes.clear(),
+      db().ledgers.clear(), db().accountGroups.clear(),
     ]);
     await purgeCompanyCacheAndOutbox(companyId);
     localStorage.setItem(markerKey, String(resetAt));

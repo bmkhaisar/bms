@@ -629,7 +629,12 @@ export function QuotationsPage() {
               linkedInvoice={effectiveLinkedInvoice}
               onViewLinkedInvoice={(invoiceId) => {
                 closeQuotationEditor();
-                navigate({ to: documentDeepLink("/invoices", invoiceId) as never });
+                const linkedInvoice = effectiveLinkedInvoice;
+                if (linkedInvoice) {
+                  navigate({ to: documentDeepLink("/invoices", linkedInvoice.id) as never });
+                } else {
+                  navigate({ to: documentDeepLink("/invoices", invoiceId) as never });
+                }
               }}
               onSave={saveQuotation}
               onDraftSave={saveQuotationDraft}

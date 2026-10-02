@@ -22,6 +22,8 @@ import { toast } from "sonner";
 import { formatPaise, rupeesToPaise } from "../constants";
 import type { VoucherType, Ledger } from "../types";
 
+export type VoucherUiType = "journal" | "payment" | "general_payment" | "receipt" | "general_receipt" | "contra";
+
 interface LineItemState {
   id: string;
   ledgerId: string;
@@ -33,7 +35,7 @@ interface LineItemState {
 interface VoucherEntryModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  defaultType?: VoucherType;
+  defaultType?: VoucherUiType;
   ledgers: Ledger[];
   onPost: (data: {
     voucherType: VoucherType;
@@ -41,6 +43,7 @@ interface VoucherEntryModalProps {
     reference: string;
     narration: string;
     branchId?: string;
+    sourceType?: string;
     lines: { ledgerId: string; debit: number; credit: number; description?: string }[];
     amountsInRupees: boolean;
   }) => Promise<{ success: boolean; error?: string; voucherNumber?: string; code?: string }>;
@@ -53,7 +56,7 @@ export function VoucherEntryModal({
   ledgers,
   onPost,
 }: VoucherEntryModalProps) {
-  const [voucherType, setVoucherType] = useState<VoucherType>(defaultType);
+  const [voucherType, setVoucherType] = useState<VoucherUiType>(defaultType);
   const [dateStr, setDateStr] = useState<string>(new Date().toISOString().slice(0, 10));
   const [reference, setReference] = useState("");
   const [narration, setNarration] = useState("");
@@ -185,8 +188,23 @@ export function VoucherEntryModal({
 
     setIsSubmitting(true);
     try {
+      const backendType: VoucherType =
+        voucherType === "general_payment"
+          ? "payment"
+          : voucherType === "general_receipt"
+          ? "receipt"
+          : voucherType;
+
+      const sourceType =
+        voucherType === "general_payment"
+          ? "GENERAL_PAYMENT"
+          : voucherType === "general_receipt"
+          ? "GENERAL_RECEIPT"
+          : undefined;
+
       const res = await onPost({
-        voucherType,
+        voucherType: backendType,
+        sourceType,
         date: new Date(dateStr).getTime(),
         reference: reference.trim(),
         narration: narration.trim(),
@@ -221,13 +239,30 @@ export function VoucherEntryModal({
 
   const eligibleLedgers = voucherType === "contra" ? liquidityLedgers : activeLedgers;
 
+  const getTitle = () => {
+    switch (voucherType) {
+      case "general_payment":
+        return "General Payment Voucher (Expense)";
+      case "payment":
+        return "Payment Voucher (Supplier)";
+      case "general_receipt":
+        return "General Receipt Voucher (Income)";
+      case "receipt":
+        return "Receipt Voucher (Customer)";
+      case "contra":
+        return "Contra Voucher (Cash/Bank)";
+      default:
+        return "Journal Voucher (JV)";
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-0">
         <DialogHeader className="p-6 pb-2 border-b">
           <div className="flex items-center justify-between">
             <DialogTitle className="text-xl font-bold flex items-center gap-2">
-              <span className="capitalize">{voucherType} Voucher Entry</span>
+              <span>{getTitle()}</span>
               <span className="text-xs font-mono px-2 py-0.5 rounded bg-primary/10 text-primary uppercase">
                 Double Entry
               </span>
@@ -242,16 +277,18 @@ export function VoucherEntryModal({
               <Label className="text-xs font-medium">Voucher Type</Label>
               <Select
                 value={voucherType}
-                onValueChange={(v) => setVoucherType(v as VoucherType)}
+                onValueChange={(v) => setVoucherType(v as VoucherUiType)}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="journal">Journal (JV)</SelectItem>
-                  <SelectItem value="payment">Payment (PAY)</SelectItem>
-                  <SelectItem value="receipt">Receipt (REC)</SelectItem>
-                  <SelectItem value="contra">Contra (CON)</SelectItem>
+                  <SelectItem value="receipt">Receipt Voucher (Customer)</SelectItem>
+                  <SelectItem value="general_receipt">General Receipt Voucher (Income)</SelectItem>
+                  <SelectItem value="payment">Payment Voucher (Supplier)</SelectItem>
+                  <SelectItem value="general_payment">General Payment Voucher (Expense)</SelectItem>
+                  <SelectItem value="journal">Journal Voucher (JV)</SelectItem>
+                  <SelectItem value="contra">Contra Voucher (Cash/Bank)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -274,6 +311,22 @@ export function VoucherEntryModal({
               />
             </div>
           </div>
+
+          {voucherType === "general_payment" && (
+            <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-md text-xs text-blue-700 dark:text-blue-300 flex items-center gap-2">
+              <span>
+                <b>General Payment:</b> Record direct operational expenses (e.g. Rent, Office Supplies, Tea/Refreshment, Courier, Salaries). Debit the Expense Ledger, Credit Cash/Bank.
+              </span>
+            </div>
+          )}
+
+          {voucherType === "general_receipt" && (
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-md text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+              <span>
+                <b>General Receipt:</b> Record direct business income (e.g. Capital Infusion, Interest, Dividend, Scrap Sale). Debit Cash/Bank, Credit the Income/Equity Ledger.
+              </span>
+            </div>
+          )}
 
           {voucherType === "contra" && (
             <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-md text-xs text-amber-700 dark:text-amber-300 flex items-center gap-2">

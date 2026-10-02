@@ -26,6 +26,9 @@ import { ConfirmDialog } from "@/components/app/ConfirmDialog";
 import { useActiveCompany } from "@/modules/company/context/ActiveCompanyContext";
 import { useAuth } from "@/modules/auth/context/AuthContext";
 import { authoritativeSaveEntity, authoritativeDeleteDraft } from "@/modules/sync/canonicalMutationService";
+import { useAccounting } from "@/modules/accounting/useAccounting";
+import { AccountsMasterView } from "@/modules/accounting/components/AccountsMasterView";
+import { ImportMasterView } from "@/modules/accounting/components/ImportMasterView";
 
 export const Route = createFileRoute("/_app/masters")({
   head: () => ({ meta: [{ title: "Masters — Business Management" }] }),
@@ -37,14 +40,18 @@ export const Route = createFileRoute("/_app/masters")({
 });
 
 function MastersPage() {
+  const { ledgers, accountGroups, manageLedger } = useAccounting();
+
   return (
     <div className="animate-fade-in">
       <div className="mb-4">
-        <h2 className="text-xl font-semibold sm:text-2xl">Quotation Masters</h2>
-        <p className="text-sm text-muted-foreground">Reusable sizes, terms, general info, technical specs, bank accounts, and quotation templates.</p>
+        <h2 className="text-xl font-semibold sm:text-2xl">Enterprise Masters Hub</h2>
+        <p className="text-sm text-muted-foreground">Manage Accounts Master, Bulk Import, Quotation presets, and company specifications.</p>
       </div>
-      <Tabs defaultValue="sizes" className="space-y-4">
+      <Tabs defaultValue="accounts" className="space-y-4">
         <TabsList className="w-full flex-wrap justify-start">
+          <TabsTrigger value="accounts">Accounts Master</TabsTrigger>
+          <TabsTrigger value="import">Import Master</TabsTrigger>
           <TabsTrigger value="sizes">Sizes</TabsTrigger>
           <TabsTrigger value="terms">Terms Templates</TabsTrigger>
           <TabsTrigger value="general">General Info</TabsTrigger>
@@ -52,6 +59,19 @@ function MastersPage() {
           <TabsTrigger value="banks">Bank Accounts</TabsTrigger>
           <TabsTrigger value="templates">Quotation Templates</TabsTrigger>
         </TabsList>
+        <TabsContent value="accounts">
+          <AccountsMasterView
+            ledgers={ledgers}
+            accountGroups={accountGroups}
+            onCreateLedger={manageLedger}
+          />
+        </TabsContent>
+        <TabsContent value="import">
+          <ImportMasterView
+            accountGroups={accountGroups}
+            onCreateLedger={manageLedger}
+          />
+        </TabsContent>
         <TabsContent value="sizes"><SizesMaster /></TabsContent>
         <TabsContent value="terms"><TermsMaster /></TabsContent>
         <TabsContent value="general"><GeneralInfoMaster /></TabsContent>

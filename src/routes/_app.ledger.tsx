@@ -9,14 +9,31 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, BookOpen, Calendar, Scale, FolderTree, ChevronDown } from "lucide-react";
+import {
+  Plus,
+  BookOpen,
+  Calendar,
+  Scale,
+  FolderTree,
+  ChevronDown,
+  UploadCloud,
+  ArrowRightLeft,
+  Users,
+  AlertCircle,
+  Clock,
+} from "lucide-react";
 import { useAccounting } from "@/modules/accounting/useAccounting";
 import { DayBookView } from "@/modules/accounting/components/DayBookView";
 import { LedgerStatementView } from "@/modules/accounting/components/LedgerStatementView";
 import { TrialBalanceView } from "@/modules/accounting/components/TrialBalanceView";
 import { ChartOfAccountsView } from "@/modules/accounting/components/ChartOfAccountsView";
-import { VoucherEntryModal } from "@/modules/accounting/components/VoucherEntryModal";
-import type { VoucherType } from "@/modules/accounting/types";
+import { AccountsMasterView } from "@/modules/accounting/components/AccountsMasterView";
+import { ImportMasterView } from "@/modules/accounting/components/ImportMasterView";
+import { ReceivableReconciliationView } from "@/modules/accounting/components/ReceivableReconciliationView";
+import { CustomerVendorLedgerView } from "@/modules/accounting/components/CustomerVendorLedgerView";
+import { PartyOutstandingView } from "@/modules/accounting/components/PartyOutstandingView";
+import { AgeWiseOutstandingView } from "@/modules/accounting/components/AgeWiseOutstandingView";
+import { VoucherEntryModal, type VoucherUiType } from "@/modules/accounting/components/VoucherEntryModal";
 import { ListSkeleton } from "@/components/app/Skeletons";
 
 export const Route = createFileRoute("/_app/ledger")({
@@ -39,10 +56,10 @@ function AccountingPage() {
   } = useAccounting();
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalType, setModalType] = useState<VoucherType>("journal");
+  const [modalType, setModalType] = useState<VoucherUiType>("journal");
   const [activeTab, setActiveTab] = useState("daybook");
 
-  const openVoucherModal = (type: VoucherType) => {
+  const openVoucherModal = (type: VoucherUiType) => {
     setModalType(type);
     setModalOpen(true);
   };
@@ -65,18 +82,24 @@ function AccountingPage() {
                     <ChevronDown className="h-3.5 w-3.5 opacity-60" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48 text-xs">
+                <DropdownMenuContent align="end" className="w-56 text-xs">
+                  <DropdownMenuItem onClick={() => openVoucherModal("receipt")}>
+                    Receipt Voucher (Customer)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => openVoucherModal("general_receipt")}>
+                    General Receipt Voucher (Income)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => openVoucherModal("payment")}>
+                    Payment Voucher (Supplier)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => openVoucherModal("general_payment")}>
+                    General Payment Voucher (Expense)
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => openVoucherModal("journal")}>
                     Journal Voucher (JV)
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => openVoucherModal("payment")}>
-                    Payment Voucher (PAY)
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => openVoucherModal("receipt")}>
-                    Receipt Voucher (REC)
-                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => openVoucherModal("contra")}>
-                    Contra Voucher (CON)
+                    Contra Voucher (Cash/Bank)
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -85,24 +108,50 @@ function AccountingPage() {
         />
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList className="w-full flex-wrap justify-start gap-1 p-1 h-auto">
-            <TabsTrigger value="daybook" className="gap-1.5">
-              <Calendar className="h-3.5 w-3.5" />
-              <span>Day Book</span>
-            </TabsTrigger>
-            <TabsTrigger value="statement" className="gap-1.5">
-              <BookOpen className="h-3.5 w-3.5" />
-              <span>Ledger Statement</span>
-            </TabsTrigger>
-            <TabsTrigger value="trialbalance" className="gap-1.5">
-              <Scale className="h-3.5 w-3.5" />
-              <span>Trial Balance</span>
-            </TabsTrigger>
-            <TabsTrigger value="chart" className="gap-1.5">
-              <FolderTree className="h-3.5 w-3.5" />
-              <span>Chart of Accounts</span>
-            </TabsTrigger>
-          </TabsList>
+          <div className="w-full overflow-x-auto scrollbar-thin pb-1">
+            <TabsList className="inline-flex w-auto min-w-full sm:min-w-0 h-10 items-center justify-start gap-1 p-1 bg-secondary/50 rounded-xl whitespace-nowrap">
+              <TabsTrigger value="daybook" className="gap-1.5 text-xs font-medium px-3 py-1.5">
+                <Calendar className="h-3.5 w-3.5" />
+                <span>Day Book</span>
+              </TabsTrigger>
+              <TabsTrigger value="accountsmaster" className="gap-1.5 text-xs font-medium px-3 py-1.5">
+                <BookOpen className="h-3.5 w-3.5" />
+                <span>Accounts Master</span>
+              </TabsTrigger>
+              <TabsTrigger value="importmaster" className="gap-1.5 text-xs font-medium px-3 py-1.5">
+                <UploadCloud className="h-3.5 w-3.5" />
+                <span>Import Master</span>
+              </TabsTrigger>
+              <TabsTrigger value="statement" className="gap-1.5 text-xs font-medium px-3 py-1.5">
+                <BookOpen className="h-3.5 w-3.5" />
+                <span>Accounts Ledger</span>
+              </TabsTrigger>
+              <TabsTrigger value="partyledger" className="gap-1.5 text-xs font-medium px-3 py-1.5">
+                <Users className="h-3.5 w-3.5" />
+                <span>Customer & Vendor Ledger</span>
+              </TabsTrigger>
+              <TabsTrigger value="reconciliation" className="gap-1.5 text-xs font-medium px-3 py-1.5">
+                <ArrowRightLeft className="h-3.5 w-3.5" />
+                <span>Accounts Reconciliation (Receivable)</span>
+              </TabsTrigger>
+              <TabsTrigger value="outstanding" className="gap-1.5 text-xs font-medium px-3 py-1.5">
+                <AlertCircle className="h-3.5 w-3.5" />
+                <span>Customer & Vendor Outstanding</span>
+              </TabsTrigger>
+              <TabsTrigger value="agewise" className="gap-1.5 text-xs font-medium px-3 py-1.5">
+                <Clock className="h-3.5 w-3.5" />
+                <span>Age-wise Outstanding</span>
+              </TabsTrigger>
+              <TabsTrigger value="trialbalance" className="gap-1.5 text-xs font-medium px-3 py-1.5">
+                <Scale className="h-3.5 w-3.5" />
+                <span>Trial Balance</span>
+              </TabsTrigger>
+              <TabsTrigger value="chart" className="gap-1.5 text-xs font-medium px-3 py-1.5">
+                <FolderTree className="h-3.5 w-3.5" />
+                <span>Chart of Accounts</span>
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="daybook">
             {loading && vouchers.length === 0 ? (
@@ -112,12 +161,40 @@ function AccountingPage() {
             )}
           </TabsContent>
 
+          <TabsContent value="accountsmaster">
+            <AccountsMasterView
+              ledgers={ledgers}
+              accountGroups={accountGroups}
+              onCreateLedger={manageLedger}
+            />
+          </TabsContent>
+
+          <TabsContent value="importmaster">
+            <ImportMasterView onImportSuccess={() => {}} />
+          </TabsContent>
+
           <TabsContent value="statement">
             {loading && ledgers.length === 0 ? (
               <ListSkeleton columns={5} rows={6} />
             ) : (
               <LedgerStatementView ledgers={ledgers} vouchers={vouchers} />
             )}
+          </TabsContent>
+
+          <TabsContent value="partyledger">
+            <CustomerVendorLedgerView />
+          </TabsContent>
+
+          <TabsContent value="reconciliation">
+            <ReceivableReconciliationView />
+          </TabsContent>
+
+          <TabsContent value="outstanding">
+            <PartyOutstandingView />
+          </TabsContent>
+
+          <TabsContent value="agewise">
+            <AgeWiseOutstandingView />
           </TabsContent>
 
           <TabsContent value="trialbalance">

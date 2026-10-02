@@ -1,4 +1,5 @@
 import Dexie, { type Table } from "dexie";
+import type { Voucher, Ledger, AccountGroup } from "@/modules/accounting/types";
 
 export type ID = string;
 
@@ -71,12 +72,18 @@ export interface CompanySettings {
   purchasePrefix: string;
   creditNotePrefix?: string;
   salesReturnPrefix?: string;
+  purchaseOrderPrefix?: string;
+  purchaseGrnPrefix?: string;
+  salesOrderPrefix?: string;
   nextInvoiceNo: number;
   nextQuotationNo: number;
   nextReceiptNo: number;
   nextPurchaseNo: number;
   nextCreditNoteNo?: number;
   nextSalesReturnNo?: number;
+  nextPurchaseOrderNo?: number;
+  nextPurchaseGrnNo?: number;
+  nextSalesOrderNo?: number;
   defaultCountry?: string;
   defaultState?: string;
   defaultPincode?: string;
@@ -636,6 +643,7 @@ export interface Purchase {
   items: LineItem[];
   lineSnapshots?: LineItem[];
   subtotal: number; discountTotal: number;
+  taxableAmount?: number;
   cgstTotal?: number; sgstTotal?: number; igstTotal?: number;
   gstTotal: number;
   roundOff: number; grandTotal: number;
@@ -652,6 +660,110 @@ export interface Purchase {
   supersededByPurchaseId?: ID;
   correctionReason?: string;
   reversalVoucherId?: string;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface PurchaseOrder {
+  id: ID;
+  number: string;
+  date: number;
+  dueDate?: number;
+  supplierId: ID;
+  supplierSnapshot?: Partial<Supplier>;
+  companyId?: ID;
+  branchId?: ID;
+  branchSnapshot?: any;
+  financialYearId?: ID;
+  items: LineItem[];
+  lineSnapshots?: LineItem[];
+  subtotal: number;
+  discountTotal: number;
+  taxableAmount?: number;
+  cgstTotal: number;
+  sgstTotal: number;
+  igstTotal: number;
+  gstTotal: number;
+  roundOff: number;
+  grandTotal: number;
+  notes?: string;
+  terms?: string;
+  status: "draft" | "open" | "partially_received" | "received" | "cancelled";
+  convertedGrnId?: ID;
+  convertedPurchaseId?: ID;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface PurchaseGrnItem {
+  id?: string;
+  productId: ID;
+  name: string;
+  sku?: string;
+  hsn?: string;
+  unit: string;
+  rate: number;
+  orderedQty: number;
+  receivedQty: number;
+  acceptedQty: number;
+  rejectedQty: number;
+  rejectionReason?: string;
+  batchNumber?: string;
+  warehouseLocation?: string;
+}
+
+export interface PurchaseGrn {
+  id: ID;
+  number: string;
+  date: number;
+  supplierId: ID;
+  supplierSnapshot?: Partial<Supplier>;
+  purchaseOrderId?: ID;
+  purchaseOrderNumber?: string;
+  companyId?: ID;
+  branchId?: ID;
+  branchSnapshot?: any;
+  financialYearId?: ID;
+  items: PurchaseGrnItem[];
+  challanNumber?: string;
+  challanDate?: number | string;
+  transporter?: string;
+  vehicleNumber?: string;
+  notes?: string;
+  status: "received" | "verified" | "billed" | "rejected";
+  convertedPurchaseId?: ID;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface SalesOrder {
+  id: ID;
+  number: string;
+  date: number;
+  deliveryDate?: number;
+  customerId: ID;
+  customerSnapshot?: Partial<Customer>;
+  companyId?: ID;
+  branchId?: ID;
+  branchSnapshot?: any;
+  financialYearId?: ID;
+  items: LineItem[];
+  lineSnapshots?: LineItem[];
+  subtotal: number;
+  discountTotal: number;
+  taxableAmount?: number;
+  cgstTotal: number;
+  sgstTotal: number;
+  igstTotal: number;
+  gstTotal: number;
+  roundOff: number;
+  grandTotal: number;
+  advanceReceived?: number;
+  notes?: string;
+  terms?: string;
+  status: "draft" | "open" | "partially_invoiced" | "completed" | "cancelled";
+  convertedInvoiceId?: ID;
+  convertedInvoiceNumber?: string;
   createdAt: number;
   updatedAt?: number;
 }
@@ -923,6 +1035,12 @@ class BizDB extends Dexie {
   salesReturns!: Table<SalesReturn, ID>;
   creditNotes!: Table<CreditNote, ID>;
   branches!: Table<any, ID>;
+  vouchers!: Table<Voucher, ID>;
+  ledgers!: Table<Ledger, ID>;
+  accountGroups!: Table<AccountGroup, ID>;
+  purchaseOrders!: Table<PurchaseOrder, ID>;
+  purchaseGrns!: Table<PurchaseGrn, ID>;
+  salesOrders!: Table<SalesOrder, ID>;
 
   constructor() {
     super("bms_db_v1");
@@ -973,6 +1091,16 @@ class BizDB extends Dexie {
     // Invariant: Zero application features depend on legacy bms_db_v1.
     const forwardCompatVerno = 7 + 1;
     this.version(forwardCompatVerno).stores({});
+
+    // Version 9: Accounting Engine, Purchase Orders, GRNs, and Sales Orders local persistent caching
+    this.version(9).stores({
+      vouchers: "id, voucherNumber, voucherType, date, financialYearId, branchId, createdAt",
+      ledgers: "id, name, groupId, active, createdAt",
+      accountGroups: "id, name, parentGroupId, nature, isSystem, createdAt",
+      purchaseOrders: "id, number, supplierId, date, status, branchId, createdAt",
+      purchaseGrns: "id, number, purchaseOrderId, supplierId, date, status, branchId, createdAt",
+      salesOrders: "id, number, customerId, date, status, branchId, createdAt",
+    });
   }
 }
 
@@ -991,7 +1119,9 @@ export const DEFAULT_COMPANY: CompanySettings = {
   id: "singleton", name: "Your Company", address: "", mobile: "", email: "",
   currency: "INR", currencySymbol: "₹",
   invoicePrefix: "INV-", quotationPrefix: "QT-", receiptPrefix: "RCP-", purchasePrefix: "PUR-",
+  purchaseOrderPrefix: "PO-", purchaseGrnPrefix: "GRN-", salesOrderPrefix: "SO-",
   nextInvoiceNo: 1, nextQuotationNo: 1, nextReceiptNo: 1, nextPurchaseNo: 1,
+  nextPurchaseOrderNo: 1, nextPurchaseGrnNo: 1, nextSalesOrderNo: 1,
   defaultCountry: "India",
   defaultState: "Maharashtra",
   advancePartyPolicy: "STRICT",
@@ -1013,7 +1143,7 @@ export async function getCompany(companyId?: string): Promise<CompanySettings> {
 }
 
 export async function nextNumber(
-  kind: "invoice" | "quotation" | "receipt" | "purchase" | "credit_note" | "sales_return",
+  kind: "invoice" | "quotation" | "receipt" | "purchase" | "credit_note" | "sales_return" | "purchase_order" | "purchase_grn" | "sales_order",
 ): Promise<string> {
   const c = await getCompany();
   const key =
@@ -1027,7 +1157,13 @@ export async function nextNumber(
       ? "nextPurchaseNo"
       : kind === "credit_note"
       ? "nextCreditNoteNo"
-      : "nextSalesReturnNo";
+      : kind === "sales_return"
+      ? "nextSalesReturnNo"
+      : kind === "purchase_order"
+      ? "nextPurchaseOrderNo"
+      : kind === "purchase_grn"
+      ? "nextPurchaseGrnNo"
+      : "nextSalesOrderNo";
 
   const prefix =
     kind === "invoice"
@@ -1040,7 +1176,13 @@ export async function nextNumber(
       ? c.purchasePrefix
       : kind === "credit_note"
       ? c.creditNotePrefix || "CN-"
-      : c.salesReturnPrefix || "SR-";
+      : kind === "sales_return"
+      ? c.salesReturnPrefix || "SR-"
+      : kind === "purchase_order"
+      ? c.purchaseOrderPrefix || "PO-"
+      : kind === "purchase_grn"
+      ? c.purchaseGrnPrefix || "GRN-"
+      : c.salesOrderPrefix || "SO-";
 
   const n = ((c as any)[key] as number) || 1;
   const next = { ...c, [key]: n + 1 };

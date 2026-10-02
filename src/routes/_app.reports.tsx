@@ -82,6 +82,19 @@ import {
   MONTH_END_SNAPSHOT_EXPORT_COLUMNS,
   PRODUCT_EXPORT_COLUMNS,
 } from "@/modules/export/exportColumnDefinitions";
+import { SalesRegisterView } from "@/modules/sales/components/SalesRegisterView";
+import { SalesReturnRegisterView } from "@/modules/sales/components/SalesReturnRegisterView";
+import { SalesOrderBookView } from "@/modules/sales/components/SalesOrderBookView";
+import { PendingSalesOrderBook } from "@/modules/sales/components/PendingSalesOrderBook";
+import { StockStatusView } from "@/modules/sales/components/StockStatusView";
+import { StockRegisterView } from "@/modules/sales/components/StockRegisterView";
+import { PurchaseRegisterView } from "@/modules/purchase/components/PurchaseRegisterView";
+import { PendingPurchaseOrderBook } from "@/modules/purchase/components/PendingPurchaseOrderBook";
+import { PartyOutstandingView } from "@/modules/accounting/components/PartyOutstandingView";
+import { AgeWiseOutstandingView } from "@/modules/accounting/components/AgeWiseOutstandingView";
+import { CustomerVendorLedgerView } from "@/modules/accounting/components/CustomerVendorLedgerView";
+import { LedgerStatementView } from "@/modules/accounting/components/LedgerStatementView";
+import type { Ledger, Voucher } from "@/modules/accounting/types";
 
 export const Route = createFileRoute("/_app/reports")({
   head: () => ({ meta: [{ title: "Reports — Business Management" }] }),
@@ -465,6 +478,7 @@ function ReportsPage() {
             <TabsTrigger value="sales" className="shrink-0 px-3 py-1.5 text-xs font-medium">Sales & Revenue</TabsTrigger>
             <TabsTrigger value="purchases" className="shrink-0 px-3 py-1.5 text-xs font-medium">Purchases</TabsTrigger>
             <TabsTrigger value="outstanding" className="shrink-0 px-3 py-1.5 text-xs font-medium">Credit Outstanding & Aging</TabsTrigger>
+            <TabsTrigger value="accounts-ledger" className="shrink-0 px-3 py-1.5 text-xs font-medium">Accounts Ledger</TabsTrigger>
             <TabsTrigger value="month-end" className="shrink-0 px-3 py-1.5 text-xs font-medium">Month-End Review</TabsTrigger>
             <TabsTrigger value="advances" className="shrink-0 px-3 py-1.5 text-xs font-medium">Customer Advances</TabsTrigger>
             <TabsTrigger value="supplier-advances" className="shrink-0 px-3 py-1.5 text-xs font-medium">Supplier Advances</TabsTrigger>
@@ -506,6 +520,7 @@ function ReportsPage() {
           <TabsContent value="sales" className="mt-0"><SalesReport from={from} to={to} /></TabsContent>
           <TabsContent value="purchases" className="mt-0"><PurchaseReport from={from} to={to} /></TabsContent>
           <TabsContent value="outstanding" className="mt-0"><OutstandingReport /></TabsContent>
+          <TabsContent value="accounts-ledger" className="mt-0"><AccountsLedgerReportWrapper /></TabsContent>
           <TabsContent value="month-end" className="mt-0"><MonthEndReviewReport from={from} to={to} /></TabsContent>
           <TabsContent value="advances" className="mt-0"><CustomerAdvanceRegisterReport /></TabsContent>
           <TabsContent value="supplier-advances" className="mt-0"><SupplierAdvanceRegisterReport /></TabsContent>
@@ -517,6 +532,16 @@ function ReportsPage() {
         </div>
       </Tabs>
     </AppShell>
+  );
+}
+
+function AccountsLedgerReportWrapper() {
+  const ledgers = useLive<Ledger>(() => db().ledgers.toArray());
+  const vouchers = useLive<Voucher>(() => db().vouchers.toArray());
+  return (
+    <div className="mt-4">
+      <LedgerStatementView ledgers={ledgers} vouchers={vouchers} />
+    </div>
   );
 }
 
@@ -662,6 +687,7 @@ function resolveDocumentTaxes(doc: Invoice | Purchase) {
 // ========================================================================
 
 function SalesReport({ from, to }: { from?: number; to?: number }) {
+  const [salesSubTab, setSalesSubTab] = useState("sales-register");
   const { activeBranchId } = useActiveCompany();
   const invoicesState = useLiveState<Invoice>(() => db().invoices.toArray());
   const invoices = invoicesState.data;
@@ -689,6 +715,33 @@ function SalesReport({ from, to }: { from?: number; to?: number }) {
 
   return (
     <div className="space-y-4 mt-4">
+      <div className="w-full overflow-x-auto scrollbar-thin pb-1">
+        <Tabs value={salesSubTab} onValueChange={setSalesSubTab} className="w-full space-y-4">
+          <TabsList className="inline-flex w-auto min-w-full sm:min-w-0 h-9 items-center justify-start gap-1 p-1 bg-secondary/50 rounded-lg whitespace-nowrap">
+            <TabsTrigger value="sales-register" className="text-xs px-3 py-1 font-medium">Sales Register</TabsTrigger>
+            <TabsTrigger value="sales-return-register" className="text-xs px-3 py-1 font-medium">Sales Return Register</TabsTrigger>
+            <TabsTrigger value="sales-order-book" className="text-xs px-3 py-1 font-medium">Sales Order Book</TabsTrigger>
+            <TabsTrigger value="pending-so-book" className="text-xs px-3 py-1 font-medium">Pending Sales Order Book</TabsTrigger>
+            <TabsTrigger value="analytics" className="text-xs px-3 py-1 font-medium">Revenue Summary</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="sales-register" className="mt-2 focus-visible:outline-hidden">
+            <SalesRegisterView />
+          </TabsContent>
+
+          <TabsContent value="sales-return-register" className="mt-2 focus-visible:outline-hidden">
+            <SalesReturnRegisterView />
+          </TabsContent>
+
+          <TabsContent value="sales-order-book" className="mt-2 focus-visible:outline-hidden">
+            <SalesOrderBookView />
+          </TabsContent>
+
+          <TabsContent value="pending-so-book" className="mt-2 focus-visible:outline-hidden">
+            <PendingSalesOrderBook />
+          </TabsContent>
+
+          <TabsContent value="analytics" className="mt-2 focus-visible:outline-hidden space-y-4">
       {/* Financial Summary Cards */}
       <div className="grid gap-3 sm:grid-cols-4">
         <Stat label="Net Sales / Revenue" v={formatMoney(taxableRevenue)} accent loading={!isLoaded} />
@@ -794,6 +847,9 @@ function SalesReport({ from, to }: { from?: number; to?: number }) {
           </div>
         </div>
       </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
     </div>
   );
 }
@@ -803,6 +859,7 @@ function SalesReport({ from, to }: { from?: number; to?: number }) {
 // ========================================================================
 
 function PurchaseReport({ from, to }: { from?: number; to?: number }) {
+  const [purchaseSubTab, setPurchaseSubTab] = useState("purchase-register");
   const { activeBranchId } = useActiveCompany();
   const purchases = useLive<Purchase>(() => db().purchases.toArray());
   const parties = useLive<Party>(() => db().parties.toArray());
@@ -824,7 +881,25 @@ function PurchaseReport({ from, to }: { from?: number; to?: number }) {
   const totalGrand = rows.reduce((s, p) => s + p.grandTotal, 0);
 
   return (
-    <Card className="card-soft mt-4 p-4">
+    <div className="space-y-4 mt-4">
+      <div className="w-full overflow-x-auto scrollbar-thin pb-1">
+        <Tabs value={purchaseSubTab} onValueChange={setPurchaseSubTab} className="w-full space-y-4">
+          <TabsList className="inline-flex w-auto min-w-full sm:min-w-0 h-9 items-center justify-start gap-1 p-1 bg-secondary/50 rounded-lg whitespace-nowrap">
+            <TabsTrigger value="purchase-register" className="text-xs px-3 py-1 font-medium">Purchase Register</TabsTrigger>
+            <TabsTrigger value="pending-po-book" className="text-xs px-3 py-1 font-medium">Pending Purchase Order Book</TabsTrigger>
+            <TabsTrigger value="bills" className="text-xs px-3 py-1 font-medium">Purchase Bills List</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="purchase-register" className="mt-2 focus-visible:outline-hidden">
+            <PurchaseRegisterView />
+          </TabsContent>
+
+          <TabsContent value="pending-po-book" className="mt-2 focus-visible:outline-hidden">
+            <PendingPurchaseOrderBook />
+          </TabsContent>
+
+          <TabsContent value="bills" className="mt-2 focus-visible:outline-hidden">
+            <Card className="card-soft p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
           <h3 className="font-semibold">Purchase Report</h3>
@@ -871,6 +946,10 @@ function PurchaseReport({ from, to }: { from?: number; to?: number }) {
         <span>Total Purchases: <b className="font-mono text-foreground font-bold">{formatMoney(totalGrand)}</b></span>
       </div>
     </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
   );
 }
 
@@ -894,8 +973,8 @@ function OutstandingReport() {
   const customers = useLive<Customer>(() => db().customers.toArray());
   const suppliers = useLive<Supplier>(() => db().suppliers.toArray());
 
-  // Navigation tab inside Outstanding: "receivables" or "payables"
-  const [subTab, setSubTab] = useState<"receivables" | "payables">("receivables");
+  // Navigation tab inside Outstanding: "outstanding", "agewise", "party-ledger", "receivables", or "payables"
+  const [subTab, setSubTab] = useState<"outstanding" | "agewise" | "party-ledger" | "receivables" | "payables">("outstanding");
   // Interactive aging filter
   const [selectedAgingBucket, setSelectedAgingBucket] = useState<"all" | "0-30" | "31-60" | "61-90" | "90+">("all");
   // Statement modal state
@@ -1159,9 +1238,33 @@ function OutstandingReport() {
     <div className="mt-4 space-y-4">
       {/* Sub-tab switcher */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 p-1 bg-secondary/40 rounded-lg">
           <Button
-            variant={subTab === "receivables" ? "default" : "outline"}
+            variant={subTab === "outstanding" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setSubTab("outstanding")}
+            className="text-xs h-8"
+          >
+            Customer & Vendor Outstanding
+          </Button>
+          <Button
+            variant={subTab === "agewise" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setSubTab("agewise")}
+            className="text-xs h-8"
+          >
+            Age-Wise Outstanding
+          </Button>
+          <Button
+            variant={subTab === "party-ledger" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setSubTab("party-ledger")}
+            className="text-xs h-8"
+          >
+            Customer & Vendor Ledger
+          </Button>
+          <Button
+            variant={subTab === "receivables" ? "default" : "ghost"}
             size="sm"
             onClick={() => {
               setSubTab("receivables");
@@ -1172,7 +1275,7 @@ function OutstandingReport() {
             Accounts Receivable (AR)
           </Button>
           <Button
-            variant={subTab === "payables" ? "default" : "outline"}
+            variant={subTab === "payables" ? "default" : "ghost"}
             size="sm"
             onClick={() => {
               setSubTab("payables");
@@ -1191,17 +1294,22 @@ function OutstandingReport() {
             data={customerSummaryRows}
             columns={RECEIVABLES_AGING_EXPORT_COLUMNS}
           />
-        ) : (
+        ) : subTab === "payables" ? (
           <ExportBtn
             name="payables_aging"
             title="Payables Aging Summary"
             data={supplierSummaryRows}
             columns={PAYABLES_AGING_EXPORT_COLUMNS}
           />
-        )}
+        ) : null}
       </div>
 
-      {subTab === "receivables" ? (
+      {subTab === "outstanding" && <PartyOutstandingView />}
+      {subTab === "agewise" && <AgeWiseOutstandingView />}
+      {subTab === "party-ledger" && <CustomerVendorLedgerView />}
+
+      {(subTab === "receivables" || subTab === "payables") && (
+        subTab === "receivables" ? (
         <>
           {/* Section 15: Three-Tier Receivables Clarity */}
           <div className="grid gap-3 sm:grid-cols-3">
@@ -1667,7 +1775,7 @@ function OutstandingReport() {
             </div>
           </Card>
         </>
-      )}
+      ))}
 
       {/* Customer / Supplier Statement Modal (Section 14) */}
       <PartyStatementModal
@@ -2122,6 +2230,7 @@ function SupplierAdvanceRegisterReport() {
 // ========================================================================
 
 function StockReport() {
+  const [stockSubTab, setStockSubTab] = useState("stock-status");
   const { activeCompany } = useActiveCompany();
   const products = useLive<Product>(() => db().products.toArray());
   const valuationMethod = (activeCompany as any)?.inventoryValuationMethod || "purchase_cost";
@@ -2137,13 +2246,31 @@ function StockReport() {
   const missingCostCount = products.filter(p => (p.currentStock || 0) > 0 && getProductUnitCost(p) <= 0).length;
 
   return (
-    <Card className="card-soft mt-4 p-4 space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h3 className="font-semibold">Stock Inventory Valuation</h3>
-            <Badge variant="outline" className="text-[10px] uppercase font-mono">
-              Method: {valuationMethod === "standard_cost" ? "Standard Cost" : "Purchase Cost"}
+    <div className="space-y-4 mt-4">
+      <div className="w-full overflow-x-auto scrollbar-thin pb-1">
+        <Tabs value={stockSubTab} onValueChange={setStockSubTab} className="w-full space-y-4">
+          <TabsList className="inline-flex w-auto min-w-full sm:min-w-0 h-9 items-center justify-start gap-1 p-1 bg-secondary/50 rounded-lg whitespace-nowrap">
+            <TabsTrigger value="stock-status" className="text-xs px-3 py-1 font-medium">Stock Status & Valuation</TabsTrigger>
+            <TabsTrigger value="stock-register" className="text-xs px-3 py-1 font-medium">Stock Register (Movements)</TabsTrigger>
+            <TabsTrigger value="valuation" className="text-xs px-3 py-1 font-medium">Configured Valuation</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="stock-status" className="mt-2 focus-visible:outline-hidden">
+            <StockStatusView />
+          </TabsContent>
+
+          <TabsContent value="stock-register" className="mt-2 focus-visible:outline-hidden">
+            <StockRegisterView />
+          </TabsContent>
+
+          <TabsContent value="valuation" className="mt-2 focus-visible:outline-hidden">
+            <Card className="card-soft p-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold">Stock Inventory Valuation</h3>
+                    <Badge variant="outline" className="text-[10px] uppercase font-mono">
+                      Method: {valuationMethod === "standard_cost" ? "Standard Cost" : "Purchase Cost"}
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -2197,6 +2324,10 @@ function StockReport() {
         Total Stock Value: <b className="ml-2 font-mono">{formatMoney(value)}</b>
       </div>
     </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
   );
 }
 
