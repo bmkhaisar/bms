@@ -873,15 +873,16 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
   doc.text(`Amount in words: ${words}`, margin, y);
   y += 6;
 
-  // 6.5. General Information (rendered if enabled on invoice/document)
+  // 6.5. General Information (rendered if enabled on invoice/document; strictly omitted for receipt & payment vouchers)
   const isPostedDoc = isDocumentFinalized(docData);
-  const showGeneralInfo = docData.visibilitySnapshot?.showGeneralInfo !== undefined
+  const isVoucherDoc = docData.kind === "receipt" || docData.kind === "payment";
+  const showGeneralInfo = !isVoucherDoc && (docData.visibilitySnapshot?.showGeneralInfo !== undefined
     ? docData.visibilitySnapshot.showGeneralInfo
     : options?.includeGeneralInfo !== undefined
       ? options.includeGeneralInfo
       : docData.includeGeneralInfo !== undefined
         ? docData.includeGeneralInfo
-        : (comp as any).showInvoiceGeneralInfo === true;
+        : (comp as any).showInvoiceGeneralInfo === true);
 
   if (showGeneralInfo && (docData.generalInformationSnapshot?.length || docData.generalInfoSnapshot?.length || (comp as any).generalInfoFields?.length || (comp as any).quotationGeneralInfoMarkdown || (comp as any).invoiceGeneralInfoMarkdown)) {
     const resolvedGen = resolveGeneralInfoFields({
@@ -920,21 +921,23 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
     }
   }
 
-  // 6.6. Technical Specifications (rendered if enabled and present on invoice/document)
-  const showTechSpecs = (docData.visibilitySnapshot?.showTechSpecs !== undefined
-    ? docData.visibilitySnapshot.showTechSpecs
-    : options?.includeTechSpecs !== undefined
-      ? options.includeTechSpecs
-      : (docData as any).includeTechSpecs !== undefined
-        ? (docData as any).includeTechSpecs
-        : ((comp as any).showInvoiceTechnicalSpecs !== false)) &&
+  // 6.6. Technical Specifications (rendered if enabled and present on invoice/document; strictly omitted for receipt & payment vouchers)
+  const showTechSpecs = !isVoucherDoc && (
+    (docData.visibilitySnapshot?.showTechSpecs !== undefined
+      ? docData.visibilitySnapshot.showTechSpecs
+      : options?.includeTechSpecs !== undefined
+        ? options.includeTechSpecs
+        : (docData as any).includeTechSpecs !== undefined
+          ? (docData as any).includeTechSpecs
+          : ((comp as any).showInvoiceTechnicalSpecs !== false)) &&
     Boolean(
       (docData as any).technicalSpecificationSnapshot?.length ||
       (docData as any).techSpecSnapshot?.length ||
       (docData as any).structuredSections?.length ||
       (comp as any).invoiceTechnicalSpecsMarkdown ||
       (comp as any).quotationTechnicalSpecsMarkdown
-    );
+    )
+  );
   if (showTechSpecs) {
     const resolvedSpecs = resolveTechSpecSections({
       companyMarkdown: (comp as any).invoiceTechnicalSpecsMarkdown || (comp as any).quotationTechnicalSpecsMarkdown,
@@ -970,8 +973,8 @@ export function buildDocumentPDF(docData: NormalizedDocument, options?: PdfRende
     }
   }
 
-  // 7. Terms & Conditions (Rendered before Bank Details, supports Markdown lists, hanging indent)
-  const showTerms = docData.kind !== "receipt" && (
+  // 7. Terms & Conditions (Rendered before Bank Details; strictly omitted for receipt & payment vouchers)
+  const showTerms = !isVoucherDoc && docData.kind !== "receipt" && (
     docData.visibilitySnapshot?.showTerms !== undefined
       ? docData.visibilitySnapshot.showTerms
       : options?.includeTerms !== undefined

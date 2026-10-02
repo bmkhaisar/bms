@@ -27,7 +27,7 @@ export const Route = createFileRoute("/login")({
 function LoginPage() {
   const nav = useNavigate();
   const { signIn, isAuthenticated, isPlatformAdmin, authInitializing, claimsLoading, user, setResolutionState } = useAuth();
-  const { companies, loading: companiesLoading } = useActiveCompany();
+  const { companies, loading: companiesLoading, resolvedUserId } = useActiveCompany();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -116,7 +116,7 @@ function LoginPage() {
 
       // PRIORITY 3: Normal user -> wait for companies resolution
       setResolutionState("resolvingCompanies");
-      if (companiesLoading) {
+      if (companiesLoading || (Boolean(user) && resolvedUserId !== user?.uid)) {
         // Still resolving companies, do NOT redirect to /no-company-access yet!
         return;
       }
@@ -143,7 +143,7 @@ function LoginPage() {
     } finally {
       setResolvingDestination(false);
     }
-  }, [user, isPlatformAdmin, authInitializing, claimsLoading, companiesLoading, companies, routingResolved, setResolutionState, nav]);
+  }, [user, isPlatformAdmin, authInitializing, claimsLoading, companiesLoading, resolvedUserId, companies, routingResolved, setResolutionState, nav]);
 
   useEffect(() => {
     if (!authInitializing && !claimsLoading && isAuthenticated && !routingResolved) {

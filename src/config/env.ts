@@ -4,14 +4,14 @@
  */
 
 export const clientEnv = {
-  FIREBASE_API_KEY: import.meta.env.VITE_FIREBASE_API_KEY || "",
-  FIREBASE_AUTH_DOMAIN: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
-  FIREBASE_DATABASE_URL: import.meta.env.VITE_FIREBASE_DATABASE_URL || "",
-  FIREBASE_PROJECT_ID: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
-  FIREBASE_STORAGE_BUCKET: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
-  FIREBASE_MESSAGING_SENDER_ID: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-  FIREBASE_APP_ID: import.meta.env.VITE_FIREBASE_APP_ID || "",
-  FIREBASE_MEASUREMENT_ID: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "",
+  FIREBASE_API_KEY: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBMxknpEMWvDVh9k3rGLfxKDvHUVckLDwE",
+  FIREBASE_AUTH_DOMAIN: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "bmskh-6efb2.firebaseapp.com",
+  FIREBASE_DATABASE_URL: import.meta.env.VITE_FIREBASE_DATABASE_URL || "https://bmskh-6efb2-default-rtdb.firebaseio.com",
+  FIREBASE_PROJECT_ID: import.meta.env.VITE_FIREBASE_PROJECT_ID || "bmskh-6efb2",
+  FIREBASE_STORAGE_BUCKET: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "bmskh-6efb2.firebasestorage.app",
+  FIREBASE_MESSAGING_SENDER_ID: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "151369329582",
+  FIREBASE_APP_ID: import.meta.env.VITE_FIREBASE_APP_ID || "1:151369329582:web:c209f60698cb1c04abf63f",
+  FIREBASE_MEASUREMENT_ID: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-7J9K596SH8",
 };
 
 export function isClientFirebaseConfigured(): boolean {

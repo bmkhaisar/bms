@@ -30,7 +30,7 @@ function AppGuard() {
     isAuthenticated,
     isPlatformAdmin,
   } = useAuth();
-  const { activeCompany, loading: companyLoading, companies, activeFinancialYear, activeBranchId, branches, isOwner } = useActiveCompany();
+  const { activeCompany, loading: companyLoading, companies, activeFinancialYear, activeBranchId, branches, isOwner, resolvedUserId } = useActiveCompany();
 
   const authorizedBranchIds = useMemo(() => (branches || []).map((b) => b.id), [branches]);
   const branchIdsKey = useMemo(() => authorizedBranchIds.slice().sort().join(","), [authorizedBranchIds]);
@@ -88,7 +88,7 @@ function AppGuard() {
     }
 
     // 3. Normal user handling (wait until company memberships resolve)
-    if (!companyLoading) {
+    if (!companyLoading && (resolvedUserId === user.uid || companies.length > 0)) {
       if (companies.length === 0) {
         nav({ to: "/no-company-access", replace: true });
         return;
@@ -104,6 +104,7 @@ function AppGuard() {
     claimsLoading,
     companyLoading,
     user,
+    resolvedUserId,
     isAuthenticated,
     isPlatformAdmin,
     companies,

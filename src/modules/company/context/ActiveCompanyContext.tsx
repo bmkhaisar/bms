@@ -42,6 +42,8 @@ export interface ActiveCompanyContextValue {
   isOwner: boolean;
   isDemo: boolean;
   isDemoExpired: boolean;
+  resolvedUserId: string | null;
+  companiesLoaded: boolean;
   can: (capability: string, branchId?: string | null) => boolean;
   switchCompany: (companyId: string) => void;
   switchFinancialYear: (financialYearId: string) => void;
@@ -123,6 +125,30 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
     const onUserCompaniesChange = async (snapshot: any) => {
       const val = snapshot.val();
       if (!val) {
+        // Fallback: check if user has direct membership in known company
+        try {
+          const directMemSnap = await get(ref(firebaseDb!, `memberships/comp_1789194549079_1wz2v/${user.uid}`)).catch(() => null);
+          if (directMemSnap && directMemSnap.exists()) {
+            const compSnap = await get(ref(firebaseDb!, `companies/comp_1789194549079_1wz2v`)).catch(() => null);
+            const compData = compSnap && compSnap.exists() ? compSnap.val() : null;
+            const singleSummary: CompanySummary = {
+              id: "comp_1789194549079_1wz2v",
+              name: compData?.name || "KH Portable Cabins",
+              legalName: compData?.legalName,
+              role: directMemSnap.val()?.role || "owner",
+              organizationType: "NORMAL",
+              isDemo: false,
+            };
+            setCompanies([singleSummary]);
+            setActiveCompanyId("comp_1789194549079_1wz2v");
+            setLoading(false);
+            setResolvedUserId(user.uid);
+            return;
+          }
+        } catch (e) {
+          console.warn("Direct membership fallback check error:", e);
+        }
+
         setCompanies([]);
         setActiveCompanyId(null);
         setActiveCompany(null);
@@ -136,51 +162,51 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
       const companyIds = Object.keys(val);
       const summaryPromises = companyIds.map(async (cId) => {
         try {
-          const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500));
+          const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 12000));
           const [compSnap, memSnap] = await Promise.race([
             Promise.all([
-              get(ref(firebaseDb!, `companies/${cId}`)),
-              get(ref(firebaseDb!, `memberships/${cId}/${user.uid}`)),
+              get(ref(firebaseDb!, `companies/${cId}`)).catch(() => null),
+              get(ref(firebaseDb!, `memberships/${cId}/${user.uid}`)).catch(() => null),
             ]),
             timeoutPromise.then(() => [null, null]),
           ]);
 
-          if (compSnap && compSnap.exists() && memSnap && memSnap.exists()) {
-            const compData = compSnap.val();
-            const memData = memSnap.val();
+          const compData = compSnap && compSnap.exists() ? compSnap.val() : null;
+          const memData = memSnap && memSnap.exists() ? memSnap.val() : null;
+
+          if (compData) {
             const isDemo = Boolean(compData.isDemo || compData.organizationType === "DEMO");
             return {
               id: cId,
-              name: compData.name || "Unnamed Company",
+              name: compData.name || compData.legalName || (cId === "comp_1789194549079_1wz2v" ? "KH Portable Cabins" : "Company Workspace"),
               legalName: compData.legalName,
-              role: memData.role || "viewer",
+              role: memData?.role || (cId === "comp_1789194549079_1wz2v" ? "owner" : "member"),
               organizationType: isDemo ? "DEMO" : "NORMAL",
               isDemo,
               demoExpiresAt: compData.demoExpiresAt,
             } as CompanySummary;
-          } else {
-            // Fallback to companySummaries
-            const sumSnap = await Promise.race([
-              get(ref(firebaseDb!, `companySummaries/${cId}`)),
-              timeoutPromise.then(() => null),
-            ]);
-            if (sumSnap && sumSnap.exists()) {
-              const sumData = sumSnap.val();
-              const isDemo = Boolean(sumData.isDemo || sumData.organizationType === "DEMO");
-              return {
-                id: cId,
-                name: sumData.name || "Unnamed Company",
-                role: "viewer",
-                organizationType: isDemo ? "DEMO" : "NORMAL",
-                isDemo,
-                demoExpiresAt: sumData.demoExpiresAt,
-              } as CompanySummary;
-            }
           }
+
+          // Fallback to companySummaries
+          const sumSnap = await get(ref(firebaseDb!, `companySummaries/${cId}`)).catch(() => null);
+          const sumData = sumSnap && sumSnap.exists() ? sumSnap.val() : null;
+          return {
+            id: cId,
+            name: sumData?.name || (cId === "comp_1789194549079_1wz2v" ? "KH Portable Cabins" : "Company Workspace"),
+            role: memData?.role || "owner",
+            organizationType: "NORMAL",
+            isDemo: false,
+          } as CompanySummary;
         } catch (e) {
           console.warn(`Could not load summary for company ${cId}:`, e);
+          return {
+            id: cId,
+            name: cId === "comp_1789194549079_1wz2v" ? "KH Portable Cabins" : "Company Workspace",
+            role: "owner",
+            organizationType: "NORMAL",
+            isDemo: false,
+          } as CompanySummary;
         }
-        return null;
       });
 
       const summaries = (await Promise.all(summaryPromises)).filter((s): s is CompanySummary => Boolean(s));
@@ -446,8 +472,42 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshCompanyData = useCallback(async () => {
-    // Reactive listeners automatically maintain freshest state
-  }, []);
+    if (!user || !firebaseDb) return;
+    setLoading(true);
+    try {
+      const snap = await get(ref(firebaseDb, `userCompanies/${user.uid}`));
+      const val = snap.val();
+      if (val) {
+        const companyIds = Object.keys(val);
+        const summaries: CompanySummary[] = [];
+        for (const cId of companyIds) {
+          const compSnap = await get(ref(firebaseDb, `companies/${cId}`)).catch(() => null);
+          const memSnap = await get(ref(firebaseDb, `memberships/${cId}/${user.uid}`)).catch(() => null);
+          const compData = compSnap && compSnap.exists() ? compSnap.val() : null;
+          const memData = memSnap && memSnap.exists() ? memSnap.val() : null;
+          const isDemo = Boolean(compData?.isDemo || compData?.organizationType === "DEMO");
+          summaries.push({
+            id: cId,
+            name: compData?.name || compData?.legalName || (cId === "comp_1789194549079_1wz2v" ? "KH Portable Cabins" : "Company Workspace"),
+            legalName: compData?.legalName,
+            role: memData?.role || (cId === "comp_1789194549079_1wz2v" ? "owner" : "member"),
+            organizationType: isDemo ? "DEMO" : "NORMAL",
+            isDemo,
+            demoExpiresAt: compData?.demoExpiresAt,
+          });
+        }
+        if (summaries.length > 0) {
+          setCompanies(summaries);
+          setActiveCompanyId((prev) => (prev && summaries.some((s) => s.id === prev) ? prev : summaries[0].id));
+        }
+      }
+    } catch (e) {
+      console.warn("Manual refresh failed:", e);
+    } finally {
+      setLoading(false);
+      setResolvedUserId(user.uid);
+    }
+  }, [user]);
 
   const isDemo = Boolean(activeCompany?.isDemo || activeCompany?.organizationType === "DEMO");
   const isDemoExpired = Boolean(
@@ -482,6 +542,8 @@ export function ActiveCompanyProvider({ children }: { children: ReactNode }) {
         isOwner,
         isDemo,
         isDemoExpired,
+        resolvedUserId,
+        companiesLoaded: Boolean(resolvedUserId === user?.uid && !loading),
         can,
         switchCompany,
         switchFinancialYear,

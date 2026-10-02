@@ -257,6 +257,14 @@ function ReceiptsAndPaymentsPage() {
       signatorySnapshot: r.signatorySnapshot,
       signatoryOverride: r.signatoryOverride,
       includeTerms: false,
+      includeGeneralInfo: false,
+      includeTechSpecs: false,
+      visibilitySnapshot: {
+        showTerms: false,
+        showGeneralInfo: false,
+        showTechSpecs: false,
+        showBankDetails: true,
+      },
       receiptDetails: {
         receiptVoucherNumber: r.receiptVoucherId || r.number,
         allocationType: r.allocationType || (r.invoiceId ? "AGAINST_REF" : "ADVANCE"),
@@ -334,6 +342,14 @@ function ReceiptsAndPaymentsPage() {
       signatorySnapshot: p.signatorySnapshot,
       signatoryOverride: p.signatoryOverride,
       includeTerms: false,
+      includeGeneralInfo: false,
+      includeTechSpecs: false,
+      visibilitySnapshot: {
+        showTerms: false,
+        showGeneralInfo: false,
+        showTechSpecs: false,
+        showBankDetails: true,
+      },
       receiptDetails: {
         receiptVoucherNumber: p.number,
         allocationType: p.purchaseId ? "AGAINST_BILL" : "ON_ACCOUNT",
